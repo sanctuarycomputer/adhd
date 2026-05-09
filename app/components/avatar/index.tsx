@@ -104,7 +104,7 @@ export function Avatar({
   return (
     <span
       role="img"
-      aria-label={name}
+      aria-label={status ? `${name}, ${status}` : name}
       className={`relative inline-block ${box} ${radius} ${className}`}
     >
       <span className={`block h-full w-full overflow-hidden ${radius}`}>
@@ -127,9 +127,8 @@ export function Avatar({
       </span>
       {status && (
         <span
+          aria-hidden="true"
           className={`absolute right-0 bottom-0 rounded-full ring-2 ring-white dark:ring-zinc-950 ${STATUS_DOT[size]} ${STATUS_COLOR[status]}`}
-          aria-label={status}
-          role="status"
         />
       )}
     </span>
