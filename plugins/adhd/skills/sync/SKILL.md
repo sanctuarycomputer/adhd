@@ -1,5 +1,5 @@
 ---
-description: Sync design tokens between this Tailwind v4 codebase and the configured Figma file. Reads adhd.config.ts at the repo root. Supports --dry-run (read-only diff) and --domains <comma,separated> (limit to specific domains: colors, spacing, typography, radius, shadow).
+description: "Sync design tokens between this Tailwind v4 codebase and the configured Figma file. Reads adhd.config.ts at the repo root. Supports --dry-run (read-only diff) and --domains <comma,separated> (limit to specific domains: colors, spacing, typography, radius, shadow)."
 disable-model-invocation: true
 argument-hint: "[--dry-run] [--domains <comma,separated>]"
 allowed-tools: Read Edit Write Bash mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
