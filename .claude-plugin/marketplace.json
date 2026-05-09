@@ -1,0 +1,13 @@
+{
+  "name": "adhd-reference",
+  "owner": {
+    "name": "Hugh Francis"
+  },
+  "plugins": [
+    {
+      "name": "adhd",
+      "source": "./plugins/adhd",
+      "description": "Sync design tokens between Tailwind v4 and Figma."
+    }
+  ]
+}
