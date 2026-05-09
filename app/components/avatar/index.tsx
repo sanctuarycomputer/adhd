@@ -99,6 +99,7 @@ export function Avatar({
             alt=""
             width={px}
             height={px}
+            sizes={`${px}px`}
             className="h-full w-full object-cover"
           />
         ) : (
