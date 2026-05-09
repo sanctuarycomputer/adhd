@@ -75,10 +75,13 @@ export function Avatar({
   const palette = PALETTE[getPaletteIndex(name)];
 
   return (
-    <span className={`relative inline-block ${box} ${radius} ${className}`}>
+    <span
+      role="img"
+      aria-label={name}
+      className={`relative inline-block ${box} ${radius} ${className}`}
+    >
       <span
         className={`flex h-full w-full items-center justify-center overflow-hidden font-medium uppercase select-none ${radius} ${SIZE_TEXT[size]} ${palette}`}
-        aria-label={name}
       >
         {getInitials(name)}
       </span>
