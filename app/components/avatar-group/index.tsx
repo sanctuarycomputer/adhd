@@ -7,10 +7,13 @@ import {
 } from "react";
 import { Avatar, SHAPE, SIZE_BOX, SIZE_TEXT, type AvatarSize } from "../avatar";
 
+export type AvatarGroupSurface = "default" | "brand";
+
 export interface AvatarGroupProps {
   children: ReactNode;
   size?: AvatarSize;
   max?: number;
+  surface?: AvatarGroupSurface;
   className?: string;
 }
 
@@ -22,10 +25,21 @@ const OVERLAP: Record<AvatarSize, string> = {
   xl: "-space-x-3",
 };
 
+const SURFACE_RING: Record<AvatarGroupSurface, string> = {
+  default: "[&>*]:ring-white dark:[&>*]:ring-zinc-950",
+  brand: "[&>*]:ring-brand-surface",
+};
+
+const SURFACE_OVERFLOW: Record<AvatarGroupSurface, string> = {
+  default: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
+  brand: "bg-brand-surface-raised text-brand-on-surface",
+};
+
 export function AvatarGroup({
   children,
   size = "md",
   max,
+  surface = "default",
   className = "",
 }: AvatarGroupProps) {
   const all = Children.toArray(children);
@@ -44,12 +58,12 @@ export function AvatarGroup({
 
   return (
     <div
-      className={`flex items-center ${OVERLAP[size]} [&>*]:ring-2 [&>*]:ring-white dark:[&>*]:ring-zinc-950 ${className}`}
+      className={`flex items-center ${OVERLAP[size]} [&>*]:ring-2 ${SURFACE_RING[surface]} ${className}`}
     >
       {items}
       {overflow > 0 && (
         <span
-          className={`relative inline-flex items-center justify-center font-medium ${SIZE_BOX[size]} ${SHAPE.circle[size]} ${SIZE_TEXT[size]} bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}
+          className={`relative inline-flex items-center justify-center font-medium ${SIZE_BOX[size]} ${SHAPE.circle[size]} ${SIZE_TEXT[size]} ${SURFACE_OVERFLOW[surface]}`}
           aria-label={`${overflow} more`}
           role="img"
         >
