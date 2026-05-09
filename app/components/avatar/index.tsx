@@ -54,6 +54,20 @@ export const SHAPE: Record<AvatarShape, Record<AvatarSize, string>> = {
   },
 };
 
+const STATUS_DOT: Record<AvatarSize, string> = {
+  xs: "h-[6px] w-[6px]",
+  sm: "h-[8px] w-[8px]",
+  md: "h-[10px] w-[10px]",
+  lg: "h-[12px] w-[12px]",
+  xl: "h-[14px] w-[14px]",
+};
+
+const STATUS_COLOR: Record<AvatarStatus, string> = {
+  online: "bg-emerald-500",
+  away: "bg-amber-500",
+  offline: "bg-zinc-400",
+};
+
 const PALETTE = [
   "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
   "bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-200",
@@ -79,6 +93,7 @@ export function Avatar({
   src,
   size = "md",
   shape = "circle",
+  status,
   className = "",
 }: AvatarProps) {
   const box = SIZE_BOX[size];
@@ -110,6 +125,13 @@ export function Avatar({
           </span>
         )}
       </span>
+      {status && (
+        <span
+          className={`absolute right-0 bottom-0 rounded-full ring-2 ring-white dark:ring-zinc-950 ${STATUS_DOT[size]} ${STATUS_COLOR[status]}`}
+          aria-label={status}
+          role="status"
+        />
+      )}
     </span>
   );
 }
