@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 export type AvatarSize = "xs" | "sm" | "md" | "lg" | "xl";
 export type AvatarShape = "circle" | "square";
 export type AvatarStatus = "online" | "away" | "offline";
@@ -17,6 +19,14 @@ export const SIZE_BOX: Record<AvatarSize, string> = {
   md: "h-10 w-10",
   lg: "h-12 w-12",
   xl: "h-16 w-16",
+};
+
+const SIZE_PX: Record<AvatarSize, number> = {
+  xs: 24,
+  sm: 32,
+  md: 40,
+  lg: 48,
+  xl: 64,
 };
 
 export const SIZE_TEXT: Record<AvatarSize, string> = {
@@ -66,12 +76,14 @@ function getPaletteIndex(name: string): number {
 
 export function Avatar({
   name,
+  src,
   size = "md",
   shape = "circle",
   className = "",
 }: AvatarProps) {
   const box = SIZE_BOX[size];
   const radius = SHAPE[shape][size];
+  const px = SIZE_PX[size];
   const palette = PALETTE[getPaletteIndex(name)];
 
   return (
@@ -80,10 +92,22 @@ export function Avatar({
       aria-label={name}
       className={`relative inline-block ${box} ${radius} ${className}`}
     >
-      <span
-        className={`flex h-full w-full items-center justify-center overflow-hidden font-medium uppercase select-none ${radius} ${SIZE_TEXT[size]} ${palette}`}
-      >
-        {getInitials(name)}
+      <span className={`block h-full w-full overflow-hidden ${radius}`}>
+        {src ? (
+          <Image
+            src={src}
+            alt=""
+            width={px}
+            height={px}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <span
+            className={`flex h-full w-full items-center justify-center font-medium uppercase select-none ${SIZE_TEXT[size]} ${palette}`}
+          >
+            {getInitials(name)}
+          </span>
+        )}
       </span>
     </span>
   );
