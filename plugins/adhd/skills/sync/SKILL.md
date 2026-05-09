@@ -2,7 +2,7 @@
 description: "Sync design tokens between this Tailwind v4 codebase and the configured Figma file. Reads adhd.config.ts at the repo root. Supports --dry-run (read-only diff) and --domains <comma,separated> (limit to specific domains: colors, spacing, typography, radius, shadow)."
 disable-model-invocation: true
 argument-hint: "[--dry-run] [--domains <comma,separated>]"
-allowed-tools: Read Edit Write Bash mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
+allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp__figma__get_variable_defs
 ---
 
 # ADHD Sync
@@ -32,6 +32,8 @@ Stop the workflow on any failure here. Print the failure message and the relevan
   - `domains` (if present) is an array containing only `"colors"`, `"spacing"`, `"typography"`, `"radius"`, `"shadow"`.
   - `cssEntry` (if present) points to a file that exists.
 - On any field mismatch, print the expected schema and the offending value, then stop.
+
+**v1 limitation — `leader: "code"` is not yet supported.** The Figma MCP available in this session exposes only read tools (`mcp__figma__get_metadata`, `mcp__figma__get_variable_defs`, `mcp__figma__get_design_context`). There is no tool to create or update Figma variables. If `config.leader === "code"`, abort with: `leader: "code" (push to Figma) requires Figma write tools that are not available in v1 of this skill. Switch to leader: "figma" (pull from Figma) for now, or wait for v2 which will use the Figma REST API for writes.`
 
 ### 1.2 Resolve and check `globals.css`
 
@@ -214,11 +216,11 @@ For each token in the diff, edit `globals.css` in place:
 - **Tailwind exposure** (always per Semantic role): write `--color-{role}: var(--{role});` into the `@theme inline {` block.
 - **Removed**: only if user explicitly confirmed. Delete the variable line (and its Tailwind exposure if applicable).
 
-After each domain, run `git add app/globals.css` and `git commit -m "ADHD sync: <domain> from Figma (N changes)"` so each domain is its own commit.
+After each domain, run `git add <resolvedCssEntryPath>` and `git commit -m "ADHD sync: <domain> from Figma (N changes)"` so each domain is its own commit. Use the path resolved in Phase 1.2 (defaults to `app/globals.css` but may be overridden by `config.cssEntry`).
 
 ### 6.3 Touch nothing outside ADHD-managed patterns
 
-Variables that don't match an ADHD name pattern (e.g., user-written `--my-custom-var`) are NEVER modified or removed. If a user-written variable accidentally matches an ADHD pattern, surface the warning during Phase 1.4 — do not silently overwrite.
+Variables that don't match an ADHD name pattern (e.g., user-written `--my-custom-var`) are NEVER modified or removed. If a user-written variable accidentally matches an ADHD pattern, surface the warning during Phase 2 (when `globals.css` is parsed and ADHD-pattern variables are extracted) — do not silently overwrite.
 
 ## Phase 7: Verify (skip if --dry-run)
 
@@ -252,7 +254,7 @@ Warnings:
   - 0 orphans skipped
 ```
 
-Include git commit short-SHAs for code-side changes. If leader = figma, mention that Figma changes are not git-tracked but were applied via MCP.
+Include git commit short-SHAs for code-side changes (which apply when `leader = "figma"` and the code is the follower being updated). If `leader = "code"`, mention that Figma changes were applied via MCP and are not git-tracked. (Note: in v1, `leader = "code"` aborts in Phase 1, so this branch is currently unreachable; included for forward compatibility.)
 
 ## Reference: Mandated Figma structure
 
