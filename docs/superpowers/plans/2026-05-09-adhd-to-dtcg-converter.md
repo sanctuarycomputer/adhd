@@ -264,11 +264,14 @@ const { test } = require('node:test');
 const { strict: assert } = require('node:assert');
 const { oklchToHex } = require('../cli.js');
 
-// Tailwind v4's red-500 reference: oklch(63.7% 0.237 25.331) ≈ #ef4444
-test('oklch red-500 → ~#ef4444', () => {
+// Tailwind v4's red-500 is oklch(63.7% 0.237 25.331). The hex equivalent
+// computed via the OKLCH → OKLab → sRGB pipeline (Ottosson) is ~#fb2c36.
+// This differs from Tailwind v3's literal #ef4444; v4 redefined the palette
+// in OKLCH and the sRGB equivalents shifted slightly.
+test('oklch red-500 → ~#fb2c36 (Tailwind v4)', () => {
   const hex = oklchToHex(0.637, 0.237, 25.331);
   // Allow ±1 LSB per channel for OKLCH→sRGB precision drift.
-  assertHexCloseTo(hex, '#ef4444', 1);
+  assertHexCloseTo(hex, '#fb2c36', 1);
 });
 
 // Tailwind v4's gold-100-ish: oklch(95% 0.05 96)
@@ -951,7 +954,7 @@ This is a stripped-down version of Tailwind v4's `theme.css`. The full file is 5
 
 - [ ] **Step 2: Update the expected output fixture**
 
-Edit `plugins/adhd/lib/to-dtcg/__fixtures__/sample.dtcg.json` to ALSO include `color.red.500`. The exact hex depends on the OKLCH math you already validated in Task 3 (should be very close to `#ef4444`). Run:
+Edit `plugins/adhd/lib/to-dtcg/__fixtures__/sample.dtcg.json` to ALSO include `color.red.500`. The exact hex depends on the OKLCH math you already validated in Task 3 (should be `#fb2c36` or within ±1 LSB — Tailwind v4's red-500 is defined in OKLCH and resolves to that hex via the Ottosson pipeline, NOT to v3's literal `#ef4444`). Run:
 
 ```bash
 node -e '
@@ -960,7 +963,7 @@ console.log(oklchToHex(0.637, 0.237, 25.331));
 '
 ```
 
-Take the printed hex (e.g., `#ef4444` or `#ef4445`) and add it to `sample.dtcg.json` so the file becomes:
+Take the printed hex (should be `#fb2c36` or within ±1 LSB) and add it to `sample.dtcg.json` so the file becomes:
 
 ```json
 {
@@ -1097,7 +1100,7 @@ node cli.js --source css --input __fixtures__/sample-globals.css --tailwind-them
 diff -u __fixtures__/sample.dtcg.json /tmp/actual.json
 ```
 
-If the diff shows only different hex values (e.g., `#ef4444` vs `#ef4445`), update `sample.dtcg.json` to match the actual output rather than chasing OKLCH precision tweaks. The unit test in Task 3 already validated the math is correct within ±1 LSB.
+If the diff shows only different hex values (e.g., `#fb2c36` vs `#fb2c37`), update `sample.dtcg.json` to match the actual output rather than chasing OKLCH precision tweaks. The unit test in Task 3 already validated the math is correct within ±1 LSB.
 
 - [ ] **Step 7: Run ALL tests**
 
@@ -1176,7 +1179,7 @@ Write `plugins/adhd/lib/to-dtcg/__fixtures__/sample-figma-response.json`. The sh
         "variableCollectionId": "primitivesId",
         "resolvedType": "COLOR",
         "valuesByMode": {
-          "primDefault": { "r": 0.9373, "g": 0.2667, "b": 0.2667, "a": 1 }
+          "primDefault": { "r": 0.9843, "g": 0.1725, "b": 0.2118, "a": 1 }
         }
       },
       "varSpacing4": {
@@ -1204,7 +1207,7 @@ Write `plugins/adhd/lib/to-dtcg/__fixtures__/sample-figma-response.json`. The sh
 ```
 
 **Notes on this fixture:**
-- The hex equivalents of the gold and red RGB values must round-trip to the same hex strings as the CSS fixture. The user's globals.css has `--color-gold-100: #faf0c5` (which is `(250, 240, 197)` = `(0.9804, 0.9412, 0.7725)`); the fixture above mirrors this. Same for gold-900 (`#3f2909` = `(63, 41, 9)` = `(0.2471, 0.1608, 0.0353)`) and red-500 (`#ef4444` = `(239, 68, 68)` = `(0.9373, 0.2667, 0.2667)`).
+- The hex equivalents of the gold and red RGB values must round-trip to the same hex strings as the CSS fixture. The user's globals.css has `--color-gold-100: #faf0c5` (which is `(250, 240, 197)` = `(0.9804, 0.9412, 0.7725)`); the fixture above mirrors this. Same for gold-900 (`#3f2909` = `(63, 41, 9)` = `(0.2471, 0.1608, 0.0353)`) and red-500 (`#fb2c36` = `(251, 44, 54)` = `(0.9843, 0.1725, 0.2118)` — this is what Tailwind v4's `oklch(63.7% 0.237 25.331)` resolves to via the Ottosson pipeline).
 - Spacing values come back as strings ("1rem"); we keep them as-is.
 - Aliases use `{ "type": "VARIABLE_ALIAS", "id": "<other-var-id>" }` (Figma's documented format).
 
@@ -1920,7 +1923,7 @@ Files:
 Acceptance criteria covered (from spec §Acceptance criteria):
   AC 1: cli.js css mode produces sample.dtcg.json byte-equal — VERIFIED via tests
   AC 2: cli.js figma mode produces sample.dtcg.json byte-equal — VERIFIED via tests
-  AC 3: OKLCH red-500 → ~#ef4444 within ±1 LSB — VERIFIED via tests
+  AC 3: OKLCH red-500 → ~#fb2c36 within ±1 LSB — VERIFIED via tests
   AC 17: GitHub Actions CI runs both jobs — pending first push to GitHub
   AC 18: skill frontmatter validator catches malformed YAML — VERIFIED locally
 

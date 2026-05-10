@@ -574,7 +574,7 @@ Documented in `plugins/adhd/lib/to-dtcg/README.md`:
 
 2. **`adhd:to-dtcg` cli.js, figma mode:** running `node cli.js --source figma --input __fixtures__/sample-figma-response.json` produces JSON byte-equal to `__fixtures__/sample.dtcg.json` (round-trip; CI gate).
 
-3. **`adhd:to-dtcg` cli.js handles OKLCH:** Tailwind v4's `oklch(63.7% 0.237 25.331)` (red-500) converts to a hex value within ±1 LSB of `#ef4444` per channel.
+3. **`adhd:to-dtcg` cli.js handles OKLCH:** Tailwind v4's `oklch(63.7% 0.237 25.331)` (red-500) converts to a hex value within ±1 LSB of `#fb2c36` per channel. (Note: Tailwind v3's red-500 was the literal `#ef4444`; v4 redefined the palette in OKLCH and the sRGB equivalents shifted slightly. `#fb2c36` is what the Ottosson conversion pipeline produces.)
 
 4. **`/adhd:config` produces a valid config** with `figma.url` plus optional `domains`/`cssEntry`. The output never contains `leader` or `figma.pat`. `/adhd:check` Phase 1 passes against the produced config.
 
