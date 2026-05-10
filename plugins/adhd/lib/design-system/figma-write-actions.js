@@ -206,6 +206,12 @@ function buildFigmaActions(diff, resolutions, direction) {
     for (const c of diff.conflict) {
       const winner = resolutionMap.get(c.path + ':' + c.mode);
       if (winner === 'code') {
+        // Skip impossible writes: a conflict with `code === null` means this
+        // mode exists in Figma but not in code (e.g., Figma has dark+light
+        // modes but code stores the token mode-independently). "Use code" is
+        // undefined in this case — we have nothing to write. The user must
+        // pick "figma" to keep it, or add the mode to code first.
+        if (!c.code) continue;
         const type = figmaTypeForToken(c.domain, c.code);
         const resolvedValue = c.code.type === 'literal' && type !== 'COLOR'
           ? resolveFigmaValue(c.domain, c.code)
@@ -272,6 +278,11 @@ function buildFigmaActions(diff, resolutions, direction) {
     for (const c of diff.conflict) {
       const winner = resolutionMap.get(c.path + ':' + c.mode);
       if (winner === 'figma') {
+        // Skip impossible writes: a conflict with `figma === null` means this
+        // mode exists in code but not in Figma. "Use figma" is undefined — we
+        // have nothing to write. The user must pick "code" to keep it, or add
+        // the mode to Figma first.
+        if (!c.figma) continue;
         const cssVar = pathToCssVar(c.domain, c.path);
         const val = c.figma;
         if (c.mode === 'default') {

@@ -315,3 +315,38 @@ test('pull direction inverts: emits actions for figma-only and overwrites code o
   assert.ok(actions.find(a => a.kind === 'set-primitive' && a.cssVar.includes('extra')));
   assert.ok(actions.find(a => a.kind === 'set-semantic' && a.cssVar.includes('brand-surface')));
 });
+
+test('push direction does not throw when a conflict has no code value (mode missing in code)', () => {
+  // Comparator emits this when Figma has more modes than code does:
+  // code stores `gold/100` as mode-independent `default`, Figma has split it
+  // into dark+light. The dark/light conflicts have code: null.
+  const diff = {
+    same: [], codeOnly: [], figmaOnly: [],
+    conflict: [{
+      domain: 'color', path: 'gold/100', mode: 'dark',
+      code: null,
+      figma: { type: 'literal', value: '#000000' },
+    }],
+  };
+  const resolutions = [{ path: 'gold/100', mode: 'dark', winner: 'code' }];
+  // Must not throw; the unresolved code-side conflict is silently skipped
+  // (there is nothing to write).
+  const actions = buildFigmaActions(diff, resolutions, 'push');
+  assert.equal(actions.length, 0);
+});
+
+test('pull direction does not throw when a conflict has no figma value (mode missing in figma)', () => {
+  // Symmetric case: code has a mode that Figma doesn't. The conflict's
+  // `figma` is null. "Use figma" should be a no-op for that mode.
+  const diff = {
+    same: [], codeOnly: [], figmaOnly: [],
+    conflict: [{
+      domain: 'color', path: 'gold/100', mode: 'dark',
+      code: { type: 'literal', value: '#000000' },
+      figma: null,
+    }],
+  };
+  const resolutions = [{ path: 'gold/100', mode: 'dark', winner: 'figma' }];
+  const actions = buildFigmaActions(diff, resolutions, 'pull');
+  assert.equal(actions.length, 0);
+});
