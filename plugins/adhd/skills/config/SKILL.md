@@ -27,7 +27,7 @@ Resolve the path: `adhd.config.ts` at the repo root. Use `Read` to load it. Ther
 Before parsing the config for defaults, scan the raw source text of `adhd.config.ts` for anything that looks like a literal Figma PAT. Run two regex checks against the file's text:
 
 1. `figd_[A-Za-z0-9_-]+` — Figma's standard PAT prefix; strongest signal.
-2. Any string longer than 24 characters assigned to a key literally named `pat`, `token`, or `secret`. (Heuristic: match `(pat|token|secret)\s*:\s*"[^"]{24,}`.)
+2. Any string longer than 24 characters assigned to a key literally named `pat`, `token`, or `secret`. (Heuristic: match `(pat|token|secret)\s*:\s*"[^"]{24,}"`.)
 
 If either matches, **abort the wizard immediately** with this exact message:
 
