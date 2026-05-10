@@ -161,12 +161,20 @@ Both sides parse to this shape. The compare engine works on it. Writes translate
   }
 }
 
-@theme inline { ... }   → exposure layer; NOT pushed to Figma
+@theme inline {
+  --color-brand-surface: var(--brand-surface);     → exposure alias for brand/surface
+  --color-foreground:    var(--foreground);
+}
 ```
 
-`@theme inline` is for Tailwind's CSS-var resolution; it's plumbing, not a real token set. Push doesn't touch it. Push only sees primitives (from `@theme {}`) and semantic aliases (from `:root` / dark-mode block).
+`@theme inline` is Tailwind v4's exposure layer — it makes semantic CSS variables reachable as Tailwind utility classes (`bg-brand-surface`, etc.). It's load-bearing in the codebase: without it, you'd have to write `bg-[var(--brand-surface)]` everywhere. We **preserve it round-trip** but treat it specially:
 
-The existing `lib/lint-engine/theme-parser.js` already handles this — it's reused in `lib/design-system/`.
+- **Parse:** the design-system library parses `@theme inline` as a separate `exposure` layer. Each entry is an alias from the prefixed name to the underlying semantic variable.
+- **Push:** exposure-only variables are **not** pushed to Figma. They're aliases-of-aliases (`color-brand-surface → brand-surface → gold/100|gold/900`) — pushing them would create redundant variables in Figma that alias other variables in the same collection, with no semantic value beyond the underlying ones. Designers would just see two related variables and wonder which to use.
+- **Pull:** when pull adds a new semantic variable to code (e.g., a new `brand/accent` lands from Figma), it also adds the corresponding exposure alias to `@theme inline` if the codebase has an existing exposure pattern. The heuristic: if the file already has any `@theme inline` entries, pull maintains the pattern; if the file has no exposure layer, pull doesn't invent one.
+- **Compare:** exposure-only variables don't participate in the conflict diff. They're code-only by design and match nothing on the Figma side. The compare engine filters them out before producing `same` / `conflict` / `code-only` / `figma-only` classifications.
+
+The existing `lib/lint-engine/theme-parser.js` already handles this — it returns `{ primitives, exposure, light, dark }` — and the new `lib/design-system/` library reuses the parser, treating `exposure` as a special metadata layer rather than a token set.
 
 ### Figma-side reading (`use_figma`)
 
@@ -358,3 +366,6 @@ The `adhd.config.ts` schema is unchanged — already minimal post Plan 2 (`figma
 11. `lib/to-dtcg/` and `skills/to-dtcg/` and `skills/export-for-figma/` are gone from the repo. CI no longer runs to-dtcg tests.
 12. `/adhd:lint` invoked with no argument lints the entire Figma file: enumerates every page, finds every Component Set / top-level Component / top-level Frame, produces one unified report grouped by page → top-level node.
 13. `/adhd:lint <url>` continues to scope to one node and its subtree.
+14. `@theme inline` exposure aliases are NOT pushed to Figma as separate variables (no redundant aliases-of-aliases in the Figma graph).
+15. When `/adhd:pull-design-system` adds a new semantic variable to code AND the codebase already has an `@theme inline` block, pull also adds the corresponding exposure alias to that block. If the codebase has no exposure layer, pull does not invent one.
+16. Exposure-only variables don't participate in conflict prompts — they're code-only metadata, filtered out of the compare engine's output.
