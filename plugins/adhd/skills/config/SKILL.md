@@ -14,6 +14,46 @@ The wizard is **linear**. Each phase prompts at most once, validates, and either
 
 ## Phase 0: Detect existing config + PAT-leak preflight
 
+Resolve the path: `adhd.config.ts` at the repo root. Use `Read` to load it. There are three branches:
+
+**Branch A — File exists and is well-formed.** Treat it as the source of defaults the user can accept by hitting Enter on later prompts. Continue to the preflight scan below.
+
+**Branch B — File exists but is malformed** (parse fails, or required keys missing). Print: `Found adhd.config.ts but could not parse it. The wizard will re-create it from scratch; existing values will not be used as defaults.` Continue without defaults.
+
+**Branch C — File does not exist.** Continue without defaults.
+
+### PAT-leak preflight (always runs in Branches A and B)
+
+Before parsing the config for defaults, scan the raw source text of `adhd.config.ts` for anything that looks like a literal Figma PAT. Run two regex checks against the file's text:
+
+1. `figd_[A-Za-z0-9_-]+` — Figma's standard PAT prefix; strongest signal.
+2. Any string longer than 24 characters assigned to a key literally named `pat`, `token`, or `secret`. (Heuristic: match `(pat|token|secret)\s*:\s*"[^"]{24,}`.)
+
+If either matches, **abort the wizard immediately** with this exact message:
+
+```
+Looks like a Figma PAT is committed to adhd.config.ts. This is a credential leak.
+
+Remove it from the config and store it as FIGMA_PAT in either:
+  • .env.local in the repo root (gitignored), or
+  • your shell environment (e.g., export FIGMA_PAT=... in ~/.zshrc).
+
+Then re-run /adhd:config.
+```
+
+Do not proceed to Phase 1.
+
+### Parse defaults (Branch A only)
+
+For Branch A, extract these fields with targeted regex (the file is a plain TypeScript literal, no imports):
+- `leader:` → string, expected `"code"` or `"figma"`
+- `figma.url:` → string
+- `figma.pat:` (optional) → string env var name
+- `domains:` (optional) → array of strings
+- `cssEntry:` (optional) → string path
+
+Pass these forward as defaults for Phases 1, 2, 3, 4, and 5.
+
 ## Phase 1: Leader
 
 ## Phase 2: Domains
