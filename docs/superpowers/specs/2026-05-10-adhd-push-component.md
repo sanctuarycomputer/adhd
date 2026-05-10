@@ -19,11 +19,12 @@
 ```
 
 **Out of scope for v1:**
-- Components requiring complex required props (functions, refs, objects). Display components only — required props must be `string` or one of the union types extracted from the file.
 - Non-Next.js App Router frameworks. URL inference is framework-specific; we ship Next.js v15+ for now.
 - Updating an existing Figma component. Push always creates a fresh page. Updating in place is future work.
-- Composite components (children prop, sub-components). We push one component per invocation.
+- Composite components requiring deep child trees (we provide a string/fragment placeholder for `children` but don't recursively expand sub-components).
 - Auto-fix for preflight violations.
+
+**Note on interactive components (Button, Input, etc.):** these are fully supported. Required props like `onClick`, `onChange`, refs, objects get safe placeholders at preview-render time (see "Required prop defaults" below). The component renders its visual structure; we don't actually exercise interactivity (no Figma equivalent for click handlers anyway).
 
 ---
 
@@ -95,20 +96,42 @@ Use the TypeScript compiler API (typescript is a transitive dependency via Next.
 
 3. **The component's exported function name**: for the preview file's import.
 
-### Variant axis identification
+### Variant axes vs default props
 
-For each property in the props interface:
+Variant axes (props that become variant property dimensions in the Figma Component Set) are:
 
-| Prop shape | Treatment |
+- **All union-typed props** (literal-union type aliases or inline unions), automatically — unless `--variants <list>` overrides
+- Any prop explicitly named in `--variants <prop1,prop2,...>`, even if it's a boolean
+
+Optional union props always include `undefined` as an implicit variant value.
+
+Booleans are **NOT** variant axes by default (even though they have a small 2-value space) to keep the variant matrix bounded — a component with 4 boolean props would have 16 variants just from those before we even multiply by other axes. Users opt boolean axes in via `--variants disabled,loading`.
+
+### Required prop defaults
+
+Any required prop NOT acting as a variant axis gets a safe placeholder so the component renders structurally. The placeholder doesn't have to be meaningful — just non-crashing.
+
+| Prop type (form-based detection) | Placeholder |
 |---|---|
-| Union type referenced by name (e.g., `AvatarSize`) | Variant axis with that union's values |
-| Inline union type (e.g., `"a" \| "b"`) | Variant axis with the inline values |
-| Optional (`?:`) | Add `undefined` as an implicit value |
-| Required `string` (no union) | Placeholder: "John Doe" for `name`-like props; "Sample text" otherwise |
-| Required `boolean` | Treat as a 2-element union: `[true, false]` |
-| Required `number` | Placeholder: 0 |
-| Optional non-union string | Default: omit (component uses its internal default) |
-| Required function / ref / object | **Abort** with `"Required prop \`<name>\` is non-trivial (\`<type>\`). Make it optional or add a default value."` |
+| `string` (or `string \| undefined` not in unions) | `"John Doe"` if name-like (`name`, `label`, `title`); else `"Sample text"` |
+| `number` | `0` |
+| `boolean` (not opted as variant) | `false` |
+| `Array<T>` / `T[]` | `[]` |
+| Function (`(...) => *`) — typical event handlers | No-op: `() => {}` |
+| `RefObject<T>` / `MutableRefObject<T>` | `null` (React tolerates null refs) |
+| `ReactNode` / `ReactElement` / `JSX.Element` (typically `children`) | `"…"` placeholder string |
+| Object literal (`{ ... }`) | `{}` |
+| Generic / unresolvable | `{}` (and emit a warning in the report) |
+
+Detection is **syntactic** (we look at the TypeScript type's surface form, not full type resolution). For example:
+
+```ts
+onClick: (event: React.MouseEvent) => void  // → matches `(...) => *` → noop default
+ref: React.Ref<HTMLDivElement>              // → matches Ref → null
+items: string[]                              // → matches array → []
+```
+
+If the placeholder choice causes the component to throw at render time (rare, but possible if the component dereferences a callback synchronously or asserts a non-null prop), the capture phase will report the failure with the rendered error message, and the user can either pass `--variants <prop>` to opt the prop into the variant matrix (with explicit values), or wrap the component in a default-providing parent in their own preview file.
 
 ### Cap algorithm
 
@@ -298,7 +321,7 @@ The first few uses of `/adhd:push-component` will produce some violations. Accep
 |---|---|
 | Component file not found | Abort with "Component file not found: <path>" |
 | File exports no React component | Abort with "No exported function component found in <path>" |
-| Required prop with non-trivial type (function/ref/object) | Abort with the specific prop name and type |
+| Component throws at render with default-placeholder props | Surface the render error; suggest `--variants <prop>` to opt the prop into the variant matrix |
 | `__adhd-preview/page.tsx` already exists with non-generated content | Abort to avoid clobbering |
 | Dev server unreachable | Abort with "Run `npm run dev` and re-invoke" |
 | `generate_figma_design` returns an error | Abort, propagate the error to the user |
@@ -321,7 +344,7 @@ The first few uses of `/adhd:push-component` will produce some violations. Accep
 7. If the preflight has errors, the user is prompted: keep or roll back. Roll back deletes the captured page from Figma.
 8. `__adhd-preview/page.tsx` is created, used for capture, and deleted before the command exits.
 9. `__adhd-preview/` is added to `example/.gitignore` (added by Task 1 of the implementation plan).
-10. The command refuses to run if the component file requires non-trivial complex props.
+10. Interactive components (e.g., `<Button onClick={...}>`) are fully supported — required functions/refs/objects get safe placeholders at preview-render time.
 11. The command refuses to run if the dev server isn't reachable.
 12. The command refuses to run if the variant Cartesian product > 30 unless `--max-variants` is passed (warning, not abort).
 13. The reverse-index variable-binding step finds at least 80% of known Tailwind utility classes (color, spacing, radius, text) for a typical component.
