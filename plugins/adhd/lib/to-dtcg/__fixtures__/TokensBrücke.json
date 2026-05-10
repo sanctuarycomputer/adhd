@@ -1,141 +1,85 @@
 {
-  "4": {
-    "$type": "dimension",
-    "$value": "1px",
-    "$description": "",
-    "$extensions": {
-      "mode": {},
-      "figma": {
-        "codeSyntax": {},
-        "variableId": "VariableID:8:8",
-        "collection": {
-          "id": "VariableCollectionId:5:10",
-          "name": "spacing",
-          "defaultModeId": "5:3"
-        }
-      }
-    }
-  },
-  "brand": {
-    "surface": {
-      "$type": "color",
-      "$value": "{gold.900}",
-      "$description": "",
-      "$extensions": {
-        "mode": {
-          "dark": "{gold.900}",
-          "light": "{gold.100}"
-        },
-        "figma": {
-          "codeSyntax": {},
-          "variableId": "VariableID:8:2",
-          "collection": {
-            "id": "VariableCollectionId:5:2",
-            "name": "color",
-            "defaultModeId": "5:0"
-          }
-        }
-      }
-    }
-  },
-  "gold": {
-    "100": {
-      "$type": "color",
-      "$value": "#faf0c5",
-      "$description": "",
-      "$extensions": {
-        "mode": {
-          "dark": "#faf0c5",
-          "light": "#ffffff"
-        },
-        "figma": {
-          "codeSyntax": {},
-          "variableId": "VariableID:8:3",
-          "collection": {
-            "id": "VariableCollectionId:5:2",
-            "name": "color",
-            "defaultModeId": "5:0"
+  "color": {
+    "brand": {
+      "surface": {
+        "$type": "color",
+        "$value": "{color.gold.900}",
+        "$description": "",
+        "$extensions": {
+          "mode": {
+            "dark": "{color.gold.900}",
+            "light": "{color.gold.100}"
           }
         }
       }
     },
-    "900": {
-      "$type": "color",
-      "$value": "#3f2909",
-      "$description": "",
-      "$extensions": {
-        "mode": {
-          "dark": "#3f2909",
-          "light": "#ffffff"
-        },
-        "figma": {
-          "codeSyntax": {},
-          "variableId": "VariableID:8:4",
-          "collection": {
-            "id": "VariableCollectionId:5:2",
-            "name": "color",
-            "defaultModeId": "5:0"
+    "gold": {
+      "100": {
+        "$type": "color",
+        "$value": "#faf0c5",
+        "$description": "",
+        "$extensions": {
+          "mode": {
+            "dark": "#faf0c5",
+            "light": "#ffffff"
+          }
+        }
+      },
+      "900": {
+        "$type": "color",
+        "$value": "#3f2909",
+        "$description": "",
+        "$extensions": {
+          "mode": {
+            "dark": "#3f2909",
+            "light": "#ffffff"
+          }
+        }
+      }
+    },
+    "red": {
+      "500": {
+        "$type": "color",
+        "$value": "#fb2c36",
+        "$description": "",
+        "$extensions": {
+          "mode": {
+            "dark": "#fb2c36",
+            "light": "#ffffff"
           }
         }
       }
     }
   },
-  "red": {
-    "500": {
-      "$type": "color",
-      "$value": "#fb2c36",
+  "shadow": {
+    "2xs": {
+      "$type": "string",
+      "$value": "0 1px rgb(0 0 0 / 0.05)",
       "$description": "",
       "$extensions": {
-        "mode": {
-          "dark": "#fb2c36",
-          "light": "#ffffff"
-        },
-        "figma": {
-          "codeSyntax": {},
-          "variableId": "VariableID:8:5",
-          "collection": {
-            "id": "VariableCollectionId:5:2",
-            "name": "color",
-            "defaultModeId": "5:0"
-          }
-        }
+        "mode": {}
+      }
+    },
+    "md": {
+      "$type": "string",
+      "$value": "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+      "$description": "",
+      "$extensions": {
+        "mode": {}
       }
     }
   },
-  "2xs": {
-    "$type": "string",
-    "$value": "0 1px rgb(0 0 0 / 0.05)",
-    "$description": "",
-    "$extensions": {
-      "mode": {},
-      "figma": {
-        "codeSyntax": {},
-        "variableId": "VariableID:8:6",
-        "collection": {
-          "id": "VariableCollectionId:5:7",
-          "name": "shadow",
-          "defaultModeId": "5:2"
-        }
+  "spacing": {
+    "4": {
+      "$type": "dimension",
+      "$value": "1px",
+      "$description": "",
+      "$extensions": {
+        "mode": {}
       }
     }
   },
-  "md": {
-    "$type": "string",
-    "$value": "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
-    "$description": "",
-    "$extensions": {
-      "mode": {},
-      "figma": {
-        "codeSyntax": {},
-        "variableId": "VariableID:8:7",
-        "collection": {
-          "id": "VariableCollectionId:5:7",
-          "name": "shadow",
-          "defaultModeId": "5:2"
-        }
-      }
-    }
-  },
+  "tokens.json": {},
   "$extensions": {
     "tokens-bruecke-meta": {
       "useDTCGKeys": true,
@@ -146,7 +90,7 @@
         "spacing",
         "tokens.json"
       ],
-      "createdAt": "2026-05-10T06:03:59.780Z"
+      "createdAt": "2026-05-10T06:25:21.063Z"
     }
   }
 }

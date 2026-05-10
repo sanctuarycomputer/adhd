@@ -14,17 +14,23 @@ const fixturesDir = path.resolve(__dirname, '..', '__fixtures__');
 // file (https://www.figma.com/design/PBCAkpPnvGXWrz6H7qfH3V/adhd) that was populated
 // by importing cli.js's CSS-source output via the TokensBrücke community plugin.
 //
-// The round-trip is PARTIAL — TokensBrücke's import is lossy:
+// Recommended export settings: Color mode HEX, Use DTCG keys ON, Omit collection names
+// OFF, Include figma metadata OFF, all "Include styles" toggles OFF.
+//
+// The round-trip is PARTIAL — TokensBrücke's import is lossy in known ways:
 //   - Spacing units are stripped on import (`1rem` → `1px`).
 //   - Shadow $type is downgraded to "string" (Figma has no native shadow variable type).
-//   - Primitives in 2-mode collections get a phantom mode value (e.g., "#ffffff" for the
-//     unspecified Light mode of gold-100).
-//   - Path prefix is dropped on export with omitCollectionNames=true (`{color.gold.100}`
-//     becomes `{gold.100}`).
+//   - Primitives in 2-mode collections get a phantom mode value (e.g., "#ffffff" for
+//     the unspecified Light mode of gold-100). The default `$value` is correct.
+//   - Top-level `$value` for semantic tokens defaults to the Dark mode value (TokensBrücke
+//     picks Dark as the collection's default mode); cli.js sets it to the Light value.
 //
-// This test verifies what DOES round-trip: the hex color values for primitive colors
-// (gold/red palette tokens). Anything more ambitious would document a TokensBrücke
-// limitation rather than a cli.js bug.
+// What DOES round-trip cleanly:
+//   - Primitive color hex values (gold-100, gold-900, red-500).
+//   - Top-level structure (color/spacing/shadow namespaces).
+//   - Alias path format (`{color.gold.100}` syntax preserved with omit-collection-names OFF).
+//   - `$extensions.mode.{light,dark}` encoding for semantic tokens.
+//   - Mode alias values (the per-mode references inside `$extensions.mode`).
 
 test('cli.js CSS output and TokensBrücke export agree on primitive color hex values', () => {
   const fromCss = JSON.parse(execFileSync('node', [
@@ -36,28 +42,60 @@ test('cli.js CSS output and TokensBrücke export agree on primitive color hex va
 
   const fromTokensBrucke = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'TokensBrücke.json'), 'utf8'));
 
-  // Our cli.js path: color.gold.100 / color.gold.900 / color.red.500
-  // TokensBrücke path (omitCollectionNames=true): gold.100 / gold.900 / red.500
-  // Hex values should match.
-  assert.equal(fromCss.color.gold['100'].$value, fromTokensBrucke.gold['100'].$value, 'gold-100 hex');
-  assert.equal(fromCss.color.gold['900'].$value, fromTokensBrucke.gold['900'].$value, 'gold-900 hex');
-  assert.equal(fromCss.color.red['500'].$value, fromTokensBrucke.red['500'].$value, 'red-500 hex');
+  // With omit-collection-names OFF, both sides use color.gold.X and color.red.X paths.
+  assert.equal(fromCss.color.gold['100'].$value, fromTokensBrucke.color.gold['100'].$value, 'gold-100 hex');
+  assert.equal(fromCss.color.gold['900'].$value, fromTokensBrucke.color.gold['900'].$value, 'gold-900 hex');
+  assert.equal(fromCss.color.red['500'].$value, fromTokensBrucke.color.red['500'].$value, 'red-500 hex');
 });
 
-test('TokensBrücke export captures the brand-surface semantic with mode aliases', () => {
+test('Top-level structure matches: color, shadow, spacing namespaces present in both', () => {
+  const fromCss = JSON.parse(execFileSync('node', [
+    cliPath,
+    '--source', 'css',
+    '--input', path.join(fixturesDir, 'sample-globals.css'),
+    '--tailwind-theme', path.join(fixturesDir, 'tailwind-v4-theme.css'),
+  ], { encoding: 'utf8' }));
+
   const fromTokensBrucke = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'TokensBrücke.json'), 'utf8'));
-  const surface = fromTokensBrucke.brand.surface;
 
-  assert.equal(surface.$type, 'color');
-  // Both modes should be set as aliases. (The exact $value at the top level depends
-  // on which mode TokensBrücke picks as default — which we don't control.)
-  assert.match(surface.$extensions.mode.light, /^\{gold\.\d+\}$/);
-  assert.match(surface.$extensions.mode.dark, /^\{gold\.\d+\}$/);
+  for (const ns of ['color', 'shadow', 'spacing']) {
+    assert.ok(fromCss[ns], `cli.js output should have '${ns}' namespace`);
+    assert.ok(fromTokensBrucke[ns], `TokensBrücke export should have '${ns}' namespace`);
+  }
 });
 
-test('TokensBrücke export uses $extensions.mode encoding (matches our format choice)', () => {
+test('Brand-surface mode aliases match exactly between cli.js and TokensBrücke', () => {
+  const fromCss = JSON.parse(execFileSync('node', [
+    cliPath,
+    '--source', 'css',
+    '--input', path.join(fixturesDir, 'sample-globals.css'),
+    '--tailwind-theme', path.join(fixturesDir, 'tailwind-v4-theme.css'),
+  ], { encoding: 'utf8' }));
+
+  const fromTokensBrucke = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'TokensBrücke.json'), 'utf8'));
+
+  const cssSurface = fromCss.color.brand.surface;
+  const tbSurface = fromTokensBrucke.color.brand.surface;
+
+  // Both use $extensions.mode encoding with lowercase keys + bare alias values.
+  // With omit-collection-names OFF, both use {color.gold.X} alias format — exact match.
+  assert.equal(cssSurface.$extensions.mode.light, tbSurface.$extensions.mode.light, 'Light alias');
+  assert.equal(cssSurface.$extensions.mode.dark, tbSurface.$extensions.mode.dark, 'Dark alias');
+
+  // Both have $type: color.
+  assert.equal(cssSurface.$type, 'color');
+  assert.equal(tbSurface.$type, 'color');
+
+  // Top-level $value differs by design: cli.js picks Light (the canonical default); TokensBrücke
+  // picks whichever mode Figma reports as the collection default (typically Dark for our setup).
+  // Both values are valid aliases pointing at gold-X.
+  assert.match(cssSurface.$value, /^\{color\.gold\.\d+\}$/);
+  assert.match(tbSurface.$value, /^\{color\.gold\.\d+\}$/);
+});
+
+test('Both export $extensions.mode encoding (matches our format choice)', () => {
   const fromTokensBrucke = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'TokensBrücke.json'), 'utf8'));
   // brand.surface has both light and dark modes
-  assert.ok(fromTokensBrucke.brand.surface.$extensions.mode.light);
-  assert.ok(fromTokensBrucke.brand.surface.$extensions.mode.dark);
+  assert.ok(fromTokensBrucke.color.brand.surface.$extensions.mode.light);
+  assert.ok(fromTokensBrucke.color.brand.surface.$extensions.mode.dark);
 });

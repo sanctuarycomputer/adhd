@@ -59,14 +59,30 @@ To import:
 2. Plugins menu → TokensBrücke → Import.
 3. Paste the cli.js output JSON.
 
+### Recommended TokensBrücke export settings
+
+For the cleanest round-trip with cli.js's output:
+
+| Setting | Value |
+|---|---|
+| Color mode | HEX |
+| Use DTCG keys format | ON |
+| Omit collection names | **OFF** (preserves the `color.gold.100` path prefix) |
+| Include figma metadata | OFF (drops per-variable `variableId`/`codeSyntax` cruft) |
+| Include `.value` string for aliases | OFF (we want bare `{ref}`, not `{ref.value}`) |
+| Split collections into separate files | OFF |
+| All "Include styles" toggles | OFF (variables-only export; styles are a separate concept) |
+| Use percentage for opacity | OFF |
+| Include variable scopes | OFF |
+
 ### TokensBrücke round-trip caveats
 
-The export-and-re-import round-trip through TokensBrücke is **partial**, not lossless. The hex color values for primitives round-trip cleanly. Other tokens degrade:
+The export-and-re-import round-trip through TokensBrücke is **partial**, not lossless. Hex color values, top-level structure (`color`/`spacing`/`shadow` namespaces), and alias paths (`{color.gold.100}`) round-trip cleanly. Other tokens degrade:
 
 - **Spacing units are lost on import.** `1rem` becomes a unitless number `1`, then `"1px"` on export. If your design system depends on rem-based spacing, document this.
 - **Shadow `$type` downgraded to `"string"`.** Figma has no native shadow variable type, so TokensBrücke maps shadows to string variables. They round-trip as opaque strings.
-- **Phantom modes on primitives.** If your Figma collection has multiple modes (e.g., Light + Dark) but you import a single-value primitive, TokensBrücke fills the unspecified mode with white (`#ffffff`). To avoid this, set the Primitives collection to a single mode in Figma before importing.
-- **Path prefix dropped on export.** With `omitCollectionNames=true` (recommended for clean DTCG output), aliases come out as `{gold.100}` not `{color.gold.100}`. The collection name (`color`) is implicit from the top-level structure.
+- **Phantom modes on primitives.** If your Figma collection has multiple modes (e.g., Light + Dark) but you import a single-value primitive, TokensBrücke fills the unspecified mode with white (`#ffffff`). The default `$value` is correct; only the unspecified-mode override is the issue. To avoid this, set the Primitives collection to a single mode in Figma before importing.
+- **Top-level `$value` for semantic tokens defaults to Dark.** cli.js sets `$value` to the Light mode's value (the canonical default). TokensBrücke sets it to whichever mode Figma reports as the collection's default — typically Dark in our setup. The mode-specific values inside `$extensions.mode.{light,dark}` are correct in both; only the top-level default differs.
 
 For tooling that needs lossless round-trip, this remains an open problem. ADHD's primary use case is one-way: code → Figma. The check-and-sync direction (Plans 2 onward) will need to handle these caveats explicitly.
 
