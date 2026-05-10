@@ -7,7 +7,7 @@
     {
       "name": "adhd",
       "source": "./plugins/adhd",
-      "description": "Validate, sync, and seed design tokens between Tailwind v4 and Figma."
+      "description": "Push, pull, and lint design tokens between Tailwind v4 and Figma via the remote MCP."
     }
   ]
 }
