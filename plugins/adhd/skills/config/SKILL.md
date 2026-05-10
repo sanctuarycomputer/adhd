@@ -92,6 +92,36 @@ Default selection: the existing `domains` array from Phase 0 if present; otherwi
 
 ## Phase 3: Figma URL + reachability
 
+Use `AskUserQuestion` with a free-text question (or, if `AskUserQuestion` does not support free text, instruct the user to paste a URL in chat):
+
+```
+Question: "Paste the URL of your Figma file (must look like https://www.figma.com/design/<key>/<name>)."
+Header: "Figma URL"
+```
+
+Default value: the existing `figma.url` from Phase 0 if present; otherwise no default.
+
+**Validation step 1 — format.** Match the entered value against `^https://www\.figma\.com/design/[^/]+/`. If the format is wrong, print:
+
+```
+That doesn't look like a Figma file URL. Expected format:
+  https://www.figma.com/design/<key>/<name>
+
+(Tip: open your file in Figma, then copy the URL from the address bar.)
+```
+
+Re-prompt.
+
+**Validation step 2 — reachability.** Extract the file key — it's the path segment immediately after `/design/`. Call `mcp__figma__get_metadata` with that file key. Three failure cases:
+
+- **Authentication error** (the MCP returns "not authenticated" or similar): abort with `Figma MCP is not authenticated. Run the Figma MCP auth flow per Figma's docs, then re-run /adhd:config.` Do NOT save the URL.
+- **404 / not found:** print `Cannot reach the Figma file at that URL. Verify the URL is correct and that you have access. Re-prompt to paste a different URL.` Re-prompt.
+- **Other error** (network, timeout): print the error and re-prompt.
+
+On success (200 with metadata), save the URL.
+
+This phase **does not** validate that the Figma file has the mandated structure (Primitives / Semantic collections, Light/Dark modes, kebab-case naming). That validation is `/adhd:sync`'s job — running it here would slow the wizard and duplicate logic.
+
 ## Phase 4: PAT setup (only when leader = code)
 
 ## Phase 5: cssEntry auto-detect
