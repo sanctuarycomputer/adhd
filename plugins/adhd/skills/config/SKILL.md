@@ -72,34 +72,70 @@ Save the answer as `leader`. The value is one of `"code"` or `"figma"`. Both are
 
 ## Phase 2: Domains
 
-Use `AskUserQuestion` with a single multi-select question:
+> **Tool note:** `AskUserQuestion` accepts 2–4 options and does not support multi-select with 5+ items or free-text input. ADHD has five supported domains, so this phase uses a two-step prompt: a binary `AskUserQuestion` first, then a chat-based subset list when needed.
+
+**Step 1 — All-or-subset choice.** Use `AskUserQuestion`:
 
 ```
-Question: "Which token domains should ADHD sync? (Default: all five.)"
+Question: "Sync all five domains (colors, spacing, typography, radius, shadow), or pick a subset?"
 Header: "Domains"
-multiSelect: true
 Options:
-  - label: "colors", description: "Color primitives and semantic role aliases."
-  - label: "spacing", description: "Spacing scale (--spacing-1, --spacing-4, etc.)."
-  - label: "typography", description: "Font families, sizes, weights, line heights."
-  - label: "radius", description: "Border-radius scale."
-  - label: "shadow", description: "Box-shadow scale."
+  - label: "All five (default)", description: "Recommended. The wizard omits the `domains` field so future additions are picked up automatically."
+  - label: "Pick a subset", description: "Restrict ADHD to specific domains. You'll be prompted in chat to type the subset as a comma-separated list."
 ```
 
-Default selection: the existing `domains` array from Phase 0 if present; otherwise all five selected.
+Default selection: if the existing `domains` array from Phase 0 is present and is a strict subset, default to "Pick a subset"; otherwise default to "All five".
 
-**Storage rule:** if all five domains are selected, **do not write a `domains` field** to `adhd.config.ts` — its absence means "all". Only write the array if a strict subset is selected. Save the user's selection in memory as `domainsSelection` (an array of 1–5 strings); Phase 6 decides whether to write it.
+**Step 2 — Subset entry (only if user picked "Pick a subset").** Drop to a chat prompt:
+
+```
+Type the comma-separated subset of domains you want (from: colors, spacing, typography, radius, shadow).
+
+Examples: `colors,spacing` — `colors,spacing,typography` — `radius,shadow`.
+
+Or say "all" to keep the default; "abort" to exit the wizard.
+```
+
+Wait for the user's next chat message. Parse it:
+
+- Trim whitespace, lowercase, split on commas.
+- If the result is `["all"]`, treat as if the user picked "All five" in Step 1 — proceed accordingly.
+- If the input is `"abort"`, exit the wizard.
+- Validate each token against the supported set (`colors`, `spacing`, `typography`, `radius`, `shadow`). If ANY token is unrecognized, print which token failed and re-prompt with the same chat message.
+- If the parsed subset has length 5, treat as "All five".
+
+**Storage rule:** if the final selection is all five, **do not write a `domains` field** to `adhd.config.ts` — its absence means "all". Only write the array if a strict subset (length 1–4) is selected. Save the selection in memory as `domainsSelection` (an array of 1–5 strings); Phase 6 decides whether to write it.
 
 ## Phase 3: Figma URL + reachability
 
-Use `AskUserQuestion` with a free-text question (or, if `AskUserQuestion` does not support free text, instruct the user to paste a URL in chat):
+> **Tool note:** `AskUserQuestion` does not support free-text input. The URL itself must be pasted into chat. When an existing URL is available from Phase 0, this phase uses `AskUserQuestion` first (keep / replace / abort), and only drops to chat if the user picks "replace".
+
+**Step 1 — Existing URL handling.** If Phase 0 (Branch A) provided an existing `figma.url`, AND that URL is not a placeholder (does not contain `REPLACE_WITH` or similar template markers), use `AskUserQuestion`:
 
 ```
-Question: "Paste the URL of your Figma file (must look like https://www.figma.com/design/<key>/<name>)."
+Question: "Use the Figma URL already in your config?"
 Header: "Figma URL"
+Options:
+  - label: "Keep existing", description: "<existing URL>"
+  - label: "Enter a different URL", description: "Replace with a new URL via chat."
+  - label: "Abort", description: "Stop the wizard. No changes made."
 ```
 
-Default value: the existing `figma.url` from Phase 0 if present; otherwise no default.
+On "Keep existing" → skip to Validation step 2 below using the existing value.
+On "Enter a different URL" → continue to Step 2.
+On "Abort" → exit the wizard.
+
+If Phase 0 did not provide an existing URL, OR the existing value is a placeholder, skip Step 1 and go directly to Step 2.
+
+**Step 2 — URL entry.** Drop to a chat prompt:
+
+```
+Paste the URL of your Figma file (must look like https://www.figma.com/design/<key>/<name>).
+
+Or say "abort" to exit the wizard.
+```
+
+Wait for the user's next chat message. If it's `"abort"`, exit. Otherwise treat the message as the URL and continue to Validation.
 
 **Validation step 1 — format.** Match the entered value against `^https://www\.figma\.com/design/[^/]+/`. If the format is wrong, print:
 
@@ -110,13 +146,13 @@ That doesn't look like a Figma file URL. Expected format:
 (Tip: open your file in Figma, then copy the URL from the address bar.)
 ```
 
-Re-prompt.
+Then re-issue the chat prompt from Step 2 and wait for the user's next message.
 
 **Validation step 2 — reachability.** Extract the file key — it's the path segment immediately after `/design/`. Call `mcp__figma__get_metadata` with that file key. Three failure cases:
 
 - **Authentication error** (the MCP returns "not authenticated" or similar): abort with `Figma MCP is not authenticated. Run the Figma MCP auth flow per Figma's docs, then re-run /adhd:config.` Do NOT save the URL.
-- **404 / not found:** print `Cannot reach the Figma file at that URL. Verify the URL is correct and that you have access. Re-prompt to paste a different URL.` Re-prompt.
-- **Other error** (network, timeout): print the error and re-prompt.
+- **404 / not found:** print `Cannot reach the Figma file at that URL. Verify the URL is correct and that you have access.` Then re-issue the chat prompt from Step 2.
+- **Other error** (network, timeout): print the error and re-issue the chat prompt from Step 2.
 
 On success (200 with metadata), save the URL.
 
@@ -151,7 +187,17 @@ curl -sS -o /tmp/adhd-pat-check.json -w "%{http_code}" \
 Interpret the HTTP status code:
 
 - **200:** token works, user is on Enterprise, has access. Save the env var name (in memory) for Phase 6's decision on whether to write `figma.pat` to the config. Continue to Phase 5.
-- **401:** token is invalid. Print `Your Figma PAT was rejected (HTTP 401 — invalid token). Let's enter a fresh one.` and proceed to "Prompt for a new token" below. Note the source: if it was a `.env*` file, the wizard will overwrite that line; if it was the shell, the wizard will ask the user to update their shell rc and re-run.
+- **401:** token is invalid. Use `AskUserQuestion`:
+
+  ```
+  Question: "Your Figma PAT was rejected (HTTP 401 — invalid token). What would you like to do?"
+  Header: "PAT 401"
+  Options:
+    - label: "Enter a fresh token", description: "Replace the rejected token via chat. (If the existing token came from your shell, the wizard cannot edit your shell rc — it'll ask you to update it manually.)"
+    - label: "Abort", description: "Stop the wizard. No changes made."
+  ```
+
+  On "Enter a fresh token", proceed to "Prompt for a new token" below. On "Abort", exit the wizard. Note the detection source: if it was a `.env*` file, the wizard will overwrite that line; if it was the shell, the wizard will print shell-rc guidance instead of editing.
 - **403:** token doesn't have access (wrong plan or scope). Print:
   ```
   Your token does not have access to Figma's Variables API (HTTP 403).
@@ -175,16 +221,17 @@ Interpret the HTTP status code:
 
 ### Prompt for a new token
 
-If detection found nothing OR validation failed and the user wants to retry:
+If detection found nothing OR validation failed and the user wants to retry, drop to a chat prompt:
 
 ```
-AskUserQuestion: "Paste your Figma personal access token (or 'cancel' to abort)."
-Header: "Figma PAT"
+Paste your Figma personal access token, or say "abort" to exit.
+
+(The token will only be written to .env.local — gitignored — or used to overwrite an existing entry in the .env* file the previous token came from. It is never written to adhd.config.ts.)
 ```
 
-(Free-text. Mask if the host UI supports masking; otherwise paste-in-chat is acceptable.)
+Wait for the user's next chat message. If it's `"abort"`, exit the wizard. Otherwise treat the message as the token value.
 
-If the user cancels, abort the wizard.
+`AskUserQuestion` does not support free-text input, which is why this is a chat prompt rather than a structured question. The 401/403 cases above use `AskUserQuestion` for the keep/replace/abort decision; only the actual token value goes through chat.
 
 **Where to write:**
 - If detection-source was a `.env*` file: rewrite that file in place — find the existing `<envVarName>=...` line and replace its value, preserving surrounding lines.
@@ -222,12 +269,13 @@ Four cases:
 - **Only `app/globals.css` exists:** save `cssEntry = "app/globals.css"`. This is the default — do NOT write a `cssEntry` field to the config.
 - **Only `src/app/globals.css` exists:** save `cssEntry = "src/app/globals.css"`. Phase 6 writes it explicitly.
 - **Both exist:** prefer `app/globals.css` and print `Both app/globals.css and src/app/globals.css exist. Using app/globals.css. Edit adhd.config.ts manually if you want to use the other.` Do NOT write a `cssEntry` field.
-- **Neither exists:** prompt the user.
+- **Neither exists:** drop to a chat prompt (free-text — `AskUserQuestion` does not support free-text input).
   ```
-  AskUserQuestion: "Where does this project's Tailwind CSS entry file live?"
-  Header: "CSS entry"
+  Where does this project's Tailwind CSS entry file live?
+
+  Type a path relative to the repo root (e.g., `styles/globals.css`), or say "abort" to exit.
   ```
-  (Free-text path relative to the repo root.) Validate that the path exists with `[ -f <path> ]`. Re-prompt on miss. On hit, save the path; if it equals `app/globals.css`, do NOT write a `cssEntry` field.
+  Wait for the user's next chat message. If it's `"abort"`, exit the wizard. Otherwise validate the path exists via `Bash` with `[ -f <path> ]`. Re-issue the chat prompt on miss. On hit, save the path; if it equals `app/globals.css`, do NOT write a `cssEntry` field.
 
 ## Phase 6: Write adhd.config.ts
 
