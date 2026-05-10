@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* ── Layer 1: primitives ──────────────────────────────────
+   Raw palette tokens. Mode-independent. Match Figma's primitive variables. */
+@theme {
+  --color-gold-50: #fdf9eb;
+  --color-gold-100: #faf0c5;
+  --color-gold-200: #f5dd87;
+  --color-gold-300: #efc547;
+  --color-gold-400: #e6ad1f;
+  --color-gold-500: #c88f15;
+  --color-gold-600: #a16d12;
+  --color-gold-700: #7e5310;
+  --color-gold-800: #5e3d0e;
+  --color-gold-900: #3f2909;
+  --color-gold-950: #221504;
+}
+
+/* ── Layer 2: semantic role assignments ──────────────────
+   Mode-aware. Each role aliases a primitive. Match Figma's variable aliases. */
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+
+  --brand-surface: var(--color-gold-100);
+  --brand-surface-raised: var(--color-gold-200);
+  --brand-on-surface: var(--color-gold-800);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+
+    --brand-surface: var(--color-gold-900);
+    --brand-surface-raised: var(--color-gold-800);
+    --brand-on-surface: var(--color-gold-100);
+  }
+}
+
+/* ── Layer 3: expose roles to Tailwind ───────────────────
+   `inline` keeps the var() reference in the output so dark-mode flips propagate.
+   Components write `bg-brand-surface`, never `bg-gold-100 dark:bg-gold-900`. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-brand-surface: var(--brand-surface);
+  --color-brand-surface-raised: var(--brand-surface-raised);
+  --color-brand-on-surface: var(--brand-on-surface);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
