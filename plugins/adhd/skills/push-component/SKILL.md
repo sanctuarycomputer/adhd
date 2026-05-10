@@ -1,5 +1,5 @@
 ---
-description: "Push a React component to the configured Figma file as a structured Component Set. Reads adhd.config.ts. Parses the component's variant axes from its TypeScript prop unions, generates a temp Next.js preview route, captures it via generate_figma_design, wraps the captured frames into a Component Set with variant properties, rebinds raw values to existing design-system variables, and runs the same lint engine /adhd:lint uses as a preflight check before finalizing."
+description: "Push a React component to the configured Figma file as a structured Component Set. Reads adhd.config.ts. Parses the component's variant axes from its TypeScript prop unions, generates a temp Next.js preview route, auto-starts the dev server if needed (and tears it down after), captures via generate_figma_design, wraps the captured frames into a Component Set with variant properties, rebinds raw values to existing design-system variables, and runs the same lint engine /adhd:lint uses as a preflight check before finalizing."
 disable-model-invocation: true
 argument-hint: "<component-path> [--max-variants <n>]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma mcp__plugin_figma_figma__generate_figma_design
@@ -55,16 +55,59 @@ If the destination already exists AND its first comment is not "Auto-generated b
 
 Use the `Write` tool to write `/tmp/adhd-push-component/preview.tsx`'s content to the destination.
 
-## Phase 4: Verify dev server
+## Phase 4: Ensure dev server is up (auto-start if needed)
 
-Determine the dev server URL: default `http://localhost:3000`; override with `devServerUrl` in `adhd.config.ts` if set.
+Determine the dev server URL: default `http://localhost:3000`; override with `devServerUrl` in `adhd.config.ts` if set. The example app's project root is `example/` by default (the dir containing `package.json`).
+
+### 4a. Check if a server is already running
 
 Use `Bash`:
 ```bash
-curl -sf -o /dev/null --max-time 3 "$DEV_URL/"
+mkdir -p /tmp/adhd-push-component
+if curl -sf -o /dev/null --max-time 2 "$DEV_URL/"; then
+  echo "RUNNING" > /tmp/adhd-push-component/dev-state.txt
+else
+  echo "DOWN" > /tmp/adhd-push-component/dev-state.txt
+fi
 ```
 
-If exit code is non-zero, abort with: "Dev server not running. Run `cd example && npm run dev` (or your equivalent) in a separate terminal, then re-invoke /adhd:push-component."
+Read `dev-state.txt`. If `RUNNING`, skip to Phase 5. We use whatever's already there and **do not kill it** on exit (it's the user's process).
+
+### 4b. Auto-start a short-lived dev server
+
+If `DOWN`, spawn one in the background. Use `Bash` with `run_in_background: true` so the shell returns immediately and the server keeps running:
+
+```bash
+cd <projectRoot> && nohup npm run dev > /tmp/adhd-push-component/dev.log 2>&1 < /dev/null & echo $! > /tmp/adhd-push-component/dev.pid
+```
+
+This:
+- Starts `npm run dev` detached (`nohup` + `< /dev/null`) so it survives the bash invocation.
+- Pipes stdout/stderr to a log file we can inspect on error.
+- Writes the PID to a file. We use this PID to kill the server in Phase 13 (cleanup), and ONLY if we started it (the `dev-state.txt` is `DOWN`).
+
+### 4c. Wait for readiness
+
+Poll the URL until 200 OK or 60s timeout:
+
+```bash
+for i in $(seq 1 60); do
+  if curl -sf -o /dev/null --max-time 2 "$DEV_URL/"; then
+    echo "Dev server ready after ${i}s" > /tmp/adhd-push-component/dev-ready.txt
+    break
+  fi
+  sleep 1
+done
+if ! curl -sf -o /dev/null --max-time 2 "$DEV_URL/"; then
+  echo "Dev server failed to start. Logs:" >&2
+  cat /tmp/adhd-push-component/dev.log >&2
+  # Cleanup before abort
+  kill $(cat /tmp/adhd-push-component/dev.pid) 2>/dev/null
+  exit 1
+fi
+```
+
+If readiness times out, surface the dev.log contents and abort. Common causes: port already in use by something else, missing `npm install`, runtime error in the user's app.
 
 ## Phase 5: Capture via generate_figma_design
 
@@ -167,6 +210,26 @@ Print:
   Page URL: https://figma.com/design/<fileKey>?node-id=<pageId>
 ```
 
+## Phase 13: Cleanup (always runs, even on error/abort)
+
+If `dev-state.txt` is `DOWN` (we started the server) AND `dev.pid` exists, kill it:
+
+```bash
+if [ -f /tmp/adhd-push-component/dev.pid ] && [ "$(cat /tmp/adhd-push-component/dev-state.txt 2>/dev/null)" = "DOWN" ]; then
+  kill $(cat /tmp/adhd-push-component/dev.pid) 2>/dev/null
+  # Give it a moment to release the port
+  sleep 1
+fi
+# Always delete the temp preview file if it lingered from a previous interrupted run
+rm -f <destination-path>
+# Always delete /tmp/adhd-push-component/ scratch dir for the next run
+rm -rf /tmp/adhd-push-component
+```
+
+If `dev-state.txt` is `RUNNING` (we found a server already up), we leave it alone — it's the user's process.
+
+**Important:** any abort path (Phase 4 readiness timeout, Phase 5 capture failure, Phase 9 consolidation throw, Phase 11 rollback) must reach this Phase 13 cleanup before exiting. The skill orchestrator handles this implicitly by executing cleanup as the last action regardless of earlier outcomes.
+
 ## Common errors
 
 | Error | Fix-up guidance |
@@ -175,6 +238,7 @@ Print:
 | `Component file not found` | Verify the path. |
 | `No exported function component` | The component must export a function named in PascalCase. |
 | `Could not locate props` | Add an `<ComponentName>Props` interface or type. |
-| `Dev server not running` | Run `npm run dev` in a separate terminal. |
-| `Capture produced no variant frames` | The dev server may have rendered an error instead of the preview. Visit `$DEV_URL/__adhd-preview` in a browser to verify. |
+| `Dev server failed to start` | Check `/tmp/adhd-push-component/dev.log`; common causes: port in use, missing `npm install`, app runtime error. |
+| `Port <N> already in use` | Either kill the conflicting process or set `devServerUrl` to a different port in `adhd.config.ts`. |
+| `Capture produced no variant frames` | The dev server may have rendered an error instead of the preview. Visit `$DEV_URL/__adhd-preview` in a browser to verify, or check the dev log. |
 | `Preflight errors` | Run `/adhd:lint` to see the same violations; fix the source component. |
