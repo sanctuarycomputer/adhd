@@ -33,6 +33,9 @@ function formatReport({ variable = [], structure = [] }, meta) {
       for (const m of missing) {
         const v = typeof m.figma === 'object' ? JSON.stringify(m.figma) : m.figma;
         lines.push(`- \`${m.token}\` → \`${v}\` ([open](${m.deepLink}))`);
+        if (m.hint) {
+          lines.push(`  → ${m.hint}`);
+        }
       }
       lines.push('');
     }

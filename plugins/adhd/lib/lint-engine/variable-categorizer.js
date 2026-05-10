@@ -34,7 +34,15 @@ function compareOne(figmaPath, figmaValue, theme, mode) {
   const localValue = lookupLocal(theme, cssVar, mode);
 
   if (localValue === undefined || localValue === null) {
-    return { token, status: 'missing', figma: figmaValue, local: null, mode, domain };
+    return {
+      token,
+      status: 'missing',
+      figma: figmaValue,
+      local: null,
+      mode,
+      domain,
+      hint: 'Run /adhd:pull-design-system to import this token.',
+    };
   }
   if (valuesMatch(figmaValue, localValue, domain)) {
     return null; // same, no violation

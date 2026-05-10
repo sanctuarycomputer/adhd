@@ -64,3 +64,13 @@ test('treats rem and px as semantically identical', () => {
   );
   assert.equal(violations.length, 0);
 });
+
+test('missing variables include a suggested-fix hint', () => {
+  const violations = categorizeVariables(
+    { 'Primitives/color/brand/accent': '#5e3aee' },
+    { primitives: {}, exposure: {}, light: {}, dark: {} },
+  );
+  const m = violations.find(v => v.status === 'missing');
+  assert.ok(m);
+  assert.equal(m.hint, 'Run /adhd:pull-design-system to import this token.');
+});
