@@ -46,15 +46,13 @@ Do not proceed to Phase 1.
 ### Parse defaults (Branch A only)
 
 For Branch A, extract these fields with targeted regex (the file is a plain TypeScript literal, no imports):
-- `leader:` → string, expected `"code"` or `"figma"`
 - `figma.url:` → string
-- `figma.pat:` (optional) → string env var name
 - `domains:` (optional) → array of strings
 - `cssEntry:` (optional) → string path
 
-Pass these forward as defaults for Phases 1, 2, 3, 4, and 5.
+Pass these forward as defaults for Phases 1, 2, and 3.
 
-## Phase 2: Domains
+## Phase 1: Domains
 
 > **Tool note:** `AskUserQuestion` accepts 2–4 options and does not support multi-select with 5+ items or free-text input. ADHD has five supported domains, so this phase uses a two-step prompt: a binary `AskUserQuestion` first, then a chat-based subset list when needed.
 
@@ -88,9 +86,9 @@ Wait for the user's next chat message. Parse it:
 - Validate each token against the supported set (`colors`, `spacing`, `typography`, `radius`, `shadow`). If ANY token is unrecognized, print which token failed and re-prompt with the same chat message.
 - If the parsed subset has length 5, treat as "All five".
 
-**Storage rule:** if the final selection is all five, **do not write a `domains` field** to `adhd.config.ts` — its absence means "all". Only write the array if a strict subset (length 1–4) is selected. Save the selection in memory as `domainsSelection` (an array of 1–5 strings); Phase 6 decides whether to write it.
+**Storage rule:** if the final selection is all five, **do not write a `domains` field** to `adhd.config.ts` — its absence means "all". Only write the array if a strict subset (length 1–4) is selected. Save the selection in memory as `domainsSelection` (an array of 1–5 strings); Phase 4 decides whether to write it.
 
-## Phase 3: Figma URL + reachability
+## Phase 2: Figma URL + reachability
 
 > **Tool note:** `AskUserQuestion` does not support free-text input. The URL itself must be pasted into chat. When an existing URL is available from Phase 0, this phase uses `AskUserQuestion` first (keep / replace / abort), and only drops to chat if the user picks "replace".
 
@@ -142,7 +140,7 @@ On success (200 with metadata), save the URL.
 
 This phase **does not** validate that the Figma file has the mandated structure (Primitives / Semantic collections, Light/Dark modes, kebab-case naming). That validation is `/adhd:sync`'s job — running it here would slow the wizard and duplicate logic.
 
-## Phase 5: cssEntry auto-detect
+## Phase 3: cssEntry auto-detect
 
 Try the two conventional Next.js paths, in order. Use `Bash` with `[ -f <path> ] && echo present || echo absent` per path.
 
@@ -152,7 +150,7 @@ Try the two conventional Next.js paths, in order. Use `Bash` with `[ -f <path> ]
 Four cases:
 
 - **Only `app/globals.css` exists:** save `cssEntry = "app/globals.css"`. This is the default — do NOT write a `cssEntry` field to the config.
-- **Only `src/app/globals.css` exists:** save `cssEntry = "src/app/globals.css"`. Phase 6 writes it explicitly.
+- **Only `src/app/globals.css` exists:** save `cssEntry = "src/app/globals.css"`. Phase 4 writes it explicitly.
 - **Both exist:** prefer `app/globals.css` and print `Both app/globals.css and src/app/globals.css exist. Using app/globals.css. Edit adhd.config.ts manually if you want to use the other.` Do NOT write a `cssEntry` field.
 - **Neither exists:** drop to a chat prompt (free-text — `AskUserQuestion` does not support free-text input).
   ```
@@ -162,7 +160,7 @@ Four cases:
   ```
   Wait for the user's next chat message. If it's `"abort"`, exit the wizard. Otherwise validate the path exists via `Bash` with `[ -f <path> ]`. Re-issue the chat prompt on miss. On hit, save the path; if it equals `app/globals.css`, do NOT write a `cssEntry` field.
 
-## Phase 6: Write adhd.config.ts
+## Phase 4: Write adhd.config.ts
 
 Compose the config object from in-memory state. Always include `leader` and `figma.url`. Conditionally include the rest:
 
@@ -212,7 +210,7 @@ On "No", abort. On "Yes", `Write` the file.
 
 Phase 4 may have already written `.env.local` and updated `.gitignore`. Don't re-do those writes here; this phase touches only `adhd.config.ts`.
 
-## Phase 7: Report
+## Phase 5: Report
 
 Print a summary of what was done. Tailor to the actual operations:
 
