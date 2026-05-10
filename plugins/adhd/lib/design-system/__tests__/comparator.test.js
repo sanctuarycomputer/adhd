@@ -157,3 +157,52 @@ test('comparing per mode independently — token can be same in light, conflict 
   assert.equal(r.conflict.length, 1, 'dark is a conflict');
   assert.equal(r.conflict[0].mode, 'dark');
 });
+
+// ── Regression: literal value normalization across CSS/Figma representations ──
+// Code stores raw CSS strings ("0.25rem", "#fff"); Figma extract converts FLOAT
+// variables to numeric and the figma-parser re-emits them with a "px" suffix
+// ("4px"). Before normalization these strict-string-compared as conflicts,
+// burying real conflicts under a flood of phantom ones.
+test('valuesEqual: "0.25rem" and "4px" are equal (rem → px conversion)', () => {
+  const code = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '0.25rem' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '4px' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 0, 'rem and px should canonicalize to the same px value');
+  assert.equal(r.same.length, 1);
+});
+
+test('valuesEqual: short hex "#fff" equals long hex "#ffffff"', () => {
+  const code = {
+    tokens: [{ domain: 'color', path: 'white', values: { default: { type: 'literal', value: '#fff' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'white', values: { default: { type: 'literal', value: '#ffffff' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 0, 'short hex should canonicalize to long hex');
+  assert.equal(r.same.length, 1);
+});
+
+test('valuesEqual: still flags real value differences after normalization', () => {
+  const code = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '0.25rem' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '8px' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 1, 'genuinely different values must still conflict');
+  assert.equal(r.same.length, 0);
+});
+
+

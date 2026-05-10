@@ -116,3 +116,31 @@ test('does NOT collapse when modes differ (semantic vars stay multi-mode)', () =
   // brand/surface has different aliases per mode — stays multi-mode
   assert.deepEqual(Object.keys(t.values).sort(), ['dark', 'light']);
 });
+
+// ── Regression: the figma-parser must recognize ALL collections the push side
+// can create (opacity, breakpoint, container, blur, perspective, aspect, ease,
+// animate, border-width, z-index). Before the fix it only covered 5 domains,
+// so previously-pushed utility-scale variables surfaced as codeOnly on the
+// next compare run — an infinite-push loop.
+test('inferDomain recognizes every collection name that push can create', () => {
+  const COLLECTIONS = [
+    'color', 'spacing', 'radius', 'shadow', 'typography',
+    'opacity', 'border-width', 'z-index', 'breakpoint', 'container',
+    'blur', 'perspective', 'aspect', 'ease', 'animate',
+  ];
+  for (const name of COLLECTIONS) {
+    const ds = parseFigmaDesignSystem({
+      collections: [{
+        id: 'c', name, modes: [{ id: 'm', name: 'default' }],
+        variables: [{
+          id: 'v', name: 'test/leaf', resolvedType: 'FLOAT', scopes: [],
+          valuesByMode: { default: { kind: 'literal', value: 1 } },
+        }],
+      }],
+      effectStyles: [], textStyles: [],
+    });
+    assert.equal(ds.tokens.length, 1, `${name}: token should be recognized`);
+    assert.equal(ds.tokens[0].domain, name, `${name}: domain should match collection name`);
+  }
+});
+

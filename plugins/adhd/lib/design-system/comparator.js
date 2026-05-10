@@ -1,5 +1,50 @@
 'use strict';
 
+// Convert "0.25rem" / "16px" / "1.5" → number (px). Returns null if not a
+// simple dimension/unitless number. Mirrors dimensionToPx in figma-write-actions.
+function dimensionToPx(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (/[(),]/.test(s)) return null;
+  const m = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const unit = m[2] || '';
+  if (unit === 'rem' || unit === 'em') return n * 16;
+  return n;
+}
+
+// Expand short hex (#rgb / #rgba) to long form and lowercase. Returns null
+// when the input isn't a recognizable hex color.
+function normalizeHex(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s.startsWith('#')) return null;
+  const hex = s.slice(1);
+  if (/^[0-9a-f]{3}$/.test(hex)) {
+    return '#' + hex.split('').map(c => c + c).join('');
+  }
+  if (/^[0-9a-f]{4}$/.test(hex)) {
+    return '#' + hex.split('').map(c => c + c).join('');
+  }
+  if (/^[0-9a-f]{6}$/.test(hex) || /^[0-9a-f]{8}$/.test(hex)) return '#' + hex;
+  return null;
+}
+
+// Canonicalize a literal value for cross-side comparison. Code stores raw CSS
+// strings ("0.25rem", "#fff"); Figma stores numeric px ("4px" via figma-parser)
+// or already-canonical hex. Without normalization the comparator would flag
+// every such pair as a conflict even when the actual values agree.
+function canonicalLiteral(raw) {
+  if (raw == null) return '';
+  const s = String(raw).trim().toLowerCase();
+  const hex = normalizeHex(s);
+  if (hex) return hex;
+  const px = dimensionToPx(s);
+  if (px != null) return px + 'px';
+  return s;
+}
+
 function valuesEqual(a, b) {
   if (!a || !b) return false;
   if (a.type !== b.type) return false;
@@ -7,9 +52,7 @@ function valuesEqual(a, b) {
     return a.target === b.target;
   }
   // literal
-  const av = String(a.value).toLowerCase();
-  const bv = String(b.value).toLowerCase();
-  return av === bv;
+  return canonicalLiteral(a.value) === canonicalLiteral(b.value);
 }
 
 function tokenKey(t) {

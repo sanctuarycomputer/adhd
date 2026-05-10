@@ -7,14 +7,29 @@ function colorToHex({ r, g, b, a }) {
   return hex.toLowerCase();
 }
 
+// Mirrors DOMAIN_COLLECTION in figma-write-actions.js — both sides must agree
+// on the set of collections the engine cares about, otherwise variables we
+// push end up parsed as `unknown` and re-surface as codeOnly on the next run.
+const COLLECTION_DOMAIN = {
+  color: 'color',
+  spacing: 'spacing',
+  radius: 'radius',
+  shadow: 'shadow',
+  typography: 'typography',
+  opacity: 'opacity',
+  'border-width': 'border-width',
+  'z-index': 'z-index',
+  breakpoint: 'breakpoint',
+  container: 'container',
+  blur: 'blur',
+  perspective: 'perspective',
+  aspect: 'aspect',
+  ease: 'ease',
+  animate: 'animate',
+};
+
 function inferDomain(collectionName) {
-  const n = collectionName.toLowerCase();
-  if (n === 'color')      return 'color';
-  if (n === 'spacing')    return 'spacing';
-  if (n === 'radius')     return 'radius';
-  if (n === 'shadow')     return 'shadow';
-  if (n === 'typography') return 'typography';
-  return 'unknown';
+  return COLLECTION_DOMAIN[collectionName.toLowerCase()] || 'unknown';
 }
 
 function modeNameToCanonical(figmaModeName, isMultiMode) {
