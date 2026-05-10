@@ -335,6 +335,112 @@ function parseTailwindTheme(themeText) {
   return out;
 }
 
+// ============================================================
+// Figma MCP response parsing
+// ============================================================
+
+function rgbObjectToHex({ r, g, b, a }) {
+  const ch = (c) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0');
+  if (a !== undefined && a < 1) {
+    const aCh = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+    return `#${ch(r)}${ch(g)}${ch(b)}${aCh}`;
+  }
+  return `#${ch(r)}${ch(g)}${ch(b)}`;
+}
+
+function figmaVariableNameToDtcg(name) {
+  // "colors/gold/100" → { namespace: "color", dtcgPath: "color.gold.100" }
+  // "colors/brand/surface" → { namespace: "color", dtcgPath: "color.brand.surface" }
+  // "spacing/4" → { namespace: "spacing", dtcgPath: "spacing.4" }
+  const parts = name.split('/');
+  if (parts.length < 2) return null;
+  const figmaNs = parts[0];
+  const FIGMA_NS_TO_NS = {
+    colors: 'color',
+    spacing: 'spacing',
+    radius: 'radius',
+    shadow: 'shadow',
+    font: 'font',
+    text: 'text',
+    'font-weight': 'font-weight',
+    leading: 'leading',
+  };
+  const namespace = FIGMA_NS_TO_NS[figmaNs];
+  if (!namespace) return null;
+  const dtcgPath = NAMESPACE_TO_DTCG_PATH[namespace] + '.' + parts.slice(1).join('.');
+  return { namespace, dtcgPath };
+}
+
+function parseFigmaResponse(json) {
+  if (!json || !json.meta) {
+    throw new Error('Invalid Figma response: missing `meta`');
+  }
+  const collections = json.meta.variableCollections || {};
+  const variables = json.meta.variables || {};
+
+  // Build collection ID → { name, modes: [{ id, name }] }
+  const collById = {};
+  for (const id of Object.keys(collections)) {
+    const c = collections[id];
+    collById[id] = { name: c.name, modes: c.modes || [] };
+  }
+
+  // Validate required collections.
+  const primitives = Object.values(collById).find((c) => c.name === 'Primitives');
+  const semantic = Object.values(collById).find((c) => c.name === 'Semantic');
+  if (!primitives) throw new Error('Figma file missing `Primitives` collection');
+  if (!semantic) throw new Error('Figma file missing `Semantic` collection');
+
+  // Build variable ID → variable info, including dtcgPath.
+  const varInfo = {};
+  for (const id of Object.keys(variables)) {
+    const v = variables[id];
+    const mapped = figmaVariableNameToDtcg(v.name);
+    if (!mapped) continue;
+    varInfo[id] = { ...mapped, raw: v };
+  }
+
+  // Resolve a variable value (may be alias) to a DTCG value string.
+  function resolveValue(value, namespace) {
+    if (value && typeof value === 'object' && value.type === 'VARIABLE_ALIAS') {
+      const target = varInfo[value.id];
+      if (!target) throw new Error(`Unresolved alias: ${value.id}`);
+      return `{${target.dtcgPath}}`;
+    }
+    if (value && typeof value === 'object' && 'r' in value && 'g' in value && 'b' in value) {
+      return rgbObjectToHex(value);
+    }
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') return value;
+    throw new Error(`Unsupported value: ${JSON.stringify(value)}`);
+  }
+
+  const out = { primitives: [], semanticLight: [], semanticDark: [] };
+  for (const id of Object.keys(varInfo)) {
+    const info = varInfo[id];
+    const v = info.raw;
+    const collection = collById[v.variableCollectionId];
+    if (!collection) continue;
+    const dtcgType = NAMESPACE_TO_DTCG_TYPE[info.namespace];
+
+    if (collection.name === 'Primitives') {
+      // Single mode.
+      const modeId = collection.modes[0]?.modeId;
+      const value = resolveValue(v.valuesByMode[modeId], info.namespace);
+      out.primitives.push({ ...info, value, dtcgType });
+    } else if (collection.name === 'Semantic') {
+      // Two modes named Light + Dark.
+      for (const m of collection.modes) {
+        const value = resolveValue(v.valuesByMode[m.modeId], info.namespace);
+        if (m.name === 'Light') out.semanticLight.push({ ...info, value, dtcgType });
+        else if (m.name === 'Dark') out.semanticDark.push({ ...info, value, dtcgType });
+        else throw new Error(`Unexpected Semantic mode: ${m.name}`);
+      }
+    }
+  }
+  return out;
+}
+
 function parseArgs(argv) {
   const out = { source: undefined, input: undefined, tailwindTheme: undefined };
   for (let i = 0; i < argv.length; i++) {
@@ -376,9 +482,9 @@ function main(argv) {
       }
       dtcg = buildDtcgFromCssTokens(tokens);
     } else if (args.source === 'figma') {
-      // Figma dispatch is filled in by Task 7.
-      process.stderr.write('cli.js: --source figma not yet implemented\n');
-      process.exit(1);
+      const json = JSON.parse(require('fs').readFileSync(args.input, 'utf8'));
+      const tokens = parseFigmaResponse(json);
+      dtcg = buildDtcgFromCssTokens(tokens); // same shape input
     }
     process.stdout.write(stringifyDtcgStable(dtcg));
     process.exit(0);
@@ -396,8 +502,10 @@ module.exports = {
   parseArgs,
   oklchToHex,
   parseCssTokens,
+  parseFigmaResponse,
   buildDtcgFromCssTokens,
   stringifyDtcgStable,
   variableNameToDtcg,
   normalizeCssValue,
+  rgbObjectToHex,
 };
