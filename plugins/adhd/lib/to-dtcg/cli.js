@@ -70,6 +70,19 @@ function oklchToHex(L, C, h) {
   return `#${channelToHex(r)}${channelToHex(g)}${channelToHex(b)}`;
 }
 
+function oklchToColorValue(L, C, h) {
+  const lab = oklchToOklab(L, C, h);
+  const lin = oklabToLinearSrgb(lab);
+  const r = clamp01(linearToCompandedSrgb(lin.r));
+  const g = clamp01(linearToCompandedSrgb(lin.g));
+  const b = clamp01(linearToCompandedSrgb(lin.b));
+  return {
+    colorSpace: 'srgb',
+    components: [round4(r), round4(g), round4(b)],
+    alpha: 1,
+  };
+}
+
 // ============================================================
 // CSS parsing
 // ============================================================
@@ -677,6 +690,7 @@ if (require.main === module) {
 module.exports = {
   parseArgs,
   oklchToHex,
+  oklchToColorValue,
   parseCssTokens,
   parseFigmaResponse,
   buildDtcgFromCssTokens,
