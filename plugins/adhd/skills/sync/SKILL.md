@@ -23,7 +23,16 @@ Stop the workflow on any failure here. Print the failure message and the relevan
 
 ### 1.1 Read and validate `adhd.config.ts`
 
-- **PAT-leak preflight (runs first).** Before parsing for fields, scan the source text of `adhd.config.ts` with two regex checks:
+- Use the `Read` tool on `adhd.config.ts` at the repo root.
+- If the file does not exist, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    Cannot find adhd.config.ts at the repo root.
+  Next step: Run /adhd:config to fix.
+  ```
+- **PAT-leak preflight.** Before parsing for fields, scan the source text of the file you just read with two regex checks:
   1. `figd_[A-Za-z0-9_-]+` — Figma PAT prefix.
   2. `(pat|token|secret)\s*:\s*"[^"]{24,}"` — long opaque value assigned to a credential-named key.
 
@@ -37,15 +46,6 @@ Stop the workflow on any failure here. Print the failure message and the relevan
              (gitignored) or your shell environment. Then run /adhd:config.
   ```
 
-- Use the `Read` tool on `adhd.config.ts` at the repo root.
-- If the file does not exist, abort with:
-
-  ```
-  ADHD sync cannot proceed.
-
-  Reason:    Cannot find adhd.config.ts at the repo root.
-  Next step: Run /adhd:config to fix.
-  ```
 - Parse the default-exported object. Since this is a plain TypeScript literal (no imports), extract the fields with targeted regex (look for `leader:`, `figma:`, `domains:`, `cssEntry:`).
 - Validate:
   - `leader` is exactly `"code"` or `"figma"`.
