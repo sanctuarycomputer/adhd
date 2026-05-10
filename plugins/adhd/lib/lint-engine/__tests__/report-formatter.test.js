@@ -102,6 +102,21 @@ test('conflict without mode field renders no mode label (primitive token)', () =
   assert.doesNotMatch(md, /\(dark\)/);
 });
 
+test('whole-file pageGrouping produces "Page: X" headers and node-level grouping', () => {
+  const md = formatReport(
+    { variable: [], structure: [
+      { rule: 'STRUCT001', severity: 'error', nodeId: '1:1', nodePath: 'avatar > inner', message: 'Auto-layout missing', deepLink: 'http://x', _page: 'Page 1' },
+    ] },
+    {
+      target: 'Whole file', targetUrl: 'http://x', runAt: new Date('2026-05-10T14:00:00Z'),
+      pageGrouping: [{ name: 'Page 1', nodes: [{ name: 'avatar', type: 'COMPONENT_SET', violationCount: 1 }] }],
+    },
+  );
+  assert.match(md, /## Page: Page 1/);
+  assert.match(md, /### avatar \(COMPONENT_SET\)/);
+  assert.match(md, /STRUCT001/);
+});
+
 test('shadow values (objects) are JSON-stringified in the output', () => {
   const shadowFigma = { x: 0, y: 4, blur: 8, spread: 0, color: '#000000', opacity: 0.1 };
   const shadowLocal = { x: 0, y: 4, blur: 8, spread: 0, color: '#000000', opacity: 0.2 };

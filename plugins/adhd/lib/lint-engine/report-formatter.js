@@ -18,7 +18,7 @@ function formatReport({ variable = [], structure = [] }, meta) {
   lines.push(`**Result:** ${errors} errors, ${warnings} warnings`);
   lines.push('');
 
-  if (variable.length === 0 && structure.length === 0) {
+  if (variable.length === 0 && structure.length === 0 && !meta.pageGrouping) {
     lines.push('No violations found.');
     return lines.join('\n');
   }
@@ -51,7 +51,30 @@ function formatReport({ variable = [], structure = [] }, meta) {
     }
   }
 
-  if (structure.length > 0) {
+  if (meta.pageGrouping) {
+    // Group structure violations by page, then by top-level node
+    const byPage = new Map();
+    for (const v of structure) {
+      const pageName = v._page || '(unknown)';
+      if (!byPage.has(pageName)) byPage.set(pageName, []);
+      byPage.get(pageName).push(v);
+    }
+    for (const pageEntry of meta.pageGrouping) {
+      lines.push(`## Page: ${pageEntry.name}`);
+      lines.push('');
+      for (const nodeEntry of pageEntry.nodes) {
+        const status = nodeEntry.violationCount === 0 ? ' ✓ no violations' : ` ${nodeEntry.violationCount} violations`;
+        lines.push(`### ${nodeEntry.name} (${nodeEntry.type}) ${status}`);
+        // Show violations for this node
+        const pageVs = byPage.get(pageEntry.name) || [];
+        const nodeVs = pageVs.filter(v => v.nodePath?.split(' > ')[0] === nodeEntry.name);
+        for (const v of nodeVs) {
+          lines.push(`  - **${v.rule}** ${v.message} → ${v.nodePath} — [open](${v.deepLink})`);
+        }
+        lines.push('');
+      }
+    }
+  } else if (structure.length > 0) {
     lines.push(`## Structure issues (${structure.length})`);
     lines.push('');
     const errs = structure.filter(v => v.severity === 'error');

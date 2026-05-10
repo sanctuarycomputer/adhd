@@ -80,12 +80,33 @@ function main() {
 
   const theme = parseTheme(cssText);
   const variableViolations = categorizeVariables(varDefs, theme);
-  const structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
+
+  let structureViolations = [];
+  let pageGrouping = null;
+
+  if (designCtx && designCtx.mode === 'whole-file' && Array.isArray(designCtx.pages)) {
+    // Whole-file mode: iterate pages, then top-level nodes per page
+    pageGrouping = [];
+    for (const page of designCtx.pages) {
+      const pageEntry = { name: page.name, nodes: [] };
+      for (const node of page.nodes) {
+        const nodeViolations = checkStructure(node, { fileKey, namingConvention });
+        // Tag each violation with the page name for grouping
+        for (const v of nodeViolations) v._page = page.name;
+        structureViolations.push(...nodeViolations);
+        pageEntry.nodes.push({ name: node.name, type: node.type, violationCount: nodeViolations.length });
+      }
+      pageGrouping.push(pageEntry);
+    }
+  } else {
+    structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
+  }
 
   const meta = {
     target: args.target,
     targetUrl: args['target-url'],
     runAt: new Date(),
+    pageGrouping,
   };
   const report = formatReport(
     { variable: variableViolations, structure: structureViolations },

@@ -103,6 +103,39 @@ test('cli exits 2 with helpful error when a required flag is missing', () => {
   assert.match(result.stderr, /variable-defs/);
 });
 
+test('cli accepts an array-of-nodes input via --design-context for whole-file mode', () => {
+  const varDefs = tmp('vars.json', {});
+  const ctx = tmp('ctx.json', {
+    mode: 'whole-file',
+    pages: [
+      {
+        id: '0:1', name: 'Page 1',
+        nodes: [
+          { id: '1:1', name: 'avatar', type: 'COMPONENT_SET', componentPropertyDefinitions: { size: { type: 'VARIANT', defaultValue: 'sm', variantOptions: ['sm', 'md'] } }, children: [] },
+        ],
+      },
+    ],
+  });
+  const cssPath = tmp('globals.css', `@theme { } :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI,
+    '--variable-defs', varDefs,
+    '--design-context', ctx,
+    '--globals-css', cssPath,
+    '--config', configPath,
+    '--target', 'Whole file',
+    '--target-url', 'https://figma.com/design/abc',
+    '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const report = fs.readFileSync(reportPath, 'utf8');
+  assert.match(report, /Page: Page 1/);
+});
+
 test('cli with structure errors but no variable issues exits 1', () => {
   // Empty variable defs (no var issues), and a frame with children but no auto-layout (STRUCT001).
   const varDefs = tmp('vars.json', {});

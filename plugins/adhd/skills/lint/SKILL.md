@@ -1,15 +1,15 @@
 ---
-description: "Validate a Figma frame, component, component set, or page against the local Tailwind theme + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only — no writes. Optional argument: a Figma URL with node-id. If no argument, uses the current Figma selection."
+description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only — no writes. Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
 disable-model-invocation: true
 argument-hint: "[<figma-url-with-node-id>]"
-allowed-tools: Read Write Bash mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
+allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
 # ADHD Lint
 
-Validate that a Figma frame/page is ready for code translation. Reports two classes of issue:
+Validate that a Figma file (or a single frame/component/page) is ready for code translation. Reports two classes of issue:
 
-- **Variable issues** — Figma variables used by the frame that are missing locally or have conflicting values.
+- **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
 - **Structure issues** — STRUCT001–STRUCT010 best-practice violations (auto-layout, naming, variant properties, etc.).
 
 Output: a markdown report saved to `adhd-lint-report.md` (gitignored), plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
@@ -22,38 +22,46 @@ Read `adhd.config.ts` at the repo root. If it doesn't exist, abort with: "Run /a
 
 Extract `figma.url` (required) and `naming` (optional, defaults to `kebab-case`). Extract the file key from `figma.url` — the segment after `/design/`.
 
-## Phase 2: Resolve target node
+## Phase 2: Resolve target
 
-Parse `$ARGUMENTS`:
+Branch on `$ARGUMENTS`:
 
-- If a Figma URL is provided:
+- **Empty argument → whole-file mode.** Skip target resolution. The extract script (Phase 3) will return ALL pages and ALL top-level lintable nodes (COMPONENT_SET, top-level COMPONENT, top-level FRAME) on each page. Set `target = "Whole file"` and `targetUrl = <figma.url from config>`.
+- **URL provided → scoped mode.**
   - Extract the file key (segment after `/design/`).
   - If it doesn't match the file key from `adhd.config.ts`, abort with: "URL points at file <X>, but adhd.config.ts is configured for file <Y>. Pass a URL from the configured file or run /adhd:config to update."
   - Extract the node ID from `?node-id=<id>` (note: URLs use `-` separator; MCP wants `:` — convert by replacing the first `-` with `:`).
-- If no URL is provided: use MCP's current selection (call MCP tools without a `nodeId` argument).
+  - Capture the node ID for use in Phase 3. The node's name and type are filled in once the extract returns.
 
-Call `mcp__figma__get_metadata` with the node ID (or no arg for selection). Confirm:
-- Node type is `FRAME`, `COMPONENT`, `COMPONENT_SET`, or `CANVAS` (page). Otherwise abort with: "Select a frame, component, or page (got: <type>)."
-- Capture the node's name and ID for the report.
+## Phase 3: Extract from Figma via use_figma
 
-If `get_metadata` errors with "Node not found", abort with: "Node not found in <fileKey>. Verify the URL or selection."
-If it errors with "MCP unreachable" / similar, abort with: "Figma MCP not configured. Run /adhd:config to verify setup."
+Construct a JS string for `mcp__plugin_figma_figma__use_figma` that:
 
-## Phase 3: Fetch from MCP
+1. Defines a `serializeNode(n)` helper that captures a node and its descendants. Fields to capture (when present):
+   - `id`, `name`, `type`
+   - `layoutMode`, `paddingTop`, `paddingRight`, `paddingBottom`, `paddingLeft`, `itemSpacing`, `cornerRadius`, `topLeftRadius`, `topRightRadius`, `bottomLeftRadius`, `bottomRightRadius`
+   - `fills`, `strokes`, `effects`, `boundVariables`
+   - `componentPropertyDefinitions` — **only** when `n.type === 'COMPONENT_SET' || (n.type === 'COMPONENT' && n.parent?.type !== 'COMPONENT_SET')`. Accessing it on a variant COMPONENT (a child of a COMPONENT_SET) throws.
+   - `variantProperties` — only on COMPONENT children of a COMPONENT_SET.
+   - `textStyleId`, `effectStyleId`
+   - For TEXT: `characters`, `fontSize`, `fontName`
+   - For FRAME: `wasInstance`
+   - `children` — recursively `serializeNode`-mapped.
+2. Branches on a `nodeId` parameter (passed via the `inputs` object on `use_figma`):
+   - **Whole-file** (no `nodeId`): walk `figma.root.children` (pages); for each page, find children whose type is `COMPONENT_SET`, or `COMPONENT` (top-level only — i.e. parent is the page, not nested), or `FRAME` (top-level). Serialize each. Return `{ mode: 'whole-file', pages: [{ id, name, nodes: [...serialized...] }, ...] }`.
+   - **Scoped** (`nodeId` provided): `await figma.getNodeByIdAsync(nodeId)`; if missing, return `{ error: 'Node not found' }`; otherwise `serializeNode(node)` and return it directly (no `mode` field).
+3. Also collects the variables referenced by the target subtree(s). Walk every `boundVariables` entry across the serialized nodes, dedupe by variable id, look each up via `figma.variables.getVariableByIdAsync`, and return a sibling map `{ vars: { '<collection>/<name>': <resolvedValueForActiveMode> } }`. Use the "primary" mode of each variable's collection. (This is the same shape `get_variable_defs` would have produced from the local MCP.)
 
-Call `mcp__figma__get_variable_defs` with the resolved node ID.
-Call `mcp__figma__get_design_context` with the resolved node ID.
+   The `use_figma` invocation returns a single payload; split it into `{ ctx, vars }` after.
 
-If either response is empty or has a `truncated: true` flag (or equivalent), surface a warning: "MCP returned a partial response — consider running on a smaller scope (a frame within the page)." Continue with what you have.
+Save the response to `/tmp/adhd-lint/`:
 
-Use the `Write` tool to save the MCP response JSON to a temp file:
+- `/tmp/adhd-lint/ctx.json` — the design-context payload (whole-file shape OR a single serialized subtree).
+- `/tmp/adhd-lint/vars.json` — the `vars` map.
 
-- Path: `/tmp/adhd/vars.json` (variable defs) and `/tmp/adhd/ctx.json` (design context).
-- Content: the literal JSON string from each MCP tool's response.
+The `Write` tool creates the parent dir on demand. (No `mkdir` needed.)
 
-If `/tmp/adhd/` doesn't exist, the `Write` tool creates the parent dir on demand. (No `mkdir` needed.)
-
-This avoids shell-escaping issues that arise when piping JSON through `echo` — JSON values frequently contain single and double quotes that break `echo '<json>' > file` patterns.
+If the response indicates `error: 'Node not found'`, abort with: "Node not found in <fileKey>. Verify the URL." If `use_figma` errors with an MCP/transport problem, abort with: "Figma plugin not connected. In Figma, run the Claude plugin (Plugins → Claude) and retry."
 
 ## Phase 4: Run the engine
 
@@ -61,14 +69,16 @@ Use the `Bash` tool:
 
 ```bash
 node plugins/adhd/lib/lint-engine/cli.js \
-  --variable-defs /tmp/adhd/vars.json \
-  --design-context /tmp/adhd/ctx.json \
+  --variable-defs /tmp/adhd-lint/vars.json \
+  --design-context /tmp/adhd-lint/ctx.json \
   --globals-css <path-from-config-or-auto-detect> \
   --config adhd.config.ts \
-  --target "<node-name-from-Phase-2>" \
-  --target-url "https://figma.com/design/<fileKey>?node-id=<nodeId-with-hyphen>" \
+  --target "<target-label>" \
+  --target-url "<target-url>" \
   --output adhd-lint-report.md
 ```
+
+Where `<target-label>` is `"Whole file"` in whole-file mode, or `"<page> / <node-name>"` in scoped mode. `<target-url>` is `<figma.url>` (whole-file) or the original URL with node-id (scoped).
 
 Globals path resolution: if `adhd.config.ts` has `cssEntry`, use it. Otherwise auto-detect `app/globals.css` then `src/app/globals.css` (matching `/adhd:config`'s logic).
 
@@ -76,9 +86,14 @@ Globals path resolution: if `adhd.config.ts` has `cssEntry`, use it. Otherwise a
 
 Read `adhd-lint-report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
 
-- If exit code 0 and zero violations: "✓ No issues found."
-- If exit code 0 with warnings only: "⚠ N warnings (see report). Frame is ready for code translation."
-- If exit code 1: "✗ N errors, M warnings. Frame has issues that should be resolved before code translation."
+- **Whole-file mode:**
+  - Exit 0 with zero violations: "✓ No issues found across all <N> top-level nodes on <P> pages."
+  - Exit 0 with warnings only: "⚠ <W> warnings across <X> nodes on <Y> pages (see report). File is ready for code translation."
+  - Exit 1: "✗ <E> errors, <W> warnings across <X> nodes on <Y> pages."
+- **Scoped mode:**
+  - Exit 0 with zero violations: "✓ No issues found."
+  - Exit 0 with warnings only: "⚠ <W> warnings (see report). Frame is ready for code translation."
+  - Exit 1: "✗ <E> errors, <W> warnings. Frame has issues that should be resolved before code translation."
 
 Mention the report file path: "Full report: `adhd-lint-report.md` (paste-ready for Figma comments / Slack)."
 
