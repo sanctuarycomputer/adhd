@@ -21,8 +21,9 @@ After install, four slash commands are available:
 | Command | Direction | What it does |
 |---|---|---|
 | `/adhd:config` | — | Interactive wizard that produces `adhd.config.ts` |
-| `/adhd:export-for-figma` | code → Figma | Generates a DTCG JSON file the user imports into Figma via a community plugin |
-| `/adhd:sync` | Figma → code | Pulls Figma variables into `globals.css` (existing path; rename to `/adhd:sync-from-figma` planned for Plan 3) |
+| `/adhd:check` | read-only | Validates a Figma frame/page against local theme + structure best-practices |
+| `/adhd:sync` | Figma → code | Pulls Figma values for the variables a frame uses into `globals.css` |
+| `/adhd:export-for-figma` | code → Figma | Generates a DTCG JSON file you import into Figma via TokensBrücke |
 | `/adhd:to-dtcg` | utility | Model-invocable converter wrapped by the user-facing skills |
 
 ## ADHD Plugin — Use in your repo
@@ -90,7 +91,7 @@ cd example
 │   └── plans/                    # implementation plans
 ├── scripts/                      # repo-level scripts (skill frontmatter validator)
 ├── .claude-plugin/               # marketplace declaration
-├── .github/workflows/            # CI (to-dtcg unit tests + project hygiene)
+├── .github/workflows/            # CI (lib unit tests + project hygiene)
 ├── example/                      # Next.js + Tailwind v4 demo consumer
 │   ├── app/                      # Next.js App Router source
 │   ├── adhd.config.ts            # the example consumer's config

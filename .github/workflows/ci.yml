@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  to-dtcg-tests:
-    name: to-dtcg unit tests
+  lib-tests:
+    name: lib unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +17,8 @@ jobs:
           node-version: '20'
       - name: Run to-dtcg tests
         run: node --test plugins/adhd/lib/to-dtcg/__tests__/
+      - name: Run check-engine tests
+        run: node --test plugins/adhd/lib/check-engine/__tests__/
 
   hygiene:
     name: project hygiene

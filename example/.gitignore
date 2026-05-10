@@ -42,3 +42,6 @@ next-env.d.ts
 
 # generated DTCG export (from /adhd:export-for-figma)
 adhd-export-for-figma.json
+
+# generated check report (from /adhd:check)
+adhd-check-report.md
