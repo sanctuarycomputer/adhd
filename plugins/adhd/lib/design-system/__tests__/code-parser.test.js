@@ -97,6 +97,62 @@ test('infers domain from variable name prefix', () => {
   assert.equal(byPath['md'], 'shadow');
 });
 
+test('includeTailwindDefaults: returns >200 color tokens (full Tailwind palette)', () => {
+  const ds = parseCodeDesignSystem('', { includeTailwindDefaults: true });
+  const colorTokens = ds.tokens.filter(t => t.domain === 'color');
+  assert.ok(colorTokens.length > 200,
+    'expected >200 Tailwind color tokens, got ' + colorTokens.length);
+});
+
+test('includeTailwindDefaults: merges Tailwind defaults with user globals.css', () => {
+  const ds = parseCodeDesignSystem(`
+    @theme {
+      --color-gold-100: #faf0c5;
+    }
+  `, { includeTailwindDefaults: true });
+  // User's gold/100 present
+  assert.ok(ds.tokens.find(t => t.path === 'gold/100'));
+  // Tailwind's red/500 present too
+  assert.ok(ds.tokens.find(t => t.path === 'red/500'));
+});
+
+test('includeTailwindDefaults: globals.css overrides take precedence over Tailwind defaults', () => {
+  const ds = parseCodeDesignSystem(`
+    @theme {
+      --radius-sm: 999px;
+    }
+  `, { includeTailwindDefaults: true });
+  const radiusSm = ds.tokens.find(t => t.path === 'sm' && t.domain === 'radius');
+  assert.ok(radiusSm);
+  assert.deepEqual(radiusSm.values.default, { type: 'literal', value: '999px' });
+});
+
+test('includeTailwindDefaults: --shadow-* tokens get domain shadow', () => {
+  const ds = parseCodeDesignSystem('', { includeTailwindDefaults: true });
+  const shadowMd = ds.tokens.find(t => t.path === 'md' && t.domain === 'shadow');
+  assert.ok(shadowMd, 'expected --shadow-md to map to path md, domain shadow');
+  // drop-shadow keeps family in path to avoid colliding with --shadow-*
+  const dropShadowMd = ds.tokens.find(t => t.path === 'drop-shadow/md');
+  assert.ok(dropShadowMd, 'expected --drop-shadow-md → drop-shadow/md');
+  assert.equal(dropShadowMd.domain, 'shadow');
+});
+
+test('includeTailwindDefaults: non-pushable categories are filtered out', () => {
+  const ds = parseCodeDesignSystem('', { includeTailwindDefaults: true });
+  // None of these should appear as tokens
+  const allCssVars = ds.tokens.map(t => t.cssVar).join(' ');
+  assert.ok(!allCssVars.includes('--breakpoint-md'),
+    'breakpoint-md should be filtered out');
+  assert.ok(!allCssVars.includes('--ease-out'),
+    'ease-out should be filtered out');
+  assert.ok(!allCssVars.includes('--default-font-family'),
+    'default-font-family should be filtered out');
+  assert.ok(!allCssVars.includes('--container-md'),
+    'container-md should be filtered out');
+  assert.ok(!allCssVars.includes('--blur-md'),
+    'blur-md should be filtered out');
+});
+
 test('multi-hyphen semantic var names preserve internal hyphens (only first hyphen is path separator)', () => {
   const ds = parseCodeDesignSystem(`
     :root {
