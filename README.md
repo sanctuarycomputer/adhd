@@ -2,70 +2,104 @@
 
 This repo is **two things at once**:
 
-1. A Next.js 16 + Tailwind v4 reference app demonstrating component patterns (Avatar, AvatarGroup) and a three-layer design-token architecture (primitives → semantic roles → Tailwind exposure).
-2. A Claude Code marketplace hosting the **`adhd`** plugin — a workflow that syncs design tokens between this codebase and a Figma file.
+1. A Claude Code marketplace hosting the **`adhd`** plugin — slash commands that keep design tokens synchronized between a Tailwind v4 codebase and a Figma file.
+2. A Next.js 16 + Tailwind v4 reference app under `example/` that demonstrates the plugin in use, with component patterns (Avatar, AvatarGroup) and a three-layer design-token architecture (primitives → semantic roles → Tailwind exposure).
+
+Plugin source lives at the repo root (`plugins/`, `docs/`, `scripts/`, etc.). The Next.js app lives in `example/` so the root stays clean.
 
 ## ADHD Plugin — Install
-
-The plugin lives at `plugins/adhd/`. To use it from any Claude Code session:
 
 ```
 /plugin marketplace add /absolute/path/to/this/repo
 /plugin install adhd@adhd-reference
 ```
 
-Both commands are persistent — Claude Code stores the marketplace in `~/.claude/plugins/known_marketplaces.json` and remembers the enabled plugin. You only run them once per machine.
+Both commands are persistent — Claude Code remembers the marketplace and the enabled plugin across sessions. Run them once per machine.
 
-After install, the slash command `/adhd:sync` becomes available. It reads `adhd.config.ts` at the consumer repo's root.
+After install, four slash commands are available:
 
-## ADHD Plugin — Use
+| Command | Direction | What it does |
+|---|---|---|
+| `/adhd:config` | — | Interactive wizard that produces `adhd.config.ts` |
+| `/adhd:export-for-figma` | code → Figma | Generates a DTCG JSON file the user imports into Figma via a community plugin |
+| `/adhd:sync` | Figma → code | Pulls Figma variables into `globals.css` (existing path; rename to `/adhd:sync-from-figma` planned for Plan 3) |
+| `/adhd:to-dtcg` | utility | Model-invocable converter wrapped by the user-facing skills |
 
-In the consumer repo, create `adhd.config.ts` at the root:
+## ADHD Plugin — Use in your repo
+
+In your consumer repo, run `/adhd:config`. The wizard walks through:
+
+1. Domains to sync (default: all five — colors, spacing, typography, radius, shadow)
+2. Figma file URL + reachability test via the Figma MCP
+3. CSS entry path auto-detect (`app/globals.css` or `src/app/globals.css`)
+
+It produces `adhd.config.ts` at the repo root:
 
 ```ts
 const config = {
-  leader: "figma" as const,           // "figma" pulls to code; "code" pushes to Figma (v2)
   figma: {
     url: "https://www.figma.com/design/<KEY>/<NAME>",
   },
-  // optional:
-  // domains: ["colors", "spacing", "typography", "radius", "shadow"],
-  // cssEntry: "src/app/globals.css",  // defaults to app/globals.css
+  // optional: domains: [...],
+  // optional: cssEntry: "src/app/globals.css",
 };
 
 export default config;
 ```
 
-Then in Claude Code:
+Then:
 
 ```
-/adhd:sync --dry-run         # see what would change
-/adhd:sync                    # apply leader-wins
-/adhd:sync --domains colors   # limit to one domain
+/adhd:export-for-figma         # generate adhd-export-for-figma.json
+/adhd:sync --dry-run           # see what /adhd:sync would change
+/adhd:sync                     # apply (Figma → code; will prompt before writing)
 ```
 
-The Figma file must follow the structure mandated in `docs/superpowers/specs/2026-05-09-adhd-token-sync-design.md` — a `Primitives` collection (no modes) and a `Semantic` collection (Light + Dark modes). The skill validates this and surfaces fix-up guidance on failure.
+For the export → Figma flow, the recommended import plugin is **[TokensBrücke](https://www.figma.com/community/plugin/1254538877056388290/tokensbr%C3%BCcke)**. See `plugins/adhd/lib/to-dtcg/README.md` for the recommended export settings and known round-trip caveats.
 
-**v1 limitation:** `leader: "code"` (push to Figma) is not yet supported — the Figma MCP currently exposes only read tools. The skill aborts with a clear message in Phase 1 if this leader is configured. Use `leader: "figma"` for v1.
+The Figma file must follow the structure mandated in the spec — a `Primitives` collection (no modes) and a `Semantic` collection (Light + Dark modes). The skill validates this and surfaces fix-up guidance on failure.
 
-## Reference App — Run
+## Reference app — run
 
 ```bash
+cd example
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) — the homepage is currently a variant grid showcasing the Avatar component (sizes, shapes, status, image sources) and the AvatarGroup `surface="brand"` mode that pulls from the gold semantic tokens.
+Open <http://localhost:3000> — the homepage is a variant grid showcasing the Avatar component (sizes, shapes, status, image sources) and the AvatarGroup `surface="brand"` mode using the gold semantic tokens.
 
-## Architecture Notes
+To exercise ADHD against the example:
 
-- `app/globals.css` — three-layer Tailwind v4 token architecture (`@theme` primitives, `:root` + `@media dark` semantic roles, `@theme inline` Tailwind exposure). This is the file ADHD edits.
-- `app/components/avatar/` and `app/components/avatar-group/` — sibling component folders. AvatarGroup uses `cloneElement` to inject size into Avatar children.
-- `docs/superpowers/specs/` and `docs/superpowers/plans/` — design specs and implementation plans for everything in this repo.
-- `plugins/adhd/` — the plugin source.
-- `.claude-plugin/marketplace.json` — declares this repo as a marketplace hosting the `adhd` plugin.
+```bash
+cd example
+# from this directory, slash commands resolve relative paths like a real consumer
+# (adhd.config.ts, app/globals.css, node_modules/tailwindcss/theme.css all live here)
+```
 
-## Built With
+## Repo layout
+
+```
+.
+├── plugins/adhd/                 # The plugin source
+│   ├── skills/                   # config, sync, export-for-figma, to-dtcg
+│   ├── lib/to-dtcg/              # zero-deps Node converter (CLI + tests + fixtures)
+│   └── .claude-plugin/           # plugin manifest
+├── docs/superpowers/
+│   ├── specs/                    # design specs
+│   └── plans/                    # implementation plans
+├── scripts/                      # repo-level scripts (skill frontmatter validator)
+├── .claude-plugin/               # marketplace declaration
+├── .github/workflows/            # CI (to-dtcg unit tests + project hygiene)
+├── example/                      # Next.js + Tailwind v4 demo consumer
+│   ├── app/                      # Next.js App Router source
+│   ├── adhd.config.ts            # the example consumer's config
+│   ├── package.json              # Next.js / Tailwind / npm deps
+│   └── …                         # next.config.ts, tsconfig.json, etc.
+└── README.md, AGENTS.md, CLAUDE.md
+```
+
+## Built with
 
 - [Next.js 16](https://nextjs.org)
 - [React 19](https://react.dev)

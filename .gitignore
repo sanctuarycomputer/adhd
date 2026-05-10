@@ -1,41 +1,18 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+#
+# Repo-level ignores only. The Next.js example app has its own
+# .gitignore at example/.gitignore for its build/dependency artifacts.
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# Generated DTCG export (in case anyone runs the CLI from the repo root)
+adhd-export-for-figma.json
 
-# testing
-/coverage
+# Env files (can opt-in for committing if needed)
+.env*
 
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
+# Misc
 .DS_Store
 *.pem
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# Claude Code session state (worktrees, local settings, etc.)
+# .claude-plugin/ at root is the marketplace metadata and IS tracked.
+.claude/
