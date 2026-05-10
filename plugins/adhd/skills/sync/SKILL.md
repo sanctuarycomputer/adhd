@@ -23,30 +23,98 @@ Stop the workflow on any failure here. Print the failure message and the relevan
 
 ### 1.1 Read and validate `adhd.config.ts`
 
+- **PAT-leak preflight (runs first).** Before parsing for fields, scan the source text of `adhd.config.ts` with two regex checks:
+  1. `figd_[A-Za-z0-9_-]+` — Figma PAT prefix.
+  2. `(pat|token|secret)\s*:\s*"[^"]{24,}"` — long opaque value assigned to a credential-named key.
+
+  On match, abort with the credential-leak message:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    Looks like a Figma PAT is committed to adhd.config.ts. This is a credential leak.
+  Next step: Remove it from the config and store it as FIGMA_PAT in either .env.local
+             (gitignored) or your shell environment. Then run /adhd:config.
+  ```
+
 - Use the `Read` tool on `adhd.config.ts` at the repo root.
-- If the file does not exist, abort with: `Cannot find adhd.config.ts at the repo root. Create it using the schema in the ADHD spec.` and print the schema example.
+- If the file does not exist, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    Cannot find adhd.config.ts at the repo root.
+  Next step: Run /adhd:config to fix.
+  ```
 - Parse the default-exported object. Since this is a plain TypeScript literal (no imports), extract the fields with targeted regex (look for `leader:`, `figma:`, `domains:`, `cssEntry:`).
 - Validate:
   - `leader` is exactly `"code"` or `"figma"`.
   - `figma.url` matches `^https://www\.figma\.com/design/[^/]+/`.
   - `domains` (if present) is an array containing only `"colors"`, `"spacing"`, `"typography"`, `"radius"`, `"shadow"`.
   - `cssEntry` (if present) points to a file that exists.
-- On any field mismatch, print the expected schema and the offending value, then stop.
+  - `figma.pat` (if present) matches `^[A-Z][A-Z0-9_]*$`. If it contains lowercase letters, special chars beyond underscore, or is longer than ~30 chars, abort with:
 
-**v1 limitation — `leader: "code"` is not yet supported.** The Figma MCP available in this session exposes only read tools (`mcp__figma__get_metadata`, `mcp__figma__get_variable_defs`, `mcp__figma__get_design_context`). There is no tool to create or update Figma variables. If `config.leader === "code"`, abort with: `leader: "code" (push to Figma) requires Figma write tools that are not available in v1 of this skill. Switch to leader: "figma" (pull from Figma) for now, or wait for v2 which will use the Figma REST API for writes.`
+    ```
+    ADHD sync cannot proceed.
+
+    Reason:    figma.pat must be the NAME of an env var (e.g., "FIGMA_PAT"), not the token itself.
+    Next step: Run /adhd:config to fix.
+    ```
+- On any field mismatch, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    adhd.config.ts field <field> has an unexpected value: <offending value>.
+             Expected: <expected schema description>.
+  Next step: Run /adhd:config to fix.
+  ```
+
+**`leader: "code"` apply path** — the code → Figma push apply phase is being implemented in a separate plan (`docs/superpowers/plans/2026-05-09-adhd-config-hybrid-writes.md`, forthcoming). Until that plan lands, abort with:
+
+```
+ADHD sync cannot proceed.
+
+Reason:    leader: "code" is configured, but the apply path is still being built (Plan 2 of the
+           ADHD config + hybrid-writes spec). Phase 1 validation has succeeded — your config and
+           PAT are correct.
+Next step: For now, switch leader to "figma" via /adhd:config to use the pull-from-Figma path.
+           Or wait for Plan 2 to ship the code→Figma writes engine.
+```
 
 ### 1.2 Resolve and check `globals.css`
 
 - Resolve CSS path: `config.cssEntry ?? "app/globals.css"`.
-- If the resolved file does not exist, abort with: `Cannot find CSS entry at <path>. Set cssEntry in adhd.config.ts if your CSS file lives elsewhere.`
+- If the resolved file does not exist, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    Cannot find CSS entry at <path>.
+  Next step: Run /adhd:config to fix.
+  ```
 - Read the file's first ~40 lines and confirm `@import "tailwindcss"` is present. If not, warn (don't abort) and continue.
 
 ### 1.3 Check Figma reachability
 
 - Extract the file key from `config.figma.url`: it is the path segment immediately after `/design/`.
 - Call `mcp__figma__get_metadata` with the file key.
-- If the call fails with an authentication error, abort with: `Figma MCP is not authenticated. Run the Figma MCP auth flow and retry.`
-- If the call returns 404 / not found, abort with: `Cannot reach the Figma file at <url>. Verify the URL and your access permissions.`
+- If the call fails with an authentication error, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    Figma MCP is not authenticated.
+  Next step: Run the Figma MCP auth flow per Figma's docs.
+  ```
+- If the call returns 404 / not found, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    Cannot reach the Figma file at <url>.
+  Next step: Run /adhd:config to fix.
+  ```
 
 ### 1.4 Validate Figma file structure
 
@@ -57,7 +125,15 @@ Stop the workflow on any failure here. Print the failure message and the relevan
   - Every variable name uses kebab-case segments and slash hierarchy (regex check: `^[a-z0-9]+(-[a-z0-9]+)*(/[a-z0-9]+(-[a-z0-9]+)*)*$`).
   - `Primitives` variables have raw values (color, number, string) — not aliases.
   - `Semantic` variables alias to a `Primitives` variable in BOTH modes — not raw values, not aliases to other semantic variables.
-- On any failure, print the specific issue (e.g., `Semantic collection has 3 modes (Light, Dark, HighContrast); v1 supports exactly Light and Dark`) and stop.
+- On any failure, abort with:
+
+  ```
+  ADHD sync cannot proceed.
+
+  Reason:    <specific issue, e.g.: Semantic collection has 3 modes (Light, Dark, HighContrast);
+             v1 supports exactly Light and Dark.>
+  Next step: Fix the Figma file: <specific corrective action>.
+  ```
 
 ### 1.5 Resolve domain selection
 
