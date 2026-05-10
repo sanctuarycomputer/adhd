@@ -80,7 +80,7 @@ plugins/adhd/lib/to-dtcg/
 ### CLI surface
 
 ```
-node plugins/adhd/lib/to-dtcg/cli.js --source <css|figma> --input <path-or-stdin> [--tailwind-theme <path>]
+node plugins/adhd/lib/to-dtcg/cli.js --source <css|figma> --input <path> [--tailwind-theme <path>]
 
   --source css     Read CSS source. Parses @theme {}, :root {}, and
                    @media (prefers-color-scheme: dark) :root {} blocks.
@@ -91,7 +91,7 @@ node plugins/adhd/lib/to-dtcg/cli.js --source <css|figma> --input <path-or-stdin
                    tokens, aliases to {ref} syntax, modes to
                    $extensions.com.figma.modes.
 
-  --input <path>   Read input from a file. Use "-" or omit to read stdin.
+  --input <path>   Read input from a file (required).
 
   --tailwind-theme <path>   (css mode only) Path to Tailwind v4's
                             theme.css for default merging. Default:

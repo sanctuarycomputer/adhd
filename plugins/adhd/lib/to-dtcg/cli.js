@@ -390,6 +390,13 @@ function parseFigmaResponse(json) {
   const semantic = Object.values(collById).find((c) => c.name === 'Semantic');
   if (!primitives) throw new Error('Figma file missing `Primitives` collection');
   if (!semantic) throw new Error('Figma file missing `Semantic` collection');
+  if (semantic.modes.length !== 2) {
+    throw new Error(`Semantic collection must have exactly 2 modes (Light, Dark); found ${semantic.modes.length}`);
+  }
+  const semanticModeNames = semantic.modes.map((m) => m.name).sort().join(',');
+  if (semanticModeNames !== 'Dark,Light') {
+    throw new Error(`Semantic collection modes must be named exactly Light and Dark; found ${semantic.modes.map((m) => m.name).join(', ')}`);
+  }
 
   // Build variable ID → variable info, including dtcgPath.
   const varInfo = {};
