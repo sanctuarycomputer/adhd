@@ -1,34 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+#
+# Repo-level ignores only. The Next.js example app has its own
+# .gitignore at example/.gitignore for its build/dependency artifacts.
 
-# Dependencies (Next.js example app lives in example/)
-example/node_modules/
-example/.pnp
-example/.pnp.*
-example/.yarn/*
-!example/.yarn/patches
-!example/.yarn/plugins
-!example/.yarn/releases
-!example/.yarn/versions
-
-# Testing
-example/coverage/
-
-# Next.js build output
-example/.next/
-example/out/
-
-# Production builds
-example/build/
-
-# TypeScript artifacts
-example/*.tsbuildinfo
-example/next-env.d.ts
-
-# Vercel
-example/.vercel
-
-# Generated DTCG export (from /adhd:export-for-figma)
-example/adhd-export-for-figma.json
+# Generated DTCG export (in case anyone runs the CLI from the repo root)
 adhd-export-for-figma.json
 
 # Env files (can opt-in for committing if needed)
@@ -37,9 +12,3 @@ adhd-export-for-figma.json
 # Misc
 .DS_Store
 *.pem
-
-# Debug logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
