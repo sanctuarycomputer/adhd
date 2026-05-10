@@ -19,7 +19,7 @@ The result: four single-purpose user commands, one model-invocable utility skill
 | Command | Direction | Mechanism | Side effects |
 |---|---|---|---|
 | `/adhd:config` | — | local file + URL validation via MCP | writes `adhd.config.ts` |
-| `/adhd:check` | bidirectional read | MCP read + DTCG compare | none (exit 0 / non-zero) |
+| `/adhd:lint` | bidirectional read | MCP read + DTCG compare | none (exit 0 / non-zero) |
 | `/adhd:export-for-figma` | code → Figma | Node converter → DTCG file → user imports | writes a DTCG JSON file |
 | `/adhd:sync-from-figma` | Figma → code | MCP read + DTCG diff + targeted CSS edits | edits `globals.css` |
 
@@ -29,13 +29,13 @@ Plus one utility skill the user never invokes directly:
 |---|---|---|
 | `adhd:to-dtcg` (model-invocable) | `export-for-figma`, `check`, `sync-from-figma` | Thin orchestrator that shells out to `plugins/adhd/lib/to-dtcg/cli.js` |
 
-**Conflict resolution** lives in `/adhd:sync-from-figma`'s Phase 5 interactive confirm prompt (existing pattern). No `leader` field, no declarative conflict policy. CI-style unattended use is supported via `--apply` (skip prompt) and `/adhd:check`'s non-zero exit code on drift.
+**Conflict resolution** lives in `/adhd:sync-from-figma`'s Phase 5 interactive confirm prompt (existing pattern). No `leader` field, no declarative conflict policy. CI-style unattended use is supported via `--apply` (skip prompt) and `/adhd:lint`'s non-zero exit code on drift.
 
 ## `adhd.config.ts` schema
 
 ```ts
 const config = {
-  // Required. The Figma file ADHD reads from for /adhd:check and
+  // Required. The Figma file ADHD reads from for /adhd:lint and
   // /adhd:sync-from-figma, and that the user imports into for
   // /adhd:export-for-figma.
   figma: {
@@ -190,7 +190,7 @@ test('css conversion produces expected DTCG', () => {
 
 **Frontmatter:**
 ```yaml
-description: "Convert design tokens between code (CSS) and Figma (MCP variable defs) representations and a canonical DTCG JSON shape. Used by /adhd:export-for-figma, /adhd:check, and /adhd:sync-from-figma."
+description: "Convert design tokens between code (CSS) and Figma (MCP variable defs) representations and a canonical DTCG JSON shape. Used by /adhd:export-for-figma, /adhd:lint, and /adhd:sync-from-figma."
 disable-model-invocation: false
 allowed-tools: Read Write Bash mcp__figma__get_variable_defs
 ```
@@ -269,10 +269,10 @@ Next:
      (right-click a collection mode, available on Schema-2025-enabled
      accounts), or via a DTCG-compatible community plugin like
      "Variables JSON Import" or "Tokens Studio for Figma".
-  3. Run /adhd:check to verify code and Figma agree.
+  3. Run /adhd:lint to verify code and Figma agree.
 ```
 
-## Component 4: `/adhd:check` user skill
+## Component 4: `/adhd:lint` user skill
 
 **Path:** `plugins/adhd/skills/check/SKILL.md`
 
@@ -312,7 +312,7 @@ Same as `/adhd:export-for-figma`'s Phase 1, plus:
   - In Figma only → flag as `figma-only`.
 - Filter by `config.domains` if set.
 
-**Note on Tailwind defaults:** the code-side DTCG includes the full Tailwind v4 default palette (merged in by `adhd:to-dtcg` Procedure A). On a freshly-bootstrapped project where Figma hasn't been seeded yet, `/adhd:check` will list every Tailwind-default token as "code-only". This is correct: it surfaces exactly what needs to be exported. The user runs `/adhd:export-for-figma`, imports, then re-runs `/adhd:check`; the diff should drop to zero.
+**Note on Tailwind defaults:** the code-side DTCG includes the full Tailwind v4 default palette (merged in by `adhd:to-dtcg` Procedure A). On a freshly-bootstrapped project where Figma hasn't been seeded yet, `/adhd:lint` will list every Tailwind-default token as "code-only". This is correct: it surfaces exactly what needs to be exported. The user runs `/adhd:export-for-figma`, imports, then re-runs `/adhd:lint`; the diff should drop to zero.
 
 ### Phase 5: Report and exit
 
@@ -339,7 +339,7 @@ To resolve, pick a direction:
   /adhd:export-for-figma   push code state to Figma (overwrites Figma)
   /adhd:sync-from-figma    pull Figma state into code (overwrites code)
 
-Then run /adhd:check again.
+Then run /adhd:lint again.
 ```
 Exit non-zero (suggest exit code 1 for drift; reserve other codes for actual errors).
 
@@ -364,7 +364,7 @@ allowed-tools: Read Edit Bash AskUserQuestion Skill mcp__figma__get_metadata mcp
 
 ### Phase 1: Validate
 
-Same as `/adhd:check` Phase 1 (config + PAT-leak preflight + Figma reachability + Figma structure).
+Same as `/adhd:lint` Phase 1 (config + PAT-leak preflight + Figma reachability + Figma structure).
 
 ### Phase 2: Read code-side via DTCG
 
@@ -376,7 +376,7 @@ Invoke `adhd:to-dtcg` Procedure B with `config.figma.url`. Receive DTCG.
 
 ### Phase 4: Compute diff
 
-Same flattening + per-path compare as `/adhd:check` Phase 4. Filter by `--domains` if set, else `config.domains`, else all.
+Same flattening + per-path compare as `/adhd:lint` Phase 4. Filter by `--domains` if set, else `config.domains`, else all.
 
 ### Phase 5: Display + confirm
 
@@ -487,7 +487,7 @@ Figma:   <URL>
 Domains: <"all" or comma-separated list>
 CSS:     <"app/globals.css (default)" or the explicit path>
 
-Next: run /adhd:check to see whether code and Figma are in sync.
+Next: run /adhd:lint to see whether code and Figma are in sync.
 ```
 
 ## Component 7: GitHub Actions CI
@@ -547,7 +547,7 @@ Documented in `plugins/adhd/lib/to-dtcg/README.md`:
 ## Authentication
 
 - ADHD does not manage credentials. Same as before.
-- The Figma MCP handles its own auth for read access (`/adhd:check` and `/adhd:sync-from-figma` use it).
+- The Figma MCP handles its own auth for read access (`/adhd:lint` and `/adhd:sync-from-figma` use it).
 - **No PAT, no `.env.local`, no shell-environment integration in any command.** All write paths to Figma go through DTCG JSON + manual user import.
 - The PAT-leak preflight stays as a defense-in-depth guard against accidental commits.
 
@@ -559,7 +559,7 @@ Documented in `plugins/adhd/lib/to-dtcg/README.md`:
 - **DTCG export of arbitrary CSS** (non-ADHD-managed variables).
 - **Round-trip equivalence guarantee for OKLCH ↔ hex.** Tolerance applies; documented.
 - **Token deletion on `/adhd:sync-from-figma`** without explicit confirmation.
-- **CI integration templates / docs.** `--apply` and `/adhd:check`'s exit code provide hooks; we don't ship workflow examples.
+- **CI integration templates / docs.** `--apply` and `/adhd:lint`'s exit code provide hooks; we don't ship workflow examples.
 - **Conflict-policy field in `adhd.config.ts`.** Phase 5 confirm is the resolution mechanism.
 - **Multiple Figma files per repo.** Single `figma.url` only.
 - **Custom DTCG `$extensions` namespaces beyond `com.figma`.**
@@ -575,17 +575,17 @@ Documented in `plugins/adhd/lib/to-dtcg/README.md`:
 
 3. **`adhd:to-dtcg` cli.js handles OKLCH:** Tailwind v4's `oklch(63.7% 0.237 25.331)` (red-500) converts to a hex value within ±1 LSB of `#fb2c36` per channel. (Note: Tailwind v3's red-500 was the literal `#ef4444`; v4 redefined the palette in OKLCH and the sRGB equivalents shifted slightly. `#fb2c36` is what the Ottosson conversion pipeline produces.)
 
-4. **`/adhd:config` produces a valid config** with `figma.url` plus optional `domains`/`cssEntry`. The output never contains `leader` or `figma.pat`. `/adhd:check` Phase 1 passes against the produced config.
+4. **`/adhd:config` produces a valid config** with `figma.url` plus optional `domains`/`cssEntry`. The output never contains `leader` or `figma.pat`. `/adhd:lint` Phase 1 passes against the produced config.
 
 5. **`/adhd:export-for-figma`** against the demo repo writes `adhd-export-for-figma.json` containing all Tailwind v4 default primitives + the user's custom primitives + the user's semantic roles with Light/Dark modes. The file parses as DTCG. Re-running produces identical output. `.gitignore` is updated on first run.
 
 6. **`/adhd:export-for-figma` output imports successfully** via at least one DTCG-compatible Figma plugin (manual smoke; not in CI).
 
-7. **`/adhd:check` against an in-sync state** prints the in-sync message and exits 0.
+7. **`/adhd:lint` against an in-sync state** prints the in-sync message and exits 0.
 
-8. **`/adhd:check` against a divergent state** prints the per-domain diff with both remediation pointers and exits with code 1.
+8. **`/adhd:lint` against a divergent state** prints the per-domain diff with both remediation pointers and exits with code 1.
 
-9. **`/adhd:check --domains colors`** restricts the diff to colors only.
+9. **`/adhd:lint --domains colors`** restricts the diff to colors only.
 
 10. **`/adhd:sync-from-figma`** with no diff prints "no changes" and exits without prompting.
 
@@ -617,6 +617,6 @@ This restructure ships as **four shipping units**, in order:
 
 3. **`/adhd:sync` rename to `/adhd:sync-from-figma`** + **DTCG-canonical Phases 2/3/4** + **leader=code path deletion** + **figma.pat shape-check deletion**. Brings the existing pull path under the new architecture.
 
-4. **`/adhd:check`** — depends on `adhd:to-dtcg` and on `/adhd:sync-from-figma`'s DTCG-canonical Phase 2/3 logic. Lands last because it reuses both.
+4. **`/adhd:lint`** — depends on `adhd:to-dtcg` and on `/adhd:sync-from-figma`'s DTCG-canonical Phase 2/3 logic. Lands last because it reuses both.
 
 Each unit is its own `writing-plans` invocation. Total work: substantially deletion-heavy (walking back parts of three commits from the prior wizard implementation) plus the new converter, the new export skill, and the new check skill.

@@ -21,9 +21,15 @@ After install, four slash commands are available:
 | Command | Direction | What it does |
 |---|---|---|
 | `/adhd:config` | — | Interactive wizard that produces `adhd.config.ts` |
-| `/adhd:export-for-figma` | code → Figma | Generates a DTCG JSON file the user imports into Figma via a community plugin |
-| `/adhd:sync` | Figma → code | Pulls Figma variables into `globals.css` (existing path; rename to `/adhd:sync-from-figma` planned for Plan 3) |
-| `/adhd:to-dtcg` | utility | Model-invocable converter wrapped by the user-facing skills |
+| `/adhd:lint` | read-only | Validates the configured Figma file (or a single frame) against the local design system + structure best-practices |
+| `/adhd:push-design-system` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
+| `/adhd:pull-design-system` | Figma → code | Pulls Figma variables + named styles into globals.css |
+
+`/adhd:push-design-system` and `/adhd:pull-design-system` require the official Figma plugin — install it with:
+
+```
+claude plugin install figma@claude-plugins-official
+```
 
 ## ADHD Plugin — Use in your repo
 
@@ -50,12 +56,10 @@ export default config;
 Then:
 
 ```
-/adhd:export-for-figma         # generate adhd-export-for-figma.json
-/adhd:sync --dry-run           # see what /adhd:sync would change
-/adhd:sync                     # apply (Figma → code; will prompt before writing)
+/adhd:lint                     # validate the Figma file against globals.css + structure rules
+/adhd:push-design-system       # apply (code → Figma; will prompt before writing)
+/adhd:pull-design-system       # apply (Figma → code; will prompt before writing)
 ```
-
-For the export → Figma flow, the recommended import plugin is **[TokensBrücke](https://www.figma.com/community/plugin/1254538877056388290/tokensbr%C3%BCcke)**. See `plugins/adhd/lib/to-dtcg/README.md` for the recommended export settings and known round-trip caveats.
 
 The Figma file must follow the structure mandated in the spec — a `Primitives` collection (no modes) and a `Semantic` collection (Light + Dark modes). The skill validates this and surfaces fix-up guidance on failure.
 
@@ -82,15 +86,15 @@ cd example
 ```
 .
 ├── plugins/adhd/                 # The plugin source
-│   ├── skills/                   # config, sync, export-for-figma, to-dtcg
-│   ├── lib/to-dtcg/              # zero-deps Node converter (CLI + tests + fixtures)
+│   ├── skills/                   # config, lint, push-design-system, pull-design-system
+│   ├── lib/                      # zero-deps Node libraries (lint-engine, design-system)
 │   └── .claude-plugin/           # plugin manifest
 ├── docs/superpowers/
 │   ├── specs/                    # design specs
 │   └── plans/                    # implementation plans
 ├── scripts/                      # repo-level scripts (skill frontmatter validator)
 ├── .claude-plugin/               # marketplace declaration
-├── .github/workflows/            # CI (to-dtcg unit tests + project hygiene)
+├── .github/workflows/            # CI (lib unit tests + project hygiene)
 ├── example/                      # Next.js + Tailwind v4 demo consumer
 │   ├── app/                      # Next.js App Router source
 │   ├── adhd.config.ts            # the example consumer's config

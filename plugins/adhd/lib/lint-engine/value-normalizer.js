@@ -1,0 +1,86 @@
+'use strict';
+
+const HEX_3 = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i;
+const HEX_6 = /^#([0-9a-f]{6})$/i;
+const HEX_8 = /^#([0-9a-f]{8})$/i;
+const RGB_RE = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i;
+
+function normalizeColor(input) {
+  if (typeof input !== 'string') {
+    throw new TypeError('normalizeColor: expected string, got ' + typeof input);
+  }
+  const trimmed = input.trim();
+
+  const m3 = HEX_3.exec(trimmed);
+  if (m3) {
+    return ('#' + m3[1] + m3[1] + m3[2] + m3[2] + m3[3] + m3[3]).toLowerCase();
+  }
+  if (HEX_6.test(trimmed) || HEX_8.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  const rgb = RGB_RE.exec(trimmed);
+  if (rgb) {
+    const r = Number(rgb[1]).toString(16).padStart(2, '0');
+    const g = Number(rgb[2]).toString(16).padStart(2, '0');
+    const b = Number(rgb[3]).toString(16).padStart(2, '0');
+    if (rgb[4] !== undefined) {
+      const a = Math.round(Number(rgb[4]) * 255).toString(16).padStart(2, '0');
+      return ('#' + r + g + b + a).toLowerCase();
+    }
+    return ('#' + r + g + b).toLowerCase();
+  }
+  throw new Error('normalizeColor: unrecognized format "' + input + '"');
+}
+
+function normalizeDimension(input) {
+  if (typeof input !== 'string') {
+    throw new TypeError('normalizeDimension: expected string, got ' + typeof input);
+  }
+  const trimmed = input.trim();
+  const remMatch = /^(-?[\d.]+)rem$/i.exec(trimmed);
+  if (remMatch) {
+    return Number(remMatch[1]) * 16 + 'px';
+  }
+  const pxMatch = /^(-?[\d.]+)px$/i.exec(trimmed);
+  if (pxMatch) {
+    return trimmed.toLowerCase();
+  }
+  // Unitless (e.g., line-height ratios)
+  if (/^-?[\d.]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  // Fallback: pass through
+  return trimmed;
+}
+
+function shadowEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const keys = ['offsetX', 'offsetY', 'blur', 'spread', 'color'];
+  for (const k of keys) {
+    if ((a[k] ?? null) !== (b[k] ?? null)) return false;
+  }
+  return true;
+}
+
+function valuesMatch(figmaValue, localValue, domain) {
+  switch (domain) {
+    case 'color':
+      try {
+        return normalizeColor(figmaValue) === normalizeColor(localValue);
+      } catch {
+        return false;
+      }
+    case 'spacing':
+    case 'radius':
+      return normalizeDimension(figmaValue) === normalizeDimension(localValue);
+    case 'typography':
+      return normalizeDimension(figmaValue) === normalizeDimension(localValue);
+    case 'shadow':
+      return shadowEqual(figmaValue, localValue);
+    default:
+      return figmaValue === localValue;
+  }
+}
+
+module.exports = { normalizeColor, normalizeDimension, valuesMatch };

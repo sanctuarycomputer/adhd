@@ -745,7 +745,7 @@ Acceptance criteria covered (from spec):
 Next steps:
   - Push to GitHub; verify CI runs green.
   - Plan 3: rename /adhd:sync to /adhd:sync-from-figma, delete leader entirely from sync's Phase 1, remove the figma.pat shape check, update mode-extension Phase 1.1.
-  - Plan 4: build /adhd:check (bidirectional read).
+  - Plan 4: build /adhd:lint (bidirectional read).
 
   Note: Plans 3 and 4 need a re-brainstorm pass before plan-writing because Plan 1.5 surfaced that the Figma MCP doesn't expose raw variable data. The original spec assumed it did. Likely options for Plans 3-4: consume TokensBrücke export as input, or add an Enterprise REST API path, or wait for Figma to ship a richer MCP tool.
 ```

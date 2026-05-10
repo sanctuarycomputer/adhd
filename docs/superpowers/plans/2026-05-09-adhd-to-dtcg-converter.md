@@ -1495,7 +1495,7 @@ Create `plugins/adhd/skills/to-dtcg/SKILL.md`:
 
 ```markdown
 ---
-description: "Convert design tokens between code (CSS) and Figma (MCP variable defs) representations and the canonical DTCG (Design Token Community Group) JSON shape. Used by /adhd:export-for-figma, /adhd:check, and /adhd:sync-from-figma. Wraps the deterministic Node converter at plugins/adhd/lib/to-dtcg/cli.js."
+description: "Convert design tokens between code (CSS) and Figma (MCP variable defs) representations and the canonical DTCG (Design Token Community Group) JSON shape. Used by /adhd:export-for-figma, /adhd:lint, and /adhd:sync-from-figma. Wraps the deterministic Node converter at plugins/adhd/lib/to-dtcg/cli.js."
 disable-model-invocation: false
 allowed-tools: Read Write Bash mcp__figma__get_variable_defs
 ---
@@ -1814,7 +1814,7 @@ Zero-dependency Node.js script that converts design tokens between code (CSS), F
 
 Used by ADHD's user-facing skills:
 - `/adhd:export-for-figma` — code → DTCG (user imports manually into Figma)
-- `/adhd:check` — code DTCG vs. Figma DTCG diff
+- `/adhd:lint` — code DTCG vs. Figma DTCG diff
 - `/adhd:sync-from-figma` — Figma DTCG → CSS edits
 
 Wrapped by the model-invocable skill at `plugins/adhd/skills/to-dtcg/SKILL.md`.
