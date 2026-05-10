@@ -72,6 +72,24 @@ Save the answer as `leader`. The value is one of `"code"` or `"figma"`. Both are
 
 ## Phase 2: Domains
 
+Use `AskUserQuestion` with a single multi-select question:
+
+```
+Question: "Which token domains should ADHD sync? (Default: all five.)"
+Header: "Domains"
+multiSelect: true
+Options:
+  - label: "colors", description: "Color primitives and semantic role aliases."
+  - label: "spacing", description: "Spacing scale (--spacing-1, --spacing-4, etc.)."
+  - label: "typography", description: "Font families, sizes, weights, line heights."
+  - label: "radius", description: "Border-radius scale."
+  - label: "shadow", description: "Box-shadow scale."
+```
+
+Default selection: the existing `domains` array from Phase 0 if present; otherwise all five selected.
+
+**Storage rule:** if all five domains are selected, **do not write a `domains` field** to `adhd.config.ts` — its absence means "all". Only write the array if a strict subset is selected. Save the user's selection in memory as `domainsSelection` (an array of 1–5 strings); Phase 6 decides whether to write it.
+
 ## Phase 3: Figma URL + reachability
 
 ## Phase 4: PAT setup (only when leader = code)
