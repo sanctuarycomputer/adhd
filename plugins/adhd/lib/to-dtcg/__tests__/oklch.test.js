@@ -4,11 +4,14 @@ const { test } = require('node:test');
 const { strict: assert } = require('node:assert');
 const { oklchToHex } = require('../cli.js');
 
-// Tailwind v4's red-500 reference: oklch(63.7% 0.237 25.331) ≈ #ef4444
-test('oklch red-500 → ~#ef4444', () => {
+// Tailwind v4's red-500 is oklch(63.7% 0.237 25.331). The hex equivalent
+// computed via the OKLCH → OKLab → sRGB pipeline (Ottosson) is ~#fb2c36.
+// This differs from Tailwind v3's literal #ef4444; v4 redefined the palette
+// in OKLCH and the sRGB equivalents shifted slightly.
+test('oklch red-500 → ~#fb2c36 (Tailwind v4)', () => {
   const hex = oklchToHex(0.637, 0.237, 25.331);
   // Allow ±1 LSB per channel for OKLCH→sRGB precision drift.
-  assertHexCloseTo(hex, '#ef4444', 1);
+  assertHexCloseTo(hex, '#fb2c36', 1);
 });
 
 // Tailwind v4's gold-100-ish: oklch(95% 0.05 96)
