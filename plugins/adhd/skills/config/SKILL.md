@@ -166,22 +166,18 @@ Compose the config object from in-memory state. Always include `leader` and `fig
 
 | Field | Include if |
 |---|---|
-| `figma.pat` | `envVarName !== "FIGMA_PAT"` |
 | `domains` | `domainsSelection` is a strict subset (length 1–4) |
 | `cssEntry` | resolved path is NOT `app/globals.css` |
 
 Render the file body using this template (omit lines marked optional when their condition is false):
 
 ```ts
-// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config).
+// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config, /adhd:export-for-figma).
 // No npm package or import required; the skills validate the shape on read.
 
 const config = {
-  leader: "<LEADER>" as const,
-
   figma: {
     url: "<URL>",
-    // optional: pat: "<ENV_VAR_NAME>",
   },
 
   // optional: domains: [<COMMA_QUOTED_LIST>],
@@ -217,29 +213,20 @@ Print a summary of what was done. Tailor to the actual operations:
 ```
 Config saved to adhd.config.ts.
 
-Leader: <LEADER>
-Figma:  <URL>
+Figma:   <URL>
 Domains: <"all" or comma-separated list>
-CSS:    <"app/globals.css (default)" or the explicit path>
-PAT:    <"loaded from <source>" or "n/a (leader=figma)">
-
-[If .env.local was created or modified:]
-Wrote <envVarName> to .env.local.
-[If .gitignore was modified:]
-Added .env.local to .gitignore.
+CSS:     <"app/globals.css (default)" or the explicit path>
 
 <NEXT_STEP>
 ```
 
-Substitute the actual values in angle brackets. The `<NEXT_STEP>` line depends on the saved `leader`:
+Substitute the actual values in angle brackets. The `<NEXT_STEP>` line is always:
 
-- **`leader: "figma"`** — print: `Next: run /adhd:sync --dry-run to preview your first diff.`
-- **`leader: "code"`** — print:
-  ```
-  Next: leader = "code" apply path is being implemented in Plan 2.
-        /adhd:sync will report this and stop until Plan 2 ships.
-        Once it does, run /adhd:sync --dry-run to preview your first diff.
-  ```
+```
+Next: run /adhd:export-for-figma to produce the DTCG JSON file you'll
+import into Figma via TokensBrücke (or any DTCG-compatible plugin).
+Then run /adhd:sync --dry-run to preview your first diff (Figma → code).
+```
 
 If running on a healthy config that didn't change, print `Config unchanged.` instead of the saved-to message.
 
