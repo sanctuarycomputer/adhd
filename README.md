@@ -16,17 +16,17 @@ Plugin source lives at the repo root (`plugins/`, `docs/`, `scripts/`, etc.). Th
 
 Both commands are persistent — Claude Code remembers the marketplace and the enabled plugin across sessions. Run them once per machine.
 
-After install, four slash commands are available:
+After install, five slash commands are available:
 
-| Command | Direction | What it does |
-|---|---|---|
-| `/adhd:config` | — | Interactive wizard that produces `adhd.config.ts` |
-| `/adhd:lint` | read-only | Validates the configured Figma file (or a single frame) against the local design system + structure best-practices |
-| `/adhd:push-design-system` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
-| `/adhd:pull-design-system` | Figma → code | Pulls Figma variables + named styles into globals.css |
-| `/adhd:push-component` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
+| Command | Args | Direction | What it does |
+|---|---|---|---|
+| `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts` |
+| `/adhd:lint` | `[<figma-url>]` | read-only | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices |
+| `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
+| `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
+| `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
 
-`/adhd:push-design-system` and `/adhd:pull-design-system` require the official Figma plugin — install it with:
+`/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:lint`, and `/adhd:push-component` all require the official Figma plugin — install it with:
 
 ```
 claude plugin install figma@claude-plugins-official
@@ -57,10 +57,37 @@ export default config;
 Then:
 
 ```
-/adhd:lint                     # validate the Figma file against globals.css + structure rules
-/adhd:push-design-system       # apply (code → Figma; will prompt before writing)
-/adhd:pull-design-system       # apply (Figma → code; will prompt before writing)
+/adhd:lint                                       # validate the whole Figma file
+/adhd:lint https://figma.com/design/<KEY>?node-id=12-2   # validate a single page/frame/component
+/adhd:push-design-system                         # apply (code → Figma; will prompt before writing)
+/adhd:pull-design-system                         # apply (Figma → code; will prompt before writing)
+/adhd:push-component app/components/avatar/index.tsx     # push a React component to Figma
 ```
+
+### Scoped lint
+
+Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` will validate just that subtree (a single Component Set, page, frame, or component) instead of the whole file. Copy the URL straight from Figma's "Copy link to selection" right-click menu.
+
+```
+# Whole file
+/adhd:lint
+
+# Just the Avatar Component Set on the Avatar page
+/adhd:lint https://www.figma.com/design/PBCAkpPnvGXWrz6H7qfH3V/ADHD-Reference?node-id=91-18
+```
+
+The scoped report covers the same rules (STRUCT001–010 + variable mismatches), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
+
+### Push a component
+
+```
+# From the consumer repo with adhd.config.ts at the root
+/adhd:push-component app/components/avatar/index.tsx
+```
+
+The skill parses the component's TypeScript prop unions, generates a temp preview route, auto-starts the Next.js dev server if needed, captures via `generate_figma_design`, wraps the captured frames into a Component Set with variant properties, rebinds raw values to existing design-system variables, and runs the same lint engine `/adhd:lint` uses as a preflight check before finalizing. If the Cartesian product would exceed 30 variants, pass `--max-variants <n>` to cap with coverage-first selection.
+
+### Figma file structure
 
 The Figma file must follow the structure mandated in the spec — a `Primitives` collection (no modes) and a `Semantic` collection (Light + Dark modes). The skill validates this and surfaces fix-up guidance on failure.
 
