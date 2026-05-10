@@ -98,37 +98,64 @@ const PAGE_ID = ${JSON.stringify(pageId)};
 const MANIFEST = ${MANIFEST_JSON};
 const REVERSE_INDEX = ${RI_JSON};
 
-// 1. Load the captured page
-const page = await figma.getNodeByIdAsync(PAGE_ID);
-if (!page || page.type !== 'PAGE') throw new Error('Captured page not found: ' + PAGE_ID);
-await figma.setCurrentPageAsync(page);
+// 1. Load the captured node; walk up to its PAGE ancestor.
+// generate_figma_design returns a FRAME (not a PAGE), so we must climb to the page.
+const capturedRoot = await figma.getNodeByIdAsync(PAGE_ID);
+if (!capturedRoot) throw new Error('Captured node not found: ' + PAGE_ID);
+let pageNode = capturedRoot;
+while (pageNode && pageNode.type !== 'PAGE') pageNode = pageNode.parent;
+if (!pageNode) throw new Error('Could not locate PAGE ancestor for captured node ' + PAGE_ID);
+await figma.setCurrentPageAsync(pageNode);
 
-// 2. Find variant frames by data-adhd-variant in layer name
-function findVariants(root) {
-  const out = [];
-  function walk(n) {
-    if (n.name && n.name.includes('data-adhd-variant=')) { out.push(n); return; }
-    if (Array.isArray(n.children)) for (const c of n.children) walk(c);
+// 2. Find the descendant whose children count matches the expected variant count.
+// This is the "variant parent" — the grid container that holds one frame per variant.
+function findVariantLevel(n) {
+  if ('children' in n && Array.isArray(n.children) && n.children.length === MANIFEST.variants.length) return n;
+  if ('children' in n && Array.isArray(n.children)) {
+    for (const c of n.children) { const f = findVariantLevel(c); if (f) return f; }
   }
-  walk(root);
-  return out;
+  return null;
 }
-let variantFrames = findVariants(page);
-if (variantFrames.length === 0) {
-  throw new Error('Capture produced no recognizable variant frames');
-}
+const variantParent = findVariantLevel(capturedRoot);
+if (!variantParent) throw new Error('Could not find a descendant with ' + MANIFEST.variants.length + ' children (expected variant grid)');
 
-// 3. Extract variant key
+// 3. Try data-adhd-variant name match first; fall back to positional reading order.
+// generate_figma_design does NOT preserve data-* attributes as layer names in practice,
+// so the positional fallback is the usual path.
 function variantKeyFromName(name) {
-  const m = /data-adhd-variant="?([^"]+)"?/.exec(name); return m ? m[1] : null;
+  if (!name) return null;
+  const m = /data-adhd-variant="?([^"\\s]+)"?/.exec(name);
+  return m ? m[1] : null;
 }
 function keyToProps(key) {
   const out = {};
   for (const pair of key.split(';')) { const [k, v] = pair.split('='); out[k] = v; }
   return out;
 }
+const namedMatches = [];
+(function walkNames(n) {
+  if (n.name && n.name.includes('data-adhd-variant=')) namedMatches.push(n);
+  if ('children' in n && Array.isArray(n.children)) for (const c of n.children) walkNames(c);
+})(capturedRoot);
 
-// 4. Visual-signature dedup (inline implementation matching visual-signature.js)
+let variantNodes;
+if (namedMatches.length === MANIFEST.variants.length) {
+  // Sort by extracted variant key alphabetically (matches manifest sort below).
+  variantNodes = namedMatches.sort((a, b) => (variantKeyFromName(a.name) || '').localeCompare(variantKeyFromName(b.name) || ''));
+} else {
+  // Positional fallback: read variantParent.children top-to-bottom, left-to-right (5px row tolerance).
+  variantNodes = [...variantParent.children].sort((a, b) => {
+    const dy = a.y - b.y;
+    if (Math.abs(dy) > 5) return dy;
+    return a.x - b.x;
+  });
+}
+
+// 4. Sort manifest variants by variant-key (alphabetical) so they align with the sorted node order.
+function variantKeyFor(v) { return Object.keys(v).sort().map(k => k + '=' + v[k]).join(';'); }
+const sortedVariants = [...MANIFEST.variants].sort((a, b) => variantKeyFor(a).localeCompare(variantKeyFor(b)));
+
+// 5. Visual-signature dedup BEFORE conversion: collapse frames with identical structural signatures.
 function structuralHash(node) {
   const RELEVANT = ['type','width','height','layoutMode','paddingTop','paddingBottom','paddingLeft','paddingRight','itemSpacing','cornerRadius','fills','strokes','effects','characters','fontSize'];
   function pick(n) {
@@ -139,48 +166,48 @@ function structuralHash(node) {
     if (Array.isArray(n.children)) out.children = n.children.map(pick);
     return out;
   }
-  // Inline hash (no crypto in Figma sandbox; use a deterministic JSON-stringify)
   return JSON.stringify(pick(node));
 }
 const bySig = new Map();
-for (const f of variantFrames) {
-  const sig = structuralHash(f);
-  if (!bySig.has(sig)) bySig.set(sig, []);
-  bySig.get(sig).push(f);
-}
-const survivors = [];
+const survivorNodes = [];
+const survivorProps = [];
 const collapsed = [];
-for (const [sig, frames] of bySig) {
-  const sorted = frames.sort((a,b) => (variantKeyFromName(a.name)||'').localeCompare(variantKeyFromName(b.name)||''));
-  survivors.push(sorted[0]);
-  for (let i = 1; i < sorted.length; i++) { collapsed.push(sorted[i].name); sorted[i].remove(); }
-}
-
-// 5. Compute effective variant properties (drop axes that don't distinguish any survivors)
-const survivorProps = survivors.map(s => keyToProps(variantKeyFromName(s.name) || ''));
-const axisNames = new Set();
-for (const p of survivorProps) for (const k of Object.keys(p)) axisNames.add(k);
-const effectiveAxes = new Set();
-for (const axis of axisNames) {
-  const values = new Set(survivorProps.map(p => p[axis]));
-  if (values.size > 1) effectiveAxes.add(axis);
-}
-
-// 6. Combine into Component Set
-const sorted = survivors.sort((a,b) => (variantKeyFromName(a.name)||'').localeCompare(variantKeyFromName(b.name)||''));
-const componentSet = figma.combineAsVariants(sorted, page);
-componentSet.name = MANIFEST.componentName;
-
-// 7. Set variantProperties only for effective axes; drop 'undefined' values
-for (const child of componentSet.children) {
-  const key = variantKeyFromName(child.name);
-  const props = key ? keyToProps(key) : {};
-  const effective = {};
-  for (const k of Object.keys(props)) {
-    if (effectiveAxes.has(k) && props[k] !== 'undefined') effective[k] = props[k];
+for (let i = 0; i < variantNodes.length; i++) {
+  const node = variantNodes[i];
+  const props = sortedVariants[i];
+  const sig = structuralHash(node);
+  if (bySig.has(sig)) {
+    collapsed.push(props);
+    try { node.remove(); } catch (e) {}
+  } else {
+    bySig.set(sig, true);
+    survivorNodes.push(node);
+    survivorProps.push(props);
   }
-  child.variantProperties = effective;
 }
+
+// 6. Move survivors to the page (top-level siblings) and convert FRAME → COMPONENT.
+// combineAsVariants requires COMPONENT nodes that are siblings of the target parent.
+// Keep ALL property keys in the component name, even where the value is the literal string
+// "undefined" — Component Set requires uniform property names across all variants.
+const components = [];
+for (let i = 0; i < survivorNodes.length; i++) {
+  const child = await figma.getNodeByIdAsync(survivorNodes[i].id);
+  pageNode.appendChild(child);
+  const c = figma.createComponentFromNode(child);
+  const props = survivorProps[i];
+  const parts = Object.keys(props).sort().map(k => k + '=' + String(props[k]));
+  // Figma derives variant properties from this name via "propA=valueA, propB=valueB".
+  c.name = parts.join(', ');
+  components.push(c);
+}
+
+// 7. Combine into Component Set.
+const componentSet = figma.combineAsVariants(components, pageNode);
+componentSet.name = MANIFEST.componentName;
+componentSet.x = 40;
+componentSet.y = 40;
+pageNode.name = MANIFEST.componentName;
 
 // 8. Rebind raw fills / paddings / radii to existing Figma variables.
 // NOTE: to2 (2-decimal) matches reverse-index.js's colorKey quantization.
@@ -230,21 +257,28 @@ async function bindNode(n) {
   if (Array.isArray(n.children)) for (const c of n.children) await bindNode(c);
 }
 
-let boundCount = 0;
 for (const child of componentSet.children) {
   await bindNode(child);
 }
 
-// 9. Position and finalize
-componentSet.x = 40; componentSet.y = 40;
-page.name = MANIFEST.componentName;
+// 9. Prune the now-empty captured root (its variant children have been moved out).
+function pruneEmpty(n) {
+  if (n === componentSet) return;
+  if ('children' in n && Array.isArray(n.children)) {
+    for (const c of [...n.children]) pruneEmpty(c);
+    if (n.children.length === 0) {
+      try { n.remove(); } catch (e) {}
+    }
+  }
+}
+pruneEmpty(capturedRoot);
 
 return {
   componentSetId: componentSet.id,
   variantCount: componentSet.children.length,
   collapsedCount: collapsed.length,
-  effectiveAxes: [...effectiveAxes],
-  pageId: page.id,
+  pageId: pageNode.id,
+  pageName: pageNode.name,
 };
 `;
 }

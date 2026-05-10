@@ -119,6 +119,28 @@ test('consolidation-script subcommand emits a JS string with placeholders substi
   assert.match(script, /data-adhd-variant/);
 });
 
+test('consolidation-script converts captured FRAMEs to COMPONENTs before combining', () => {
+  // generate_figma_design returns FRAME children, but figma.combineAsVariants
+  // requires COMPONENT nodes — assert positive evidence of the conversion path.
+  const manifest = tmp('manifest.json', JSON.stringify({
+    componentName: 'Avatar',
+    variants: [{ size: 'xs' }, { size: 'sm' }],
+    importPath: '@/app/components/avatar',
+  }));
+  const reverseIndex = tmp('ri.json', JSON.stringify({ color: [], spacing: [], radius: [] }));
+  const out = tmp('script.js', '');
+  const result = spawnSync('node', [
+    CLI, 'consolidation-script',
+    '--manifest', manifest,
+    '--captured-page-id', '12:34',
+    '--reverse-index', reverseIndex,
+    '--output', out,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const script = fs.readFileSync(out, 'utf8');
+  assert.match(script, /figma\.createComponentFromNode/);
+});
+
 test('preflight subcommand produces a lint report', () => {
   // Build minimal inputs that lint-engine accepts
   const ctx = tmp('ctx.json', JSON.stringify({
