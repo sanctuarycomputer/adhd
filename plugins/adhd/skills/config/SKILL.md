@@ -56,6 +56,20 @@ Pass these forward as defaults for Phases 1, 2, 3, 4, and 5.
 
 ## Phase 1: Leader
 
+Use `AskUserQuestion` with a single multiple-choice question:
+
+```
+Question: "Which side should win on conflict?"
+Header: "Leader"
+Options:
+  - label: "code", description: "This codebase is canonical. Sync pushes changes to Figma."
+  - label: "figma", description: "Figma is canonical. Sync pulls changes into globals.css."
+```
+
+Default selection: the existing `leader` value from Phase 0 if present; otherwise no default.
+
+Save the answer as `leader`. The value is one of `"code"` or `"figma"`. Both are fully supported by this wizard. (Note: as of Plan 1 of the implementation, the actual code → Figma apply path in `/adhd:sync` is still being built — Plan 2. The wizard saves `leader: "code"` correctly today; sync will surface a clear "apply path not yet implemented" message until Plan 2 lands.)
+
 ## Phase 2: Domains
 
 ## Phase 3: Figma URL + reachability
