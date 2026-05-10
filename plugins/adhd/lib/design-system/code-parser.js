@@ -6,11 +6,11 @@ const path = require('node:path');
 const VAR_RE = /(--[a-zA-Z0-9_-]+)\s*:\s*([^;]+);/g;
 const VAR_REF_RE = /var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,[^)]*)?\)/;
 
-// Categories from Tailwind's @theme default that we DON'T push to Figma in v1.
-// (breakpoints, containers, ease, blur, perspective, animate, aspect, default-* meta)
+// `--default-*` vars in Tailwind's @theme default reference other vars via the
+// special --theme(...) syntax (e.g. `--default-font-family: --theme(--font-sans, initial)`).
+// They aren't standalone tokens and don't translate to Figma variables, so we filter them.
 const NON_PUSHABLE_PREFIXES = [
-  'breakpoint-', 'container-', 'ease-', 'blur-',
-  'perspective-', 'animate-', 'aspect-', 'default-',
+  'default-',
 ];
 
 function findBlock(css, openRe) {
@@ -84,6 +84,18 @@ function inferDomain(cssVarName) {
     stripped.startsWith('leading-') ||
     stripped.startsWith('tracking-')
   ) return 'typography';
+  // Utility / non-visual-token Tailwind categories. Each maps to its own Figma
+  // collection on push (see DOMAIN_COLLECTION in figma-write-actions.js).
+  if (stripped.startsWith('opacity-')) return 'opacity';
+  if (stripped.startsWith('border-')) return 'border-width';
+  if (stripped.startsWith('z-')) return 'z-index';
+  if (stripped.startsWith('breakpoint-')) return 'breakpoint';
+  if (stripped.startsWith('container-')) return 'container';
+  if (stripped.startsWith('blur-')) return 'blur';
+  if (stripped.startsWith('perspective-')) return 'perspective';
+  if (stripped.startsWith('aspect-')) return 'aspect';
+  if (stripped.startsWith('ease-')) return 'ease';
+  if (stripped.startsWith('animate-')) return 'animate';
   // Heuristic for semantic colors that don't have a "color-" prefix
   if (/^(background|foreground|brand|surface|text|border|accent)/i.test(stripped)) return 'color';
   return 'unknown';
@@ -112,6 +124,16 @@ function pathFromCssVar(cssVarName) {
     spacing: ['spacing-', 'space-'],  // Prefer 'spacing-' (Tailwind v4 native) over the older 'space-'.
     radius: ['radius-'],
     shadow: ['shadow-'],
+    opacity: ['opacity-'],
+    'border-width': ['border-'],
+    'z-index': ['z-'],
+    breakpoint: ['breakpoint-'],
+    container: ['container-'],
+    blur: ['blur-'],
+    perspective: ['perspective-'],
+    aspect: ['aspect-'],
+    ease: ['ease-'],
+    animate: ['animate-'],
   };
   // Multi-family prefixes keep the family name in the path so they don't
   // collide. Order matters: longer prefixes tried first.
@@ -138,6 +160,13 @@ function pathFromCssVar(cssVarName) {
       }
     }
   }
+  // Flat-scale domains keep their leaf as a single segment — e.g. `ease-in-out`
+  // is one name, not `in/out`. Skip the hyphen-split for these.
+  const FLAT_DOMAINS = new Set([
+    'opacity', 'border-width', 'z-index', 'breakpoint', 'container',
+    'blur', 'perspective', 'aspect', 'ease', 'animate',
+  ]);
+  if (FLAT_DOMAINS.has(domain)) return rest;
   // Split on FIRST hyphen only — first part is "group", rest is "leaf" (with literal hyphens preserved).
   // This mirrors Figma's convention: `/` separates path segments, `-` is literal within a segment.
   const firstHyphen = rest.indexOf('-');
@@ -215,25 +244,49 @@ const TAILWIND_SPACING_SCALE = {
 // Bookend radius values not in theme.css's --radius-{xs..4xl} set.
 const TAILWIND_RADIUS_EXTRAS = { 'none': 0, 'full': 9999 };
 
+// Tailwind v4 opacity scale (utility-class names → 0–1 float for Figma).
+// Note: Figma stores opacity as 0–1, not 0–100.
+const TAILWIND_OPACITY_SCALE = (() => {
+  const out = {};
+  for (let i = 0; i <= 100; i += 5) out[String(i)] = i / 100;
+  return out;
+})();
+
+// Tailwind v4 border-width scale (px). `auto` and percentage values excluded.
+const TAILWIND_BORDER_WIDTH_SCALE = {
+  '0': 0, '1': 1, '2': 2, '4': 4, '8': 8,
+};
+
+// Tailwind v4 z-index scale. `auto` skipped (not a number).
+const TAILWIND_Z_INDEX_SCALE = {
+  '0': 0, '10': 10, '20': 20, '30': 30, '40': 40, '50': 50,
+};
+
 function synthesizeTailwindUtilityScale() {
   const out = [];
-  for (const [name, px] of Object.entries(TAILWIND_SPACING_SCALE)) {
+  const push = (domain, name, value, cssVarPrefix) => {
     out.push({
-      domain: 'spacing',
+      domain,
       path: name,
-      values: { default: { type: 'literal', value: px + 'px' } },
-      cssVar: '--spacing-' + name,
+      values: { default: { type: 'literal', value: String(value) } },
+      cssVar: cssVarPrefix + name,
       synthetic: true,
     });
+  };
+  for (const [name, px] of Object.entries(TAILWIND_SPACING_SCALE)) {
+    push('spacing', name, px + 'px', '--spacing-');
   }
   for (const [name, px] of Object.entries(TAILWIND_RADIUS_EXTRAS)) {
-    out.push({
-      domain: 'radius',
-      path: name,
-      values: { default: { type: 'literal', value: px + 'px' } },
-      cssVar: '--radius-' + name,
-      synthetic: true,
-    });
+    push('radius', name, px + 'px', '--radius-');
+  }
+  for (const [name, v] of Object.entries(TAILWIND_OPACITY_SCALE)) {
+    push('opacity', name, v, '--opacity-');
+  }
+  for (const [name, px] of Object.entries(TAILWIND_BORDER_WIDTH_SCALE)) {
+    push('border-width', name, px + 'px', '--border-');
+  }
+  for (const [name, v] of Object.entries(TAILWIND_Z_INDEX_SCALE)) {
+    push('z-index', name, v, '--z-');
   }
   return out;
 }

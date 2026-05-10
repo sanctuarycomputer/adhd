@@ -137,20 +137,54 @@ test('includeTailwindDefaults: --shadow-* tokens get domain shadow', () => {
   assert.equal(dropShadowMd.domain, 'shadow');
 });
 
-test('includeTailwindDefaults: non-pushable categories are filtered out', () => {
+test('includeTailwindDefaults: --default-* meta vars are filtered out', () => {
+  // The --default-* category in @theme default references other vars via
+  // the special --theme(...) syntax and isn't standalone tokens.
   const ds = parseCodeDesignSystem('', { includeTailwindDefaults: true });
-  // None of these should appear as tokens
   const allCssVars = ds.tokens.map(t => t.cssVar).join(' ');
-  assert.ok(!allCssVars.includes('--breakpoint-md'),
-    'breakpoint-md should be filtered out');
-  assert.ok(!allCssVars.includes('--ease-out'),
-    'ease-out should be filtered out');
   assert.ok(!allCssVars.includes('--default-font-family'),
     'default-font-family should be filtered out');
-  assert.ok(!allCssVars.includes('--container-md'),
-    'container-md should be filtered out');
-  assert.ok(!allCssVars.includes('--blur-md'),
-    'blur-md should be filtered out');
+  assert.ok(!allCssVars.includes('--default-transition-duration'),
+    'default-transition-duration should be filtered out');
+});
+
+test('includeTailwindDefaults: previously-skipped categories now produce tokens', () => {
+  const ds = parseCodeDesignSystem('', { includeTailwindDefaults: true });
+  const byPath = Object.fromEntries(
+    ds.tokens.map(t => [t.domain + ':' + t.path, t]),
+  );
+  assert.ok(byPath['breakpoint:md'], 'expected --breakpoint-md → domain breakpoint, path md');
+  assert.ok(byPath['ease:out'], 'expected --ease-out → domain ease, path out');
+  assert.equal(byPath['ease:in-out'].domain, 'ease');
+  assert.equal(byPath['ease:in-out'].path, 'in-out', 'ease is a flat domain — leaf not split on hyphen');
+  assert.ok(byPath['container:md']);
+  assert.ok(byPath['blur:md']);
+  assert.ok(byPath['perspective:near']);
+  assert.ok(byPath['aspect:video']);
+  assert.ok(byPath['animate:spin']);
+});
+
+test('includeTailwindDefaults: synthesizes opacity / border-width / z-index scales', () => {
+  const ds = parseCodeDesignSystem('', { includeTailwindDefaults: true });
+  const byPath = Object.fromEntries(
+    ds.tokens.map(t => [t.domain + ':' + t.path, t]),
+  );
+  // Opacity: 21 values, 0 → 100 by 5, stored as 0–1 floats.
+  const opacity = ds.tokens.filter(t => t.domain === 'opacity');
+  assert.equal(opacity.length, 21);
+  assert.equal(byPath['opacity:0'].values.default.value, '0');
+  assert.equal(byPath['opacity:5'].values.default.value, '0.05');
+  assert.equal(byPath['opacity:100'].values.default.value, '1');
+  // Border-width: 5 values.
+  const bw = ds.tokens.filter(t => t.domain === 'border-width');
+  assert.equal(bw.length, 5);
+  assert.equal(byPath['border-width:0'].values.default.value, '0px');
+  assert.equal(byPath['border-width:8'].values.default.value, '8px');
+  // Z-index: 6 values (0..50 by 10).
+  const z = ds.tokens.filter(t => t.domain === 'z-index');
+  assert.equal(z.length, 6);
+  assert.equal(byPath['z-index:0'].values.default.value, '0');
+  assert.equal(byPath['z-index:50'].values.default.value, '50');
 });
 
 test('multi-hyphen semantic var names preserve internal hyphens (only first hyphen is path separator)', () => {

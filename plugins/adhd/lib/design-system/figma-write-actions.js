@@ -6,6 +6,16 @@ const DOMAIN_COLLECTION = {
   radius: 'radius',
   shadow: 'shadow',
   typography: 'typography',
+  opacity: 'opacity',
+  'border-width': 'border-width',
+  'z-index': 'z-index',
+  breakpoint: 'breakpoint',
+  container: 'container',
+  blur: 'blur',
+  perspective: 'perspective',
+  aspect: 'aspect',
+  ease: 'ease',
+  animate: 'animate',
 };
 
 const DOMAIN_PREFIX = {
@@ -14,7 +24,25 @@ const DOMAIN_PREFIX = {
   radius: '--radius-',
   shadow: '--shadow-',
   typography: '--font-',
+  opacity: '--opacity-',
+  'border-width': '--border-',
+  'z-index': '--z-',
+  breakpoint: '--breakpoint-',
+  container: '--container-',
+  blur: '--blur-',
+  perspective: '--perspective-',
+  aspect: '--aspect-',
+  ease: '--ease-',
+  animate: '--animate-',
 };
+
+// Domains whose values are FLOATs (dimensions or unitless numbers).
+const FLOAT_DOMAINS = new Set([
+  'spacing', 'radius', 'opacity', 'border-width', 'z-index',
+  'breakpoint', 'container', 'blur', 'perspective',
+]);
+// Domains whose values are STRINGs (cubic-bezier, animation shorthand, ratio).
+const STRING_DOMAINS = new Set(['aspect', 'ease', 'animate']);
 
 // Convert dimension-bearing strings like "0.25rem" / "16px" / "1.5" → number (px).
 // Returns null if the value is not a simple dimension/unitless number.
@@ -38,16 +66,18 @@ function figmaTypeForToken(domain, valueObj) {
   if (domain === 'color') return 'COLOR';
   // Aliases inherit the type of their domain (resolved later in Figma).
   if (valueObj && valueObj.type === 'alias') {
-    if (domain === 'spacing' || domain === 'radius') return 'FLOAT';
+    if (FLOAT_DOMAINS.has(domain)) return 'FLOAT';
+    if (STRING_DOMAINS.has(domain)) return 'STRING';
     if (domain === 'typography') return 'FLOAT'; // best guess; STRING handled when literal
     return 'STRING';
   }
   // Literal dispatch
   const raw = valueObj && valueObj.type === 'literal' ? valueObj.value : null;
   if (raw == null) return 'STRING';
-  if (domain === 'spacing' || domain === 'radius') {
+  if (FLOAT_DOMAINS.has(domain)) {
     return dimensionToPx(raw) != null ? 'FLOAT' : 'STRING';
   }
+  if (STRING_DOMAINS.has(domain)) return 'STRING';
   if (domain === 'typography') {
     // text/font-weight/leading/tracking can be numeric (FLOAT) or expression/string (STRING).
     return dimensionToPx(raw) != null ? 'FLOAT' : 'STRING';

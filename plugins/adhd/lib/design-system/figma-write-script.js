@@ -23,6 +23,16 @@ const SCOPES = {
   color: ['FRAME_FILL', 'SHAPE_FILL', 'TEXT_FILL', 'STROKE_COLOR'],
   spacing: ['GAP', 'WIDTH_HEIGHT'],
   radius: ['CORNER_RADIUS'],
+  opacity: ['OPACITY'],
+  'border-width': ['STROKE_FLOAT'],
+  'z-index': ['ALL_SCOPES'],
+  breakpoint: ['ALL_SCOPES'],
+  container: ['WIDTH_HEIGHT'],
+  blur: ['EFFECT_FLOAT'],
+  perspective: ['ALL_SCOPES'],
+  aspect: ['ALL_SCOPES'],
+  ease: ['ALL_SCOPES'],
+  animate: ['ALL_SCOPES'],
   // Typography scopes vary by sub-family; we set permissive defaults and
   // narrow per token via tokenScopesFor().
   typography: ['ALL_SCOPES'],

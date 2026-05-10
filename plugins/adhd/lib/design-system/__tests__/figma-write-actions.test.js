@@ -146,6 +146,105 @@ test('color token still emits COLOR-typed create-variable (regression guard)', (
   );
 });
 
+test('opacity token (0.05) → FLOAT in `opacity` collection', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'opacity', path: '5',
+      values: { default: { type: 'literal', value: '0.05' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].kind, 'create-variable');
+  assert.equal(actions[0].collection, 'opacity');
+  assert.equal(actions[0].type, 'FLOAT');
+  assert.equal(actions[0].resolvedByMode.default, 0.05);
+});
+
+test('border-width token (8px) → FLOAT in `border-width` collection', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'border-width', path: '8',
+      values: { default: { type: 'literal', value: '8px' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].collection, 'border-width');
+  assert.equal(actions[0].type, 'FLOAT');
+  assert.equal(actions[0].resolvedByMode.default, 8);
+});
+
+test('z-index token (50, unitless) → FLOAT in `z-index` collection', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'z-index', path: '50',
+      values: { default: { type: 'literal', value: '50' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].collection, 'z-index');
+  assert.equal(actions[0].type, 'FLOAT');
+  assert.equal(actions[0].resolvedByMode.default, 50);
+});
+
+test('breakpoint token (40rem) → FLOAT converted to 640 px', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'breakpoint', path: 'sm',
+      values: { default: { type: 'literal', value: '40rem' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].collection, 'breakpoint');
+  assert.equal(actions[0].type, 'FLOAT');
+  assert.equal(actions[0].resolvedByMode.default, 640);
+});
+
+test('aspect token (16 / 9) → STRING in `aspect` collection', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'aspect', path: 'video',
+      values: { default: { type: 'literal', value: '16 / 9' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].collection, 'aspect');
+  assert.equal(actions[0].type, 'STRING');
+  assert.equal(actions[0].resolvedByMode.default, '16 / 9');
+});
+
+test('ease cubic-bezier → STRING in `ease` collection', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'ease', path: 'in-out',
+      values: { default: { type: 'literal', value: 'cubic-bezier(0.4, 0, 0.2, 1)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].collection, 'ease');
+  assert.equal(actions[0].type, 'STRING');
+  assert.equal(actions[0].resolvedByMode.default, 'cubic-bezier(0.4, 0, 0.2, 1)');
+});
+
+test('animate shorthand → STRING in `animate` collection', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'animate', path: 'spin',
+      values: { default: { type: 'literal', value: 'spin 1s linear infinite' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].collection, 'animate');
+  assert.equal(actions[0].type, 'STRING');
+});
+
 test('pull direction inverts: emits actions for figma-only and overwrites code on resolved conflicts', () => {
   const diff = {
     same: [], codeOnly: [],
