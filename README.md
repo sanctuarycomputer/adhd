@@ -24,6 +24,7 @@ After install, four slash commands are available:
 | `/adhd:lint` | read-only | Validates the configured Figma file (or a single frame) against the local design system + structure best-practices |
 | `/adhd:push-design-system` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | Figma → code | Pulls Figma variables + named styles into globals.css |
+| `/adhd:push-component` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
 
 `/adhd:push-design-system` and `/adhd:pull-design-system` require the official Figma plugin — install it with:
 
