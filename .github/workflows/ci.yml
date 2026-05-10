@@ -17,6 +17,8 @@ jobs:
           node-version: '20'
       - name: Run lint-engine tests
         run: node --test plugins/adhd/lib/lint-engine/__tests__/
+      - name: Run design-system tests
+        run: node --test plugins/adhd/lib/design-system/__tests__/
       - name: Run push-component tests
         run: node --test plugins/adhd/lib/push-component/__tests__/
 
