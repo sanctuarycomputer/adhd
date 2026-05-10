@@ -21,7 +21,18 @@ Extract `figma.url` (required) and `cssEntry` (optional; auto-detect `app/global
 
 Use the `Read` tool to read the resolved `globals.css` path. Save it to `/tmp/adhd-push/globals.css` via the `Write` tool.
 
-Use `mcp__plugin_figma_figma__use_figma` with the file key, the `figma-use` skill name, and the extract script (load it from `plugins/adhd/lib/design-system/figma-extract-script.js`'s `EXTRACT_SCRIPT` export — the skill instructions are: read the file with `Read`, extract the value of the exported constant). Pass the script as the `code` parameter of `use_figma`. Save the response JSON to `/tmp/adhd-push/figma.json` via the `Write` tool.
+Use `mcp__plugin_figma_figma__use_figma` to extract the Figma side's state. Pick the right strategy based on file size:
+
+**Strategy A — single-shot (small files, ≲60 variables).** Read `plugins/adhd/lib/design-system/figma-extract-script.js` and pass the value of the exported `EXTRACT_SCRIPT` constant as the `code` parameter. Save the response JSON to `/tmp/adhd-push/figma.json` via the `Write` tool.
+
+**Strategy B — chunked (recommended for full Tailwind-v4 design systems).** The MCP `use_figma` response is truncated at roughly 20–30 KB, so a full color collection (≈300 vars × 2 modes) exceeds that ceiling and the single-shot script returns a half-baked, JSON-truncated payload. Use the paginated extractor instead:
+
+1. Read `plugins/adhd/lib/design-system/figma-extract-script.js`. The file exports an `EXTRACT_CHUNK_SCRIPT` template and a `CHUNK_SIZE` default.
+2. **Manifest call.** Substitute `__INCLUDE_META__ = true` and `__VAR_INDEX__ = null` into the script, pass to `use_figma`. Save the response to `/tmp/adhd-push/chunks/00-manifest.json` via `Write`.
+3. **Slice calls.** Read the manifest's `collections` array. For each collection, iterate `from = 0; from < variableCount; from += CHUNK_SIZE`. For each iteration, substitute `__INCLUDE_META__ = false` and `__VAR_INDEX__ = {collectionId: '<id>', from, to: from + CHUNK_SIZE}` into the script, call `use_figma`, and write the response to `/tmp/adhd-push/chunks/<NN>-<collection>-<from>.json`.
+4. **Assemble.** Run `node plugins/adhd/lib/design-system/cli.js assemble-extract --chunks-dir /tmp/adhd-push/chunks --output /tmp/adhd-push/figma.json`. The CLI merges the manifest + slices into the single-shot extract shape that `compare` expects, and throws if any collection's variable count doesn't match the manifest (catches truncated chunks).
+
+If Strategy A's response shows visible truncation (look for an unterminated JSON object or a `// truncated to <N>kb` marker at the tail), fall back to Strategy B and re-run from step 1. Don't try to repair the truncated payload by hand.
 
 ## Phase 3: Run the comparator
 

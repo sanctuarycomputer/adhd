@@ -17,7 +17,7 @@ Pulls Figma's design tokens (variables + named styles) into the codebase's `glob
 
 ## Phase 2: Read both sides
 
-(Same as /adhd:push-design-system Phase 2 — read globals.css, run extract script via use_figma, save both to `/tmp/adhd-pull/`.)
+(Same as /adhd:push-design-system Phase 2 — read globals.css, run extract script via use_figma, save both to `/tmp/adhd-pull/`. Use Strategy B — chunked extraction — for any non-trivial design system; the MCP truncates single-shot responses around 20–30 KB and a full Tailwind v4 color collection blows past that limit. The push SKILL documents the chunked manifest + slice + `cli.js assemble-extract` flow.)
 
 ## Phase 3: Run the comparator
 

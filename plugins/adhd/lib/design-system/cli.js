@@ -7,6 +7,7 @@ const { parseCodeDesignSystem } = require('./code-parser');
 const { parseFigmaDesignSystem } = require('./figma-parser');
 const { compareDesignSystems } = require('./comparator');
 const { buildFigmaActions } = require('./figma-write-actions');
+const { assembleExtract } = require('./figma-extract-script');
 
 function parseArgs(argv) {
   const args = {};
@@ -25,8 +26,9 @@ function parseArgs(argv) {
 
 function printUsage() {
   console.log(`Usage:
-  cli.js compare --code <globals.css> --figma <figma.json> --output <diff.json>
-  cli.js apply   --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json>
+  cli.js compare           --code <globals.css> --figma <figma.json> --output <diff.json>
+  cli.js apply             --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json>
+  cli.js assemble-extract  --chunks-dir <dir> --output <figma.json>
 
 compare:
   Reads globals.css and a figma-extract JSON (the result of running
@@ -35,7 +37,13 @@ compare:
 apply:
   Reads a diff JSON and a resolutions JSON (user's choices for each
   conflict). Produces an actions list. For push, actions are Figma
-  variable mutations. For pull, actions are CSS edits.`);
+  variable mutations. For pull, actions are CSS edits.
+
+assemble-extract:
+  Reads every *.json file in --chunks-dir (responses from
+  EXTRACT_CHUNK_SCRIPT — one manifest + one-or-more slices) and merges them
+  into the single-shot extract shape that compare expects. Use this when the
+  full design system is too large to fetch in a single use_figma call.`);
 }
 
 function main() {
@@ -62,6 +70,17 @@ function main() {
     const resolutions = JSON.parse(fs.readFileSync(args.resolutions, 'utf8'));
     const actions = buildFigmaActions(diff, resolutions, args.direction);
     fs.writeFileSync(args.output, JSON.stringify(actions, null, 2));
+    process.exit(0);
+  }
+
+  if (cmd === 'assemble-extract') {
+    const dir = args['chunks-dir'];
+    if (!dir) { console.error('Missing --chunks-dir'); process.exit(2); }
+    if (!args.output) { console.error('Missing --output'); process.exit(2); }
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+    const payloads = files.map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
+    const extract = assembleExtract(payloads);
+    fs.writeFileSync(args.output, JSON.stringify(extract, null, 2));
     process.exit(0);
   }
 
