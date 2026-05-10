@@ -530,6 +530,14 @@ function rgbObjectToHex({ r, g, b, a }) {
   return `#${ch(r)}${ch(g)}${ch(b)}`;
 }
 
+function rgbObjectToColorValue({ r, g, b, a }) {
+  return {
+    colorSpace: 'srgb',
+    components: [round4(r), round4(g), round4(b)],
+    alpha: a !== undefined ? round4(a) : 1,
+  };
+}
+
 function figmaVariableNameToDtcg(name) {
   // "colors/gold/100" → { namespace: "color", dtcgPath: "color.gold.100" }
   // "colors/brand/surface" → { namespace: "color", dtcgPath: "color.brand.surface" }
@@ -698,6 +706,7 @@ module.exports = {
   variableNameToDtcg,
   normalizeCssValue,
   rgbObjectToHex,
+  rgbObjectToColorValue,
   // NEW: Plan 1.5 helpers
   parseCssDimension,
   parseFontFamily,
