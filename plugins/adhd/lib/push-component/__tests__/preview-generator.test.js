@@ -68,3 +68,13 @@ test('skips undefined variant values (renders without that prop)', () => {
   // Second variant: status set
   assert.match(tsx, /<Avatar name=\{"John Doe"\} size=\{"xs"\} status=\{"online"\} \/>/);
 });
+
+test('captureScript: true (default) injects the Figma capture script tag inside <main>', () => {
+  const tsx = generatePreviewTsx(MANIFEST);
+  assert.match(tsx, /<main[^>]*>\s*<script src="https:\/\/mcp\.figma\.com\/mcp\/html-to-design\/capture\.js"/);
+});
+
+test('captureScript: false omits the script tag (for testing)', () => {
+  const tsx = generatePreviewTsx(MANIFEST, { captureScript: false });
+  assert.doesNotMatch(tsx, /capture\.js/);
+});
