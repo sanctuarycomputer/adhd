@@ -124,6 +124,92 @@ This phase **does not** validate that the Figma file has the mandated structure 
 
 ## Phase 4: PAT setup (only when leader = code)
 
+Skip this entire phase if `leader === "figma"`.
+
+Resolve the env var name: `envVarName = config.figma.pat ?? "FIGMA_PAT"`. Phase 0 may have given you `config.figma.pat`; if not, use the default.
+
+### Detection cascade
+
+Try each source in order, stopping at the first hit. Track the **source** (shell, file path, or "absent") for use later.
+
+1. **Shell environment.** Run `Bash` with: `printenv "$ENV_VAR_NAME"` (substituting the actual name). If exit code 0 and stdout is non-empty, source = `"shell"`, value = stdout.
+2. **`.env*` files in the repo root**, in this order: `.env.local`, `.env.development.local`, `.env`. For each, `Read` the file (skip if it doesn't exist). Parse for a line matching `^<envVarName>=(.+)$` (allow optional surrounding quotes). First match wins; source = the file path; value = the captured value.
+3. **Not found anywhere.** source = `"absent"`, no value.
+
+### If a value was found: validate
+
+Use `WebFetch` against `https://api.figma.com/v1/files/<KEY>/variables/local`, where `<KEY>` is the file key from Phase 3. **`WebFetch` does not support custom headers**, so fall back to `Bash` with `curl`:
+
+```bash
+curl -sS -o /tmp/adhd-pat-check.json -w "%{http_code}" \
+  -H "X-FIGMA-TOKEN: <VALUE>" \
+  "https://api.figma.com/v1/files/<KEY>/variables/local"
+```
+
+(Substitute `<VALUE>` and `<KEY>` from runtime; treat the value as untrusted shell input — single-quote it.)
+
+Interpret the HTTP status code:
+
+- **200:** token works, user is on Enterprise, has access. Save the env var name (in memory) for Phase 6's decision on whether to write `figma.pat` to the config. Continue to Phase 5.
+- **401:** token is invalid. Print `Your Figma PAT was rejected (HTTP 401 — invalid token). Let's enter a fresh one.` and proceed to "Prompt for a new token" below. Note the source: if it was a `.env*` file, the wizard will overwrite that line; if it was the shell, the wizard will ask the user to update their shell rc and re-run.
+- **403:** token doesn't have access (wrong plan or scope). Print:
+  ```
+  Your token does not have access to Figma's Variables API (HTTP 403).
+
+  This API is gated to Figma Enterprise plans with Full seat. Options:
+    1. Upgrade your Figma plan and create a new PAT with file_variables:write scope.
+    2. Enter a different token that has access.
+    3. Cancel and switch leader to "figma" (re-run /adhd:config).
+  ```
+  Then ask:
+  ```
+  AskUserQuestion: "What would you like to do?"
+  Header: "PAT 403"
+  Options:
+    - "Enter a different PAT now"
+    - "Cancel — I'll fix this and re-run /adhd:config later"
+  ```
+  On "Enter a different PAT now", proceed to "Prompt for a new token" below. On cancel, abort the wizard.
+- **404:** file key wrong (shouldn't happen — Phase 3 already validated reachability). Print `Internal: file key validated in Phase 3 but rejected by REST API. Re-running Phase 3.` and re-run Phase 3.
+- **Other (5xx, network, timeout):** print the error and re-prompt.
+
+### Prompt for a new token
+
+If detection found nothing OR validation failed and the user wants to retry:
+
+```
+AskUserQuestion: "Paste your Figma personal access token (or 'cancel' to abort)."
+Header: "Figma PAT"
+```
+
+(Free-text. Mask if the host UI supports masking; otherwise paste-in-chat is acceptable.)
+
+If the user cancels, abort the wizard.
+
+**Where to write:**
+- If detection-source was a `.env*` file: rewrite that file in place — find the existing `<envVarName>=...` line and replace its value, preserving surrounding lines.
+- If detection-source was the shell: print:
+  ```
+  The token in your shell environment ($ENV_VAR_NAME) is invalid, and /adhd:config can't safely edit your shell rc files.
+
+  Update your shell environment manually (e.g., edit ~/.zshrc or ~/.bashrc), then re-run /adhd:config.
+  ```
+  Abort the wizard.
+- If detection-source was "absent": append a new line to `.env.local` in the repo root.
+  - If `.env.local` doesn't exist, create it.
+  - The line is: `<envVarName>=<value>` (no quotes around the value unless it contains spaces — Figma PATs do not).
+  - After writing, ensure `.env.local` is in `.gitignore`. Read `.gitignore`; if `.env.local` (or `.env*`) is not present, append `.env.local` on its own line.
+
+After writing, re-run the validation step against the new value. Loop until it returns 200 or the user cancels.
+
+### Save state for Phase 6
+
+Track:
+- `envVarName` — the name (e.g., `"FIGMA_PAT"`).
+- Whether `envVarName !== "FIGMA_PAT"` — if so, Phase 6 writes `figma.pat: "<envVarName>"` to the config; otherwise it does not.
+- Whether `.env.local` was created or modified — Phase 7 reports it.
+- Whether `.gitignore` was modified — Phase 7 reports it.
+
 ## Phase 5: cssEntry auto-detect
 
 ## Phase 6: Write adhd.config.ts
