@@ -445,9 +445,11 @@ function parseCodeDesignSystem(css, opts = {}) {
   // comparator can diff against Figma's effect styles by name. The actual
   // effect payload is parsed lazily by figma-write-actions when needed.
   const tokenList = Array.from(tokens.values());
+  // Use cssVar-without-the-leading-`--` as the effect-style name so it
+  // doesn't collide across families (e.g. --shadow-2xs vs --text-shadow-2xs).
   const shadowTokens = tokenList.filter(t => t.domain === 'shadow');
   const styles = {
-    effects: shadowTokens.map(t => ({ name: t.path })),
+    effects: shadowTokens.map(t => ({ name: (t.cssVar || '').replace(/^--/, '') || t.path })),
     text: [],
   };
 

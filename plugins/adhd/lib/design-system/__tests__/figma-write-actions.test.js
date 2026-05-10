@@ -116,7 +116,9 @@ test('shadow token produces a create-effect-style action', () => {
   const actions = buildFigmaActions(diff, [], 'push');
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, 'create-effect-style');
-  assert.equal(actions[0].name, 'md');
+  // Effect-style name comes from the cssVar (without --) for collision safety
+  // across shadow families.
+  assert.equal(actions[0].name, 'shadow-md');
   assert.equal(actions[0].effects.length, 1);
   assert.equal(actions[0].effects[0].type, 'DROP_SHADOW');
   assert.equal(actions[0].effects[0].offset.x, 0);
@@ -170,7 +172,7 @@ test('shadow whose name already exists in Figma is skipped (additive policy)', (
       domain: 'shadow', path: 'md', cssVar: '--shadow-md',
       values: { default: { type: 'literal', value: '0 4px 6px rgba(0,0,0,0.1)' } },
     }],
-    styles: { figmaOnly: [{ name: 'md' }] },
+    styles: { figmaOnly: [{ name: 'shadow-md' }] },
   };
   const actions = buildFigmaActions(diff, [], 'push');
   assert.equal(actions.length, 0);

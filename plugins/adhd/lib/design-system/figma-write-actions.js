@@ -148,16 +148,20 @@ function buildFigmaActions(diff, resolutions, direction) {
           actions.push({ kind: 'skip-shadow', path: t.path, reason: 'parseShadow returned empty' });
           continue;
         }
-        // CSS path like `drop-shadow/md` or `md`. Use as-is for the style name.
-        const styleName = t.path;
+        // Effect-style name = cssVar without the leading `--` (e.g. `shadow-md`,
+        // `drop-shadow-md`, `inset-shadow-xs`, `text-shadow-sm`). This matches
+        // Figma's convention of flat hyphenated names and avoids collisions
+        // across families (e.g. `--shadow-2xs` vs `--drop-shadow-2xs` would
+        // both become `2xs` if we used just the path).
+        const cssVar = t.cssVar || '';
+        const styleName = cssVar.replace(/^--/, '') || t.path;
         if (existingEffectNames.has(styleName)) {
           // Already in Figma — additive policy: skip.
           continue;
         }
         // Map CSS family → Figma effect type. `--text-shadow-*` doesn't have a
         // 1:1 Figma equivalent; we use DROP_SHADOW as the closest.
-        const cssVar = t.cssVar || '';
-        const effectType = (cssVar.startsWith('--inset-shadow-') || styleName.startsWith('inset-shadow/'))
+        const effectType = cssVar.startsWith('--inset-shadow-')
           ? 'INNER_SHADOW'
           : 'DROP_SHADOW';
         const effects = parsed.map(s => ({
