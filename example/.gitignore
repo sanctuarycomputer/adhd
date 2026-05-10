@@ -44,3 +44,6 @@ next-env.d.ts
 adhd-lint-report.md
 adhd-push-result.json
 adhd-pull-result.json
+
+# ADHD push-component temp preview routes (auto-generated, auto-deleted)
+adhd-preview/

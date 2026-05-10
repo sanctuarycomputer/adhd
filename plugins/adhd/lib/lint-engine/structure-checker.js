@@ -14,7 +14,7 @@ function caseMatches(name, convention) {
   return true;
 }
 
-function visit(node, ctx, parentPath) {
+function visit(node, ctx, parentPath, parent) {
   const nodePath = parentPath ? parentPath + ' > ' + node.name : node.name;
   ctx.violations = ctx.violations || [];
   const push = (rule, severity, message) => {
@@ -65,8 +65,10 @@ function visit(node, ctx, parentPath) {
     }
   }
 
-  // STRUCT004: typography uses variables/styles
-  if (node.type === 'TEXT' && node.style) {
+  // STRUCT004: typography uses variables/styles.
+  // The synthesized `style` field is one signal (synthetic fixtures use it);
+  // a real Figma serialization carries `fontSize` directly on the node.
+  if (node.type === 'TEXT' && (node.style || typeof node.fontSize === 'number')) {
     const hasStyleId = node.textStyleId || node.styles?.text;
     const hasBound = node.boundVariables && (
       node.boundVariables.fontSize || node.boundVariables.lineHeight || node.boundVariables.fontWeight
@@ -76,9 +78,14 @@ function visit(node, ctx, parentPath) {
     }
   }
 
-  // STRUCT005: effects use variables/styles
+  // STRUCT005: effects use variables/styles.
+  // An empty `boundVariables: {}` is NOT a real binding — Figma emits it on
+  // unbound effects. Only a non-empty object counts.
   if (Array.isArray(node.effects) && node.effects.length > 0) {
-    const allBound = node.effects.every(e => e.boundVariables || node.effectStyleId);
+    const allBound = node.effects.every(e => {
+      const hasBoundVars = e.boundVariables && Object.keys(e.boundVariables).length > 0;
+      return hasBoundVars || node.effectStyleId;
+    });
     if (!allBound) {
       push('STRUCT005', 'error', 'Effects include raw values; bind effect styles or shadow variables.');
     }
@@ -112,8 +119,12 @@ function visit(node, ctx, parentPath) {
       }
     }
   }
-  // Component name itself (just the base, before "/")
-  if (node.type === 'COMPONENT_SET' || (node.type === 'COMPONENT' && !parentPath?.includes(' > '))) {
+  // Component name itself (just the base, before "/"). Skip variant
+  // COMPONENTs (children of a COMPONENT_SET) — their names are auto-derived
+  // by Figma from variant properties (e.g. "size=lg, status=away") and are
+  // not user-controlled, so kebab-case can't apply.
+  const isVariantChild = node.type === 'COMPONENT' && parent && parent.type === 'COMPONENT_SET';
+  if ((node.type === 'COMPONENT_SET' || (node.type === 'COMPONENT' && !parentPath?.includes(' > '))) && !isVariantChild) {
     const base = node.name.split('/')[0];
     if (!caseMatches(base, ctx.namingConvention)) {
       push('STRUCT009', 'warning',
@@ -155,7 +166,7 @@ function visit(node, ctx, parentPath) {
   // Recurse into children
   if (Array.isArray(node.children)) {
     for (const child of node.children) {
-      visit(child, ctx, nodePath);
+      visit(child, ctx, nodePath, node);
     }
   }
 }
@@ -166,7 +177,7 @@ function checkStructure(rootNode, opts) {
     namingConvention: opts.namingConvention ?? 'kebab-case',
     violations: [],
   };
-  visit(rootNode, ctx, '');
+  visit(rootNode, ctx, '', null);
   return ctx.violations;
 }
 

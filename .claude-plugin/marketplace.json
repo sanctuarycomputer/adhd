@@ -7,7 +7,7 @@
     {
       "name": "adhd",
       "source": "./plugins/adhd",
-      "description": "Push, pull, and lint design tokens between Tailwind v4 and Figma via the remote MCP."
+      "description": "Push, pull, and lint design tokens between Tailwind v4 and Figma; push React components with preflight validation."
     }
   ]
 }
