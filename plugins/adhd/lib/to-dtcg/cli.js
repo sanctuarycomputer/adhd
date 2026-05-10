@@ -318,9 +318,21 @@ function stringifyDtcgStable(obj) {
   return JSON.stringify(sortKeysDeep(obj), null, 2) + '\n';
 }
 
-// Stub for Tailwind merge — fully implemented in Task 6.
+// Parse Tailwind v4 theme.css `@theme default {}` block.
 function parseTailwindTheme(themeText) {
-  return [];
+  // Tailwind v4's theme.css uses `@theme default { ... }`.
+  const block = findAtThemeBlock(themeText, 'theme default');
+  if (!block) return [];
+  const out = [];
+  // theme.css contains multi-line values (e.g., font-sans across multiple lines).
+  // Our parseDeclarations regex matches up to the next `;`, which handles multi-line.
+  for (const decl of parseDeclarations(block.body)) {
+    const mapped = variableNameToDtcg(decl.name);
+    if (!mapped) continue;
+    const value = normalizeCssValue(decl.value, mapped.namespace);
+    out.push({ ...mapped, value, dtcgType: NAMESPACE_TO_DTCG_TYPE[mapped.namespace] });
+  }
+  return out;
 }
 
 function parseArgs(argv) {
