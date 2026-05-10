@@ -231,6 +231,54 @@ Four cases:
 
 ## Phase 6: Write adhd.config.ts
 
+Compose the config object from in-memory state. Always include `leader` and `figma.url`. Conditionally include the rest:
+
+| Field | Include if |
+|---|---|
+| `figma.pat` | `envVarName !== "FIGMA_PAT"` |
+| `domains` | `domainsSelection` is a strict subset (length 1–4) |
+| `cssEntry` | resolved path is NOT `app/globals.css` |
+
+Render the file body using this template (omit lines marked optional when their condition is false):
+
+```ts
+// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config).
+// No npm package or import required; the skills validate the shape on read.
+
+const config = {
+  leader: "<LEADER>" as const,
+
+  figma: {
+    url: "<URL>",
+    // optional: pat: "<ENV_VAR_NAME>",
+  },
+
+  // optional: domains: [<COMMA_QUOTED_LIST>],
+
+  // optional: cssEntry: "<CSS_ENTRY>",
+};
+
+export default config;
+```
+
+When omitting an optional field, also drop the corresponding `// optional:` placeholder comment — the file should not carry hints about fields that aren't present.
+
+### Show the change before writing
+
+- **Creating from scratch** (Phase 0 was Branch B or C): print the full new file content fenced as `ts`. Then ask:
+  ```
+  AskUserQuestion: "Write this content to adhd.config.ts?"
+  Header: "Confirm write"
+  Options: ["Yes — write it", "No — abort"]
+  ```
+- **Updating an existing file** (Phase 0 was Branch A): produce a unified diff between the existing file and the new content (use `Bash` with `diff -u <existing> <new>` via temp file, or compute manually). Print the diff fenced as `diff`. Then ask the same confirm question.
+
+On "No", abort. On "Yes", `Write` the file.
+
+### .env.local / .gitignore
+
+Phase 4 may have already written `.env.local` and updated `.gitignore`. Don't re-do those writes here; this phase touches only `adhd.config.ts`.
+
 ## Phase 7: Report
 
 ## Reference: Common errors and fix-up guidance
