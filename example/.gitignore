@@ -27,6 +27,9 @@ next-env.d.ts
 # Vercel
 .vercel
 
+# Env files (can opt-in for committing if needed)
+.env*
+
 # Generated DTCG export (from /adhd:export-for-figma)
 adhd-export-for-figma.json
 
