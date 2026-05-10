@@ -26,11 +26,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install dependencies
+      - name: Install example dependencies
         run: npm ci
-      - name: Lint
+        working-directory: example
+      - name: Lint example
         run: npm run lint
-      - name: Build
+        working-directory: example
+      - name: Build example
         run: npm run build
+        working-directory: example
       - name: Validate skill frontmatter
         run: node scripts/validate-skill-frontmatter.js

@@ -1,41 +1,45 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# Dependencies (Next.js example app lives in example/)
+example/node_modules/
+example/.pnp
+example/.pnp.*
+example/.yarn/*
+!example/.yarn/patches
+!example/.yarn/plugins
+!example/.yarn/releases
+!example/.yarn/versions
 
-# testing
-/coverage
+# Testing
+example/coverage/
 
-# next.js
-/.next/
-/out/
+# Next.js build output
+example/.next/
+example/out/
 
-# production
-/build
+# Production builds
+example/build/
 
-# misc
+# TypeScript artifacts
+example/*.tsbuildinfo
+example/next-env.d.ts
+
+# Vercel
+example/.vercel
+
+# Generated DTCG export (from /adhd:export-for-figma)
+example/adhd-export-for-figma.json
+adhd-export-for-figma.json
+
+# Env files (can opt-in for committing if needed)
+.env*
+
+# Misc
 .DS_Store
 *.pem
 
-# debug
+# Debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
