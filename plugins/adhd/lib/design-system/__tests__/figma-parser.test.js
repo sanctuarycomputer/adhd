@@ -38,13 +38,14 @@ const EXTRACT_FIXTURE = {
   textStyles: [],
 };
 
-test('produces tokens with light/dark literals from primitive variables', () => {
+test('produces tokens with literal values from primitive variables (collapsed to default when modes are identical)', () => {
   const ds = parseFigmaDesignSystem(EXTRACT_FIXTURE);
   const t = ds.tokens.find(x => x.path === 'gold/100');
   assert.ok(t);
   assert.equal(t.domain, 'color');
-  assert.equal(t.values.light.type, 'literal');
-  assert.match(t.values.light.value, /^#[0-9a-f]{6}$/i);
+  // gold/100 has the same value in Light and Dark, so it collapses to default
+  assert.equal(t.values.default.type, 'literal');
+  assert.match(t.values.default.value, /^#[0-9a-f]{6}$/i);
 });
 
 test('alias values map to alias type with target path', () => {
@@ -87,8 +88,9 @@ test('infers domain from collection name', () => {
 test('color values normalize to 6-digit lowercase hex', () => {
   const ds = parseFigmaDesignSystem(EXTRACT_FIXTURE);
   const t = ds.tokens.find(x => x.path === 'gold/100');
-  assert.equal(t.values.light.value.length, 7); // # + 6 hex chars
-  assert.equal(t.values.light.value, t.values.light.value.toLowerCase());
+  // gold/100 collapses to default (same value across modes)
+  assert.equal(t.values.default.value.length, 7); // # + 6 hex chars
+  assert.equal(t.values.default.value, t.values.default.value.toLowerCase());
 });
 
 test('effect styles and text styles surface as ds.styles', () => {
@@ -96,4 +98,21 @@ test('effect styles and text styles surface as ds.styles', () => {
   assert.equal(ds.styles.effects.length, 1);
   assert.equal(ds.styles.effects[0].name, 'shadow-2xs');
   assert.equal(ds.styles.text.length, 0);
+});
+
+test('collapses to default when all modes hold the same value (mode-independent primitive in multi-mode collection)', () => {
+  // gold/100 has the same hex in both Light and Dark — should collapse to default
+  const ds = parseFigmaDesignSystem(EXTRACT_FIXTURE);
+  const t = ds.tokens.find(x => x.path === 'gold/100');
+  assert.ok(t);
+  assert.deepEqual(Object.keys(t.values), ['default']);
+  assert.equal(t.values.default.type, 'literal');
+});
+
+test('does NOT collapse when modes differ (semantic vars stay multi-mode)', () => {
+  const ds = parseFigmaDesignSystem(EXTRACT_FIXTURE);
+  const t = ds.tokens.find(x => x.path === 'brand/surface');
+  assert.ok(t);
+  // brand/surface has different aliases per mode — stays multi-mode
+  assert.deepEqual(Object.keys(t.values).sort(), ['dark', 'light']);
 });

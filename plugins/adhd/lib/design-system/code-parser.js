@@ -63,9 +63,12 @@ function inferDomain(cssVarName) {
 }
 
 function pathFromCssVar(cssVarName) {
-  // --color-gold-100 → gold/100
+  // --color-gold-100 → gold/100   (split on FIRST hyphen after domain prefix)
   // --brand-surface → brand/surface
-  // --space-2 → 2
+  // --brand-surface-raised → brand/surface-raised  (literal hyphen preserved inside leaf)
+  // --brand-on-surface → brand/on-surface
+  // --space-2 → 2 (single segment after domain prefix)
+  // --background → background (no hyphens)
   const stripped = cssVarName.replace(/^--/, '');
   const domain = inferDomain(cssVarName);
   const domainPrefix = {
@@ -75,7 +78,11 @@ function pathFromCssVar(cssVarName) {
   if (domainPrefix && stripped.startsWith(domainPrefix)) {
     rest = stripped.slice(domainPrefix.length);
   }
-  return rest.replace(/-/g, '/');
+  // Split on FIRST hyphen only — first part is "group", rest is "leaf" (with literal hyphens preserved).
+  // This mirrors Figma's convention: `/` separates path segments, `-` is literal within a segment.
+  const firstHyphen = rest.indexOf('-');
+  if (firstHyphen === -1) return rest;
+  return rest.slice(0, firstHyphen) + '/' + rest.slice(firstHyphen + 1);
 }
 
 function valueFromString(raw) {

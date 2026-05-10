@@ -47,10 +47,22 @@ function parseFigmaDesignSystem(extract) {
     if (domain === 'unknown') continue;
     const isMultiMode = col.modes.length > 1;
     for (const v of col.variables) {
-      const values = {};
+      let values = {};
       for (const [modeName, rawByMode] of Object.entries(v.valuesByMode)) {
         const canonical = modeNameToCanonical(modeName, isMultiMode);
         values[canonical] = valueFromFigma(rawByMode);
+      }
+      // Collapse a multi-mode collection's variable to `default` if all modes hold
+      // the same value. This mirrors how primitives are represented in code:
+      // `@theme { --color-gold-100: #faf0c5 }` is mode-independent; in Figma we
+      // store it in every mode of the multi-mode collection with identical values.
+      const modeKeys = Object.keys(values);
+      if (modeKeys.length > 1) {
+        const first = JSON.stringify(values[modeKeys[0]]);
+        const allSame = modeKeys.every(k => JSON.stringify(values[k]) === first);
+        if (allSame) {
+          values = { default: JSON.parse(first) };
+        }
       }
       tokens.push({
         domain,

@@ -96,3 +96,20 @@ test('infers domain from variable name prefix', () => {
   assert.equal(byPath['sm'], 'radius');
   assert.equal(byPath['md'], 'shadow');
 });
+
+test('multi-hyphen semantic var names preserve internal hyphens (only first hyphen is path separator)', () => {
+  const ds = parseCodeDesignSystem(`
+    :root {
+      --brand-surface-raised: var(--color-gold-200);
+      --brand-on-surface: var(--color-gold-800);
+    }
+  `);
+  // Should be brand/surface-raised (literal hyphen inside leaf), NOT brand/surface/raised
+  assert.ok(ds.tokens.find(t => t.path === 'brand/surface-raised'),
+    'Expected path to be brand/surface-raised; got: ' + ds.tokens.map(t => t.path).join(', '));
+  assert.ok(ds.tokens.find(t => t.path === 'brand/on-surface'),
+    'Expected path to be brand/on-surface');
+  // Verify the var(--...) reference target uses the same hyphen-preserving rule
+  const t = ds.tokens.find(x => x.path === 'brand/surface-raised');
+  assert.deepEqual(t.values.light, { type: 'alias', target: 'gold/200' });
+});
