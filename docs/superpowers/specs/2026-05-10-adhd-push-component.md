@@ -191,17 +191,42 @@ After `generate_figma_design` produces a captured page, a `use_figma` call perfo
    Re-check the preview page rendered correctly at the dev server URL."
 ```
 
+### Deduplicate by visual signature
+
+Before combining into a Component Set, collapse variants whose captured frames are structurally identical. Some union-typed props don't actually affect rendering (e.g., `analyticsEvent: "click" | "hover" | "focus"` fires callbacks but produces the same DOM). The Cartesian generator can't tell ahead of time; the captured frames can.
+
+```
+1. For each captured variant frame, compute a "visual signature" — a stable
+   hash of the structural tree (node types, dimensions, fills, strokes,
+   effects, layout fields, text content). Ignore positional offsets and
+   layer IDs; we want shape-equivalence, not identity.
+
+2. Group variants by signature.
+
+3. For each group of size > 1, keep the lexically-first variant key; drop
+   the rest from Figma (delete those frames).
+
+4. For each remaining variant, compute its EFFECTIVE variant properties:
+   only axes whose value differs from at least one other surviving variant.
+   E.g., if every surviving variant has status="online" (because all other
+   status values collapsed), drop `status` from the Component Set's
+   property declarations entirely — it wasn't visual.
+```
+
+The result: the Figma Component Set's variant property axes match the props that actually affect visual output. Non-visual axes silently disappear.
+
 ### Combine into Component Set
 
 ```
-const componentSet = figma.combineAsVariants(variantFrames, page);
+const componentSet = figma.combineAsVariants(survivingFrames, page);
 componentSet.name = componentName;  // e.g., "Avatar"
 ```
 
-For each variant Component child, parse `data-adhd-variant=size=xs;shape=circle;status=undefined` and set:
+For each variant Component child, set its `variantProperties` to the **effective** axes (post-dedup):
 
 ```
 variant.variantProperties = { size: "xs", shape: "circle", status: "undefined" };
+// If `status` was dropped because non-visual, omit it from variantProperties.
 ```
 
 The set's `componentPropertyDefinitions` get auto-populated.
@@ -350,3 +375,4 @@ The first few uses of `/adhd:push-component` will produce some violations. Accep
 13. The reverse-index variable-binding step finds at least 80% of known Tailwind utility classes (color, spacing, radius, text) for a typical component.
 14. The same `lint-engine` modules (`structure-checker`, `variable-categorizer`, `report-formatter`) are used by both `/adhd:lint` and `/adhd:push-component`'s preflight step. No duplicate implementations.
 15. Re-running `/adhd:lint` on the pushed Component Set produces the same violations as the preflight report (exercising the symmetric pipeline assertion).
+16. Union-typed props that don't affect rendering (e.g., `analyticsEvent` callbacks) collapse during deduplication; only visual axes appear in the Figma Component Set's variant property declarations.
