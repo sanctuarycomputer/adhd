@@ -1,401 +1,139 @@
 ---
-description: "Sync design tokens between this Tailwind v4 codebase and the configured Figma file. Reads adhd.config.ts at the repo root. Supports --dry-run (read-only diff) and --domains <comma,separated> (limit to specific domains: colors, spacing, typography, radius, shadow)."
+description: "Sync design tokens from a Figma frame, component, component set, or page into this repo's globals.css. Runs the same checks as /adhd:check, then writes Figma's variable values into globals.css with per-conflict prompts. Optional argument: a Figma URL with node-id. If no argument, uses the current Figma selection."
 disable-model-invocation: true
-argument-hint: "[--dry-run] [--domains <comma,separated>]"
-allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp__figma__get_variable_defs
+argument-hint: "[<figma-url-with-node-id>]"
+allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
 ---
 
 # ADHD Sync
 
-You are running the ADHD design-token sync workflow. ADHD ("agent-driven harmonious development") keeps design tokens synchronized between this Tailwind v4 codebase (`globals.css`) and a Figma file via a leader-follower model defined in `adhd.config.ts`.
+Frame-scoped variable sync from Figma → code. Pulls the values of variables referenced by the target Figma frame and writes them into `globals.css`. Auto-applies missing variables; prompts per-conflict when local has a different value.
 
-**Authoritative spec:** `docs/superpowers/specs/2026-05-09-adhd-token-sync-design.md` — read it if you need detail beyond what this skill provides.
+**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-check-and-sync-design.md`
 
-## Argument parsing
+## Phase 1: Validate config (same as /adhd:check)
+
+Read `adhd.config.ts` at the repo root. If missing, abort: "Run /adhd:config first."
+
+Extract `figma.url` (required), `naming` (optional, defaults to `kebab-case`), and `cssEntry` (or auto-detect `app/globals.css` then `src/app/globals.css`). Extract the file key from `figma.url` — the segment after `/design/`.
+
+## Phase 2: Resolve target node (same as /adhd:check)
 
 Parse `$ARGUMENTS`:
-- `--dry-run` flag (boolean) — if present, run phases 1–4 only (validate → read → diff → display) and stop without applying changes.
-- `--domains <list>` flag — optional comma-separated subset of supported domains. If absent, use all domains from the config (or all five supported domains if the config doesn't restrict).
 
-## Phase 1: Validate
+- If a Figma URL is provided:
+  - Extract the file key (segment after `/design/`).
+  - If it doesn't match the file key from `adhd.config.ts`, abort with: "URL points at file <X>, but adhd.config.ts is configured for file <Y>. Pass a URL from the configured file or run /adhd:config to update."
+  - Extract the node ID from `?node-id=<id>` (URLs use `-` separator; MCP wants `:` — convert by replacing the first `-` with `:`).
+- If no URL is provided: use MCP's current selection (call MCP tools without a `nodeId` argument).
 
-Stop the workflow on any failure here. Print the failure message and the relevant fix-up guidance from the "Common errors" section at the bottom of this skill.
+Call `mcp__figma__get_metadata`. Confirm node type is `FRAME`, `COMPONENT`, `COMPONENT_SET`, or `CANVAS`. Otherwise abort with: "Select a frame, component, or page (got: <type>)."
 
-### 1.1 Read and validate `adhd.config.ts`
+If `get_metadata` errors with "Node not found", abort with: "Node not found in <fileKey>. Verify the URL or selection."
+If it errors with "MCP unreachable" / similar, abort with: "Figma MCP not configured. Run /adhd:config to verify setup."
 
-- Use the `Read` tool on `adhd.config.ts` at the repo root.
-- If the file does not exist, abort with:
+## Phase 3: Fetch from MCP (same as /adhd:check)
 
-  ```
-  ADHD sync cannot proceed.
+Call `mcp__figma__get_variable_defs` and `mcp__figma__get_design_context` for the resolved node ID.
 
-  Reason:    Cannot find adhd.config.ts at the repo root.
-  Next step: Run /adhd:config to fix.
-  ```
-- **PAT-leak preflight.** Before parsing for fields, scan the source text of the file you just read with two regex checks:
-  1. `figd_[A-Za-z0-9_-]+` — Figma PAT prefix.
-  2. `(pat|token|secret)\s*:\s*"[^"]{30,}"` — long opaque value assigned to a credential-named key. If the matched value also satisfies `^[A-Z][A-Z0-9_]*$` (i.e., it looks like an env var name), skip this heuristic — it's a valid name, not a token.
+If either response is empty or has a `truncated: true` flag, surface a warning: "MCP returned a partial response — consider running on a smaller scope (a frame within the page)." Continue with what you have.
 
-  On match, abort with the credential-leak message:
+Use the `Write` tool to save the MCP response JSON to a temp file:
 
-  ```
-  ADHD sync cannot proceed.
+- Path: `/tmp/adhd/vars.json` (variable defs) and `/tmp/adhd/ctx.json` (design context).
+- Content: the literal JSON string from each MCP tool's response.
 
-  Reason:    Looks like a Figma PAT is committed to adhd.config.ts. This is a credential leak.
-  Next step: Remove it from the config and store it as FIGMA_PAT in either .env.local
-             (gitignored) or your shell environment. Then run /adhd:config.
-  ```
+If `/tmp/adhd/` doesn't exist, the `Write` tool creates the parent dir on demand. (No `mkdir` needed.)
 
-- Parse the default-exported object. Since this is a plain TypeScript literal (no imports), extract the fields with targeted regex (look for `leader:`, `figma:`, `domains:`, `cssEntry:`).
-- Validate:
-  - `leader` (if present) is exactly `"code"` or `"figma"`. Absent is treated as `"figma"`.
-  - `figma.url` matches `^https://www\.figma\.com/design/[^/]+/`.
-  - `domains` (if present) is an array containing only `"colors"`, `"spacing"`, `"typography"`, `"radius"`, `"shadow"`.
-  - `cssEntry` (if present) points to a file that exists.
-  - `figma.pat` (if present) matches `^[A-Z][A-Z0-9_]*$`. If it contains lowercase letters, special chars beyond underscore, or is longer than ~30 chars, abort with:
+This avoids shell-escaping issues that arise when piping JSON through `echo` — JSON values frequently contain single and double quotes that break `echo '<json>' > file` patterns.
 
-    ```
-    ADHD sync cannot proceed.
+## Phase 4: Run the engine
 
-    Reason:    figma.pat must be the NAME of an env var (e.g., "FIGMA_PAT"), not the token itself.
-    Next step: Run /adhd:config to fix.
-    ```
-- On any field mismatch, abort with:
+Same CLI invocation as `/adhd:check`, writing the report to `adhd-check-report.md`. Capture stdout (JSON summary).
 
-  ```
-  ADHD sync cannot proceed.
-
-  Reason:    adhd.config.ts field <field> has an unexpected value: <offending value>.
-             Expected: <expected schema description>.
-  Next step: Run /adhd:config to fix.
-  ```
-
-**`leader: "code"` apply path** — the code → Figma push apply phase is being implemented in a separate plan (`docs/superpowers/plans/2026-05-09-adhd-config-hybrid-writes.md`, forthcoming). Until that plan lands, abort with:
-
-```
-ADHD sync cannot proceed.
-
-Reason:    leader: "code" is configured, but the apply path is still being built (Plan 2 of the
-           ADHD config + hybrid-writes spec). Your config schema is valid; PAT validity will be
-           verified by Plan 2's apply path when it ships.
-Next step: For now, switch leader to "figma" via /adhd:config to use the pull-from-Figma path.
-           Or wait for Plan 2 to ship the code→Figma writes engine.
+```bash
+node plugins/adhd/lib/check-engine/cli.js \
+  --variable-defs /tmp/adhd/vars.json \
+  --design-context /tmp/adhd/ctx.json \
+  --globals-css <path-from-config-or-auto-detect> \
+  --config adhd.config.ts \
+  --target "<node-name-from-Phase-2>" \
+  --target-url "https://figma.com/design/<fileKey>?node-id=<nodeId-with-hyphen>" \
+  --output adhd-check-report.md
 ```
 
-### 1.2 Resolve and check `globals.css`
+## Phase 5: Handle structure issues
 
-- Resolve CSS path: `config.cssEntry ?? "app/globals.css"`.
-- If the resolved file does not exist, abort with:
+Parse the JSON summary's `structure` array.
 
-  ```
-  ADHD sync cannot proceed.
+If any structure violations have `severity: "error"`:
+1. Echo the structure section of the report to the user.
+2. Use `AskUserQuestion`:
+   - Question: "N structure errors found. Proceed with variable sync anyway?"
+   - Options: "Proceed — sync variables despite structure errors" / "Abort — fix structure issues in Figma first"
+3. If user picks Abort: print "Sync aborted. See adhd-check-report.md for details." and exit.
 
-  Reason:    Cannot find CSS entry at <path>.
-  Next step: Run /adhd:config to fix.
-  ```
-- Read the file's first ~40 lines and confirm `@import "tailwindcss"` is present. If not, warn (don't abort) and continue.
+If only structure warnings (no errors): print them as a heads-up but continue without prompting.
 
-### 1.3 Check Figma reachability
+## Phase 6: Apply missing variables
 
-- Extract the file key from `config.figma.url`: it is the path segment immediately after `/design/`.
-- Call `mcp__figma__get_metadata` with the file key.
-- If the call fails with an authentication error, abort with:
+Parse the JSON summary's `variable` array.
 
-  ```
-  ADHD sync cannot proceed.
-
-  Reason:    Figma MCP is not authenticated.
-  Next step: Run the Figma MCP auth flow per Figma's docs.
-  ```
-- If the call returns 404 / not found, abort with:
-
-  ```
-  ADHD sync cannot proceed.
-
-  Reason:    Cannot reach the Figma file at <url>.
-  Next step: Run /adhd:config to fix.
-  ```
-
-### 1.4 Validate Figma file structure
-
-- Call `mcp__figma__get_variable_defs` (or the equivalent variable-listing tool) on the file.
-- Confirm:
-  - A collection named exactly `Primitives` exists. It must have either no modes or exactly one mode (Figma always has at least one mode per collection; treat the single-mode case as "no modes").
-  - A collection named exactly `Semantic` exists with exactly two modes named `Light` and `Dark` (case-sensitive).
-  - Every variable name uses kebab-case segments and slash hierarchy (regex check: `^[a-z0-9]+(-[a-z0-9]+)*(/[a-z0-9]+(-[a-z0-9]+)*)*$`).
-  - `Primitives` variables have raw values (color, number, string) — not aliases.
-  - `Semantic` variables alias to a `Primitives` variable in BOTH modes — not raw values, not aliases to other semantic variables.
-- On any failure, abort with:
-
-  ```
-  ADHD sync cannot proceed.
-
-  Reason:    <specific issue, e.g.: Semantic collection has 3 modes (Light, Dark, HighContrast);
-             v1 supports exactly Light and Dark.>
-  Next step: Fix the Figma file: <specific corrective action>.
-  ```
-
-### 1.5 Resolve domain selection
-
-- If the `--domains` argument was passed, parse it and use that subset.
-- Else if `config.domains` is present, use it.
-- Else, use all five supported domains.
-- If the user-passed `--domains` includes anything not in `config.domains` (when set), warn the user and use the intersection.
-
-## Phase 2: Read code-side tokens
-
-Read the resolved `globals.css` file in full. Parse the canonical block structure to extract ADHD-managed variables.
-
-### 2.1 Extract Primitives
-
-Look for the `@theme {` block (NOT `@theme inline {`). Within it, extract every variable matching ADHD-managed name patterns:
-- `--color-{palette}-{shade}` → colors primitive
-- `--spacing-{n}` → spacing primitive
-- `--radius-{name}` → radius primitive
-- `--shadow-{name}` → shadow primitive
-- `--font-{family-name}` → typography primitive (font family)
-- `--text-{size-name}` → typography primitive (font size)
-- `--font-weight-{name}` → typography primitive (font weight)
-- `--leading-{name}` → typography primitive (line height)
-
-Skip variables that do not match any pattern — they are user-owned.
-
-### 2.2 Extract Semantic Light values
-
-Look for the top-level `:root {` block (the one NOT inside `@media`). Extract every variable that is NOT prefixed with the ADHD primitive prefixes — i.e., it does NOT start with `--color-`, `--spacing-`, `--radius-`, `--shadow-`, `--font-`, `--text-`, `--leading-`. These are semantic role tokens like `--brand-surface`.
-
-For each, parse its value: it should be `var(--color-{palette}-{shade})` or another ADHD primitive reference. Record the role name → primitive reference.
-
-### 2.3 Extract Semantic Dark values
-
-Look for `@media (prefers-color-scheme: dark)` containing a `:root {` block. Extract semantic role tokens the same way as 2.2; these are the Dark mode values.
-
-### 2.4 Verify Layer 3 (Tailwind exposure)
-
-Look for the `@theme inline {` block. Confirm every semantic role token from 2.2 has a matching `--color-{role}: var(--{role})` line. Note any missing exposures — they will be added during apply.
-
-### 2.5 Build the code-side token map
-
-Produce a structured map:
+For variables with `status: "missing"`: print one consolidated message:
 ```
-{
-  primitives: {
-    colors: { "gold-100": "#faf0c5", ... },
-    spacing: { "1": "0.25rem", ... },
-    typography: { "sans": "...", "base": "1rem", ... },
-    radius: { ... },
-    shadow: { ... }
-  },
-  semantic: {
-    "brand-surface": { light: "var(--color-gold-100)", dark: "var(--color-gold-900)" },
-    ...
-  }
-}
++ Adding 3 missing variables: color/brand/600, space/2xl, radius/pill
 ```
 
-This is the code-side input to the diff.
+Apply each by editing `globals.css`:
+- Primitives (no `mode` field) → add to the `@theme {}` block.
+- Light-mode missing → add to `:root {}` block.
+- Dark-mode missing → add to `:root[data-theme="dark"] {}` block.
 
-## Phase 3: Read Figma tokens
+Use the `Edit` tool to insert the new declarations. Maintain alphabetical ordering within each block when possible.
 
-Use `mcp__figma__get_variable_defs` (or the appropriate tool surfaced by the Figma MCP — check available tools at runtime) to retrieve all variables in the `Primitives` and `Semantic` collections.
+## Phase 7: Apply conflicts (per-conflict prompt)
 
-### 3.1 Translate Figma names to CSS variable names
+For variables with `status: "conflict"`, iterate. Use `AskUserQuestion` once per conflict:
 
-Apply this mapping (slash → dash, prepend Tailwind prefix where applicable):
+- Question: `<token> (<mode>): local=<localValue>, figma=<figmaValue> — what should happen?`
+- Options:
+  - "Keep local"
+  - "Overwrite with Figma"
+  - "Take Figma for ALL remaining conflicts"
+  - "Keep local for ALL remaining conflicts"
 
-| Figma name | CSS variable name |
+If the user picks one of the "ALL remaining" options, stop prompting and apply the choice to every remaining conflict in this batch.
+
+For each "Overwrite with Figma" choice (single or batched), use the `Edit` tool to replace the variable's value in the appropriate block (`@theme {}` / `:root {}` / `:root[data-theme="dark"] {}`).
+
+## Phase 8: Commit per domain
+
+After all writes, group changes by domain (color, spacing, radius, typography, shadow). For each domain that received writes, create a commit:
+
+```bash
+git add <path-to-globals.css>
+git commit -m "ADHD sync: <domain> (<count> changes)"
+```
+
+If multiple domains were touched, this produces multiple commits. If none were touched (user kept everything local), no commit.
+
+## Phase 9: Final report
+
+Update `adhd-check-report.md` with a "Sync result" section listing:
+- Variables added (with token + value)
+- Variables overwritten (with old + new value)
+- Variables kept (with local + figma values, "no change")
+- Structure issues (unchanged from Phase 4 report — purely informational)
+
+Echo the sync-result section to the user. Print: "Sync complete. <N> changes across <M> domains. Full report: adhd-check-report.md."
+
+## Common errors
+
+| Error | Fix-up guidance |
 |---|---|
-| `colors/{palette}/{shade}` | `--color-{palette}-{shade}` |
-| `spacing/{n}` | `--spacing-{n}` |
-| `radius/{name}` | `--radius-{name}` |
-| `shadow/{name}` | `--shadow-{name}` |
-| `font/{family-name}` | `--font-{family-name}` |
-| `text/{size-name}` | `--text-{size-name}` |
-| `font-weight/{name}` | `--font-weight-{name}` |
-| `leading/{name}` | `--leading-{name}` |
-| `colors/{role-path}` (Semantic) | `--{role-path-with-dashes}` |
-
-For Semantic variables, the alias target (e.g., `colors/gold/100`) translates to a `var(--color-gold-100)` reference.
-
-### 3.2 Build the Figma-side token map
-
-Produce the same structure as Phase 2.5 (`primitives` and `semantic` keys) so the two maps can be diffed directly.
-
-### 3.3 Filter by selected domains
-
-Drop entries from both maps that don't belong to a selected domain (from Phase 1.5).
-
-## Phase 4: Compute and display diff
-
-Compare the two token maps. For each domain, produce three lists:
-- **Added**: in leader, not in follower
-- **Changed**: in both, values differ (track per-mode for semantic tokens)
-- **Removed**: in follower, not in leader
-
-The leader / follower assignment depends on `config.leader`:
-- `leader: "code"` → leader = code-side map (Phase 2), follower = Figma-side map (Phase 3)
-- `leader: "figma"` → leader = Figma-side map, follower = code-side map
-
-### 4.1 Display summary table
-
-Print a per-domain summary, e.g.:
-
-```
-ADHD Sync — leader: code → figma
-
-Domain       Added  Changed  Removed
-─────────────────────────────────────
-colors          3       2        0
-spacing         0       1        0
-typography      0       0        0
-radius          0       0        0
-shadow          0       0        0
-─────────────────────────────────────
-Total           3       3        0
-```
-
-### 4.2 Display per-domain detail (only domains with non-zero diff)
-
-For each domain with changes, print a detailed table showing per-token diffs. Color-code: added=green, changed=yellow, removed=red. For semantic tokens, show per-mode differences explicitly (e.g., `brand-surface | dark only: gold-800 → gold-900`).
-
-### 4.3 If `--dry-run`: stop here
-
-Print: `Dry run complete. No changes applied.` and exit.
-
-## Phase 5: Confirm (skip if --dry-run)
-
-Use `AskUserQuestion` to prompt the user with a single y/n: "Apply these changes?". Default to "no" if the diff includes any **removals** — those require explicit confirmation because the follower may have legitimate orphans the leader lost track of.
-
-If the user declines, stop with: `Sync cancelled. No changes applied.`
-
-If the user confirms, proceed to Phase 6.
-
-## Phase 6: Apply (skip if --dry-run)
-
-Process domain-by-domain so the user sees clear progress. After each domain, commit the changes (code side) so partial failures are recoverable.
-
-### 6.1 If leader = code → push to Figma
-
-For each token in the diff:
-- **Added**: create the variable in the appropriate Figma collection (Primitives or Semantic) via the Figma MCP. For Semantic, set both Light and Dark mode values (as aliases to the corresponding Primitives variable).
-- **Changed**: update the variable's value (per mode for Semantic).
-- **Removed**: only if the user explicitly confirmed in Phase 5. Otherwise skip and warn.
-
-After each domain, print: `✓ <domain> synced to Figma (N changes)`.
-
-### 6.2 If leader = figma → pull to code
-
-For each token in the diff, edit `globals.css` in place:
-- **Primitives** (added/changed): write into the `@theme {` block. Insert in alphabetical order within the block. If the block doesn't exist, create it after the `@import "tailwindcss";` line.
-- **Semantic Light values**: write into the top-level `:root {` block.
-- **Semantic Dark values**: write into the `@media (prefers-color-scheme: dark)` → `:root {` block.
-- **Tailwind exposure** (always per Semantic role): write `--color-{role}: var(--{role});` into the `@theme inline {` block.
-- **Removed**: only if user explicitly confirmed. Delete the variable line (and its Tailwind exposure if applicable).
-
-After each domain, run `git add <resolvedCssEntryPath>` and `git commit -m "ADHD sync: <domain> from Figma (N changes)"` so each domain is its own commit. Use the path resolved in Phase 1.2 (defaults to `app/globals.css` but may be overridden by `config.cssEntry`).
-
-### 6.3 Touch nothing outside ADHD-managed patterns
-
-Variables that don't match an ADHD name pattern (e.g., user-written `--my-custom-var`) are NEVER modified or removed. If a user-written variable accidentally matches an ADHD pattern, surface the warning during Phase 2 (when `globals.css` is parsed and ADHD-pattern variables are extracted) — do not silently overwrite.
-
-## Phase 7: Verify (skip if --dry-run)
-
-Re-run Phases 2 and 3 to read both sides afresh. Recompute the diff for the synced domains. Assert it is empty (excluding any explicitly skipped removals).
-
-If the diff is NOT empty, the apply step failed somewhere. Print the post-apply diff and DO NOT claim success. Tell the user: `Sync verification failed for domain(s): <list>. The apply step did not produce the expected result. Review the diff above and re-run.`
-
-## Phase 8: Report
-
-Print a final summary:
-
-```
-ADHD Sync complete.
-
-Domain       Applied
-────────────────────
-colors          5
-spacing         1
-typography      0
-radius          0
-shadow          0
-────────────────────
-Total           6
-
-Commits (code side):
-  abc1234  ADHD sync: colors from Figma (5 changes)
-  def5678  ADHD sync: spacing from Figma (1 changes)
-
-Warnings:
-  - 0 user-content collisions
-  - 0 orphans skipped
-```
-
-Include git commit short-SHAs for code-side changes (which apply when `leader = "figma"` and the code is the follower being updated). If `leader = "code"`, mention that Figma changes were applied via MCP and are not git-tracked. (Note: in v1, `leader = "code"` aborts in Phase 1, so this branch is currently unreachable; included for forward compatibility.)
-
-## Reference: Mandated Figma structure
-
-ADHD v1 requires this exact structure in the Figma file. Validation will fail otherwise.
-
-### `Primitives` collection (no modes — or single mode treated as no modes)
-
-Variables follow these naming patterns:
-
-| Domain | Pattern | Example |
-|---|---|---|
-| Colors | `colors/{palette}/{shade}` | `colors/gold/100` |
-| Spacing | `spacing/{n}` | `spacing/4` |
-| Radius | `radius/{name}` | `radius/md` |
-| Shadow | `shadow/{name}` | `shadow/lg` |
-| Typography | `font/{family-name}`, `text/{size}`, `font-weight/{name}`, `leading/{name}` | `font/sans`, `text/base`, `font-weight/medium`, `leading/tight` |
-
-All values are RAW (not aliases). No modes (or one mode treated as no modes).
-
-### `Semantic` collection (exactly two modes: `Light`, `Dark`)
-
-Variables follow `colors/{role-path}` pattern, e.g., `colors/brand/surface`, `colors/background`. ADHD does not mandate the role vocabulary — `surface`/`on-surface` (Material), `bg`/`fg`, `main`/`text` are all valid as long as they're kebab-case + slash hierarchy.
-
-All values are ALIASES to a Primitives variable. Both modes (Light and Dark) must have alias values.
-
-## Reference: CSS variable name mappings
-
-Translation between Figma variable names and CSS variable names:
-
-| Figma | CSS variable | Block in globals.css |
-|---|---|---|
-| `colors/gold/100` (Primitives) | `--color-gold-100` | `@theme {}` |
-| `spacing/4` (Primitives) | `--spacing-4` | `@theme {}` |
-| `radius/md` (Primitives) | `--radius-md` | `@theme {}` |
-| `shadow/md` (Primitives) | `--shadow-md` | `@theme {}` |
-| `font/sans` (Primitives) | `--font-sans` | `@theme {}` |
-| `text/base` (Primitives) | `--text-base` | `@theme {}` |
-| `font-weight/medium` (Primitives) | `--font-weight-medium` | `@theme {}` |
-| `leading/tight` (Primitives) | `--leading-tight` | `@theme {}` |
-| `colors/brand/surface` (Semantic) | `--brand-surface` (Light value) | `:root {}` |
-| `colors/brand/surface` (Semantic) | `--brand-surface` (Dark value) | `@media (prefers-color-scheme: dark) :root {}` |
-| `colors/brand/surface` (Semantic) | `--color-brand-surface: var(--brand-surface)` | `@theme inline {}` (Tailwind exposure) |
-
-## Reference: Common errors and fix-up guidance
-
-### "Cannot find adhd.config.ts at the repo root"
-Run `/adhd:config` — the wizard walks you through creating one. (For reference, the schema is documented in `plugins/adhd/skills/config/SKILL.md` under "Reference: adhd.config.ts schema".)
-
-### "Figma MCP is not authenticated"
-The Figma MCP needs OAuth. Run the MCP auth flow per Figma MCP documentation, then retry.
-
-### "Cannot reach the Figma file"
-Verify the URL is for a Figma file (not a node selection or a non-Figma URL). Confirm you have read access to the file. If `leader: "code"`, you also need write access.
-
-### "Primitives collection not found" / "Semantic collection not found"
-ADHD v1 mandates these exact collection names. Rename your collections in Figma, or create them.
-
-### "Semantic collection has N modes; expected exactly Light and Dark"
-ADHD v1 supports only the two-mode Light/Dark model. Remove or rename modes. Multi-mode support is planned for v2.
-
-### "Variable name does not follow kebab-case + slash hierarchy"
-Rename the offending variable. Examples of valid names: `colors/gold/100`, `spacing/4`, `colors/brand/surface`. Examples of invalid names: `Colors/Gold/100` (capitalized), `colors gold 100` (spaces), `colors_gold_100` (underscores).
-
-### "Semantic variable has raw value instead of alias"
-Edit the variable in Figma to alias a Primitives variable. ADHD requires Semantic to be aliases-only.
-
-### "User-written CSS variable matches an ADHD name pattern"
-Rename your CSS variable to avoid collision, OR accept that ADHD will overwrite it on next sync. The collision is in the listed file/line of `globals.css`.
+| `adhd.config.ts not found` | Run `/adhd:config` — the wizard walks you through creating one. |
+| `URL points at wrong file` | Open the configured Figma file (printed in error) and copy a node URL from there. |
+| `Select a frame, component, or page` | Click on a frame in Figma desktop, or pass a node-id URL. |
+| `Figma MCP not configured` / `MCP unreachable` | Make sure Figma desktop is running with Dev Mode enabled. Re-run `/adhd:config` to verify setup. |
+| `Edit failed: variable not found in target block` | The variable was expected in `@theme {}` (etc.) but the block doesn't have it. Re-run `/adhd:check` to confirm classification, then file an issue if the engine is wrong. |
+| `git commit failed: nothing to commit` | All conflicts were resolved as "keep local"; no writes were made. Not an error. |
