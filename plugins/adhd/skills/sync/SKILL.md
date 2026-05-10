@@ -48,7 +48,7 @@ Stop the workflow on any failure here. Print the failure message and the relevan
 
 - Parse the default-exported object. Since this is a plain TypeScript literal (no imports), extract the fields with targeted regex (look for `leader:`, `figma:`, `domains:`, `cssEntry:`).
 - Validate:
-  - `leader` is exactly `"code"` or `"figma"`.
+  - `leader` (if present) is exactly `"code"` or `"figma"`. Absent is treated as `"figma"`.
   - `figma.url` matches `^https://www\.figma\.com/design/[^/]+/`.
   - `domains` (if present) is an array containing only `"colors"`, `"spacing"`, `"typography"`, `"radius"`, `"shadow"`.
   - `cssEntry` (if present) points to a file that exists.
