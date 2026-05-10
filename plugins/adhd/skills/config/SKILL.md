@@ -297,10 +297,20 @@ Wrote FIGMA_PAT to .env.local.
 [If .gitignore was modified:]
 Added .env.local to .gitignore.
 
-Next: run /adhd:sync --dry-run to preview your first diff.
+<NEXT_STEP>
 ```
 
-Substitute the actual values in angle brackets. If running on a healthy config that didn't change, print `Config unchanged.` instead of the saved-to message.
+Substitute the actual values in angle brackets. The `<NEXT_STEP>` line depends on the saved `leader`:
+
+- **`leader: "figma"`** — print: `Next: run /adhd:sync --dry-run to preview your first diff.`
+- **`leader: "code"`** — print:
+  ```
+  Next: leader = "code" apply path is being implemented in Plan 2.
+        /adhd:sync will report this and stop until Plan 2 ships.
+        Once it does, run /adhd:sync --dry-run to preview your first diff.
+  ```
+
+If running on a healthy config that didn't change, print `Config unchanged.` instead of the saved-to message.
 
 ## Reference: Common errors and fix-up guidance
 
