@@ -12,3 +12,7 @@ adhd-export-for-figma.json
 # Misc
 .DS_Store
 *.pem
+
+# Claude Code session state (worktrees, local settings, etc.)
+# .claude-plugin/ at root is the marketplace metadata and IS tracked.
+.claude/
