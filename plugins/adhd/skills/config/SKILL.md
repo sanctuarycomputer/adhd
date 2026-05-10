@@ -281,6 +281,27 @@ Phase 4 may have already written `.env.local` and updated `.gitignore`. Don't re
 
 ## Phase 7: Report
 
+Print a summary of what was done. Tailor to the actual operations:
+
+```
+Config saved to adhd.config.ts.
+
+Leader: <LEADER>
+Figma:  <URL>
+Domains: <"all" or comma-separated list>
+CSS:    <"app/globals.css (default)" or the explicit path>
+PAT:    <"loaded from <source>" or "n/a (leader=figma)">
+
+[If .env.local was created or modified:]
+Wrote FIGMA_PAT to .env.local.
+[If .gitignore was modified:]
+Added .env.local to .gitignore.
+
+Next: run /adhd:sync --dry-run to preview your first diff.
+```
+
+Substitute the actual values in angle brackets. If running on a healthy config that didn't change, print `Config unchanged.` instead of the saved-to message.
+
 ## Reference: Common errors and fix-up guidance
 
 ## Reference: adhd.config.ts schema
