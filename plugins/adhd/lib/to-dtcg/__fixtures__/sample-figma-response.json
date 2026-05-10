@@ -42,7 +42,7 @@
         "variableCollectionId": "primitivesId",
         "resolvedType": "COLOR",
         "valuesByMode": {
-          "primDefault": { "r": 0.9843, "g": 0.1725, "b": 0.2118, "a": 1 }
+          "primDefault": { "r": 0.9827, "g": 0.1718, "b": 0.2131, "a": 1 }
         }
       },
       "varSpacing4": {

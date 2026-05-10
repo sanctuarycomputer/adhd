@@ -15,10 +15,10 @@
  */
 
 // ============================================================
-// OKLCH → hex conversion (vendored from colorjs.io, MIT)
+// OKLCH → ColorValue conversion (vendored from colorjs.io, MIT)
 // ============================================================
 //
-// Pipeline: OKLCH → OKLab → linear sRGB → companded sRGB → 8-bit hex.
+// Pipeline: OKLCH → OKLab → linear sRGB → companded sRGB → [0,1] components.
 
 function oklchToOklab(L, C, h) {
   const hRad = (h * Math.PI) / 180;
@@ -54,20 +54,6 @@ function linearToCompandedSrgb(c) {
 
 function clamp01(c) {
   return Math.max(0, Math.min(1, c));
-}
-
-function channelToHex(c) {
-  const v = Math.round(clamp01(c) * 255);
-  return v.toString(16).padStart(2, '0');
-}
-
-function oklchToHex(L, C, h) {
-  const lab = oklchToOklab(L, C, h);
-  const lin = oklabToLinearSrgb(lab);
-  const r = linearToCompandedSrgb(lin.r);
-  const g = linearToCompandedSrgb(lin.g);
-  const b = linearToCompandedSrgb(lin.b);
-  return `#${channelToHex(r)}${channelToHex(g)}${channelToHex(b)}`;
 }
 
 function oklchToColorValue(L, C, h) {
@@ -384,23 +370,48 @@ function variableNameToDtcg(varName) {
 }
 
 // Given a CSS value, normalize for DTCG.
-function normalizeCssValue(raw, namespace) {
-  raw = raw.trim();
-  // Alias?
+function normalizeCssValue(raw, namespace, dtcgType) {
+  raw = String(raw).trim();
+
+  // Aliases come through as DTCG references regardless of namespace.
   const aliasMatch = /^var\(\s*(--[a-z0-9-]+)\s*\)$/.exec(raw);
   if (aliasMatch) {
     const target = variableNameToDtcg(aliasMatch[1]);
     if (target) return `{${target.dtcgPath}}`;
     return raw;
   }
-  // OKLCH?
+
+  // OKLCH -> ColorValue object.
   const oklchMatch = /^oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/.exec(raw);
   if (oklchMatch) {
     const L = parseFloat(oklchMatch[1]) / 100;
     const C = parseFloat(oklchMatch[2]);
     const H = parseFloat(oklchMatch[3]);
-    return oklchToHex(L, C, H);
+    const cv = oklchToColorValue(L, C, H);
+    if (oklchMatch[4] !== undefined) cv.alpha = round4(parseFloat(oklchMatch[4]));
+    return cv;
   }
+
+  // Type-specific dispatch.
+  if (dtcgType === 'color') {
+    return parseCssColor(raw);
+  }
+  if (dtcgType === 'dimension') {
+    const dim = parseCssDimension(raw);
+    if (!dim) throw new Error(`Unparseable dimension '${raw}' (expected rem/em/px)`);
+    return dim;
+  }
+  if (dtcgType === 'fontFamily') {
+    return parseFontFamily(raw);
+  }
+  if (dtcgType === 'fontWeight' || dtcgType === 'number') {
+    return parseFloat(raw);
+  }
+  if (dtcgType === 'shadow') {
+    return parseCssShadow(raw);
+  }
+
+  // Pass-through for non-ADHD-managed names.
   return raw;
 }
 
@@ -416,7 +427,7 @@ function parseCssTokens(cssText) {
       const mapped = variableNameToDtcg(decl.name);
       if (!mapped) continue;
       const dtcgType = NAMESPACE_TO_DTCG_TYPE[mapped.namespace];
-      const value = normalizeCssValue(decl.value, mapped.namespace);
+      const value = normalizeCssValue(decl.value, mapped.namespace, dtcgType);
       result.primitives.push({ ...mapped, value, dtcgType });
     }
   }
@@ -426,7 +437,7 @@ function parseCssTokens(cssText) {
       if (variableNameToDtcg(decl.name)) continue; // skip primitive-prefixed
       const stripped = decl.name.replace(/^--/, '');
       const dtcgPath = `color.${stripped.replace(/-/g, '.')}`;
-      const value = normalizeCssValue(decl.value, 'color');
+      const value = normalizeCssValue(decl.value, 'color', 'color');
       result.semanticLight.push({ namespace: 'color', dtcgPath, value, dtcgType: 'color' });
     }
   }
@@ -436,7 +447,7 @@ function parseCssTokens(cssText) {
       if (variableNameToDtcg(decl.name)) continue;
       const stripped = decl.name.replace(/^--/, '');
       const dtcgPath = `color.${stripped.replace(/-/g, '.')}`;
-      const value = normalizeCssValue(decl.value, 'color');
+      const value = normalizeCssValue(decl.value, 'color', 'color');
       result.semanticDark.push({ namespace: 'color', dtcgPath, value, dtcgType: 'color' });
     }
   }
@@ -472,16 +483,17 @@ function buildDtcgFromCssTokens(tokens) {
     semByPath.set(t.dtcgPath, existing);
   }
   for (const [dotPath, sem] of semByPath) {
+    // Top-level $value defaults to the Light mode value (the canonical default).
+    // $extensions.mode carries per-mode overrides as bare values (no $value wrapping).
+    // Lowercase mode keys per Terrazzo conventions.
+    const defaultValue = sem.light !== undefined ? sem.light : sem.dark;
     const leaf = {
       $type: sem.type,
-      $extensions: {
-        'com.figma': {
-          modes: {},
-        },
-      },
+      $value: defaultValue,
+      $extensions: { mode: {} },
     };
-    if (sem.light !== undefined) leaf.$extensions['com.figma'].modes.Light = { $value: sem.light };
-    if (sem.dark !== undefined) leaf.$extensions['com.figma'].modes.Dark = { $value: sem.dark };
+    if (sem.light !== undefined) leaf.$extensions.mode.light = sem.light;
+    if (sem.dark !== undefined) leaf.$extensions.mode.dark = sem.dark;
     setNested(root, dotPath, leaf);
   }
   return root;
@@ -511,8 +523,9 @@ function parseTailwindTheme(themeText) {
   for (const decl of parseDeclarations(block.body)) {
     const mapped = variableNameToDtcg(decl.name);
     if (!mapped) continue;
-    const value = normalizeCssValue(decl.value, mapped.namespace);
-    out.push({ ...mapped, value, dtcgType: NAMESPACE_TO_DTCG_TYPE[mapped.namespace] });
+    const dtcgType = NAMESPACE_TO_DTCG_TYPE[mapped.namespace];
+    const value = normalizeCssValue(decl.value, mapped.namespace, dtcgType);
+    out.push({ ...mapped, value, dtcgType });
   }
   return out;
 }
@@ -520,15 +533,6 @@ function parseTailwindTheme(themeText) {
 // ============================================================
 // Figma MCP response parsing
 // ============================================================
-
-function rgbObjectToHex({ r, g, b, a }) {
-  const ch = (c) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0');
-  if (a !== undefined && a < 1) {
-    const aCh = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
-    return `#${ch(r)}${ch(g)}${ch(b)}${aCh}`;
-  }
-  return `#${ch(r)}${ch(g)}${ch(b)}`;
-}
 
 function rgbObjectToColorValue({ r, g, b, a }) {
   return {
@@ -605,9 +609,23 @@ function parseFigmaResponse(json) {
       return `{${target.dtcgPath}}`;
     }
     if (value && typeof value === 'object' && 'r' in value && 'g' in value && 'b' in value) {
-      return rgbObjectToHex(value);
+      return rgbObjectToColorValue(value);
     }
-    if (typeof value === 'string') return value;
+    // Spacing or other dimension-typed values come back as strings; parse them.
+    if (typeof value === 'string') {
+      if (namespace === 'spacing' || namespace === 'radius' || namespace === 'text') {
+        const dim = parseCssDimension(value);
+        if (!dim) throw new Error(`Unparseable Figma dimension: ${value}`);
+        return dim;
+      }
+      if (namespace === 'font') {
+        return parseFontFamily(value);
+      }
+      if (namespace === 'leading' || namespace === 'font-weight') {
+        return parseFloat(value);
+      }
+      return value;
+    }
     if (typeof value === 'number') return value;
     throw new Error(`Unsupported value: ${JSON.stringify(value)}`);
   }
@@ -697,7 +715,6 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs,
-  oklchToHex,
   oklchToColorValue,
   parseCssTokens,
   parseFigmaResponse,
@@ -705,12 +722,10 @@ module.exports = {
   stringifyDtcgStable,
   variableNameToDtcg,
   normalizeCssValue,
-  rgbObjectToHex,
   rgbObjectToColorValue,
-  // NEW: Plan 1.5 helpers
   parseCssDimension,
+  round4,
   parseFontFamily,
   parseCssColor,
   parseCssShadow,
-  round4,
 };

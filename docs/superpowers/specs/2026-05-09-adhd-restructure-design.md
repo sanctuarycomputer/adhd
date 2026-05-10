@@ -130,12 +130,11 @@ Exit codes: 0 on success; 1 on parse error; 2 on bad arguments.
     "brand": {
       "surface": {
         "$type": "color",
+        "$value": "{color.gold.100}",
         "$extensions": {
-          "com.figma": {
-            "modes": {
-              "Light": { "$value": "{color.gold.100}" },
-              "Dark":  { "$value": "{color.gold.900}" }
-            }
+          "mode": {
+            "light": "{color.gold.100}",
+            "dark":  "{color.gold.900}"
           }
         }
       }
