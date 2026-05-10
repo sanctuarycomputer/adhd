@@ -19,7 +19,7 @@ test('css output and figma output are equal for tokens both sources can represen
   const fromFigma = JSON.parse(execFileSync('node', [
     cliPath,
     '--source', 'figma',
-    '--input', path.join(fixturesDir, 'sample-figma-response.json'),
+    '--input', path.join(fixturesDir, 'sample-figma-rest-shape.json'),
   ], { encoding: 'utf8' }));
 
   // Figma's variable system doesn't natively represent shadow tokens (they're
