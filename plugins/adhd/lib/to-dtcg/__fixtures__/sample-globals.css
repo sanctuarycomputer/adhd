@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gold-100: #faf0c5;
+  --color-gold-900: #3f2909;
+  --spacing-4: 1rem;
+}
+
+:root {
+  --brand-surface: var(--color-gold-100);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand-surface: var(--color-gold-900);
+  }
+}
+
+@theme inline {
+  --color-brand-surface: var(--brand-surface);
+}

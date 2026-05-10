@@ -1,0 +1,37 @@
+{
+  "color": {
+    "brand": {
+      "surface": {
+        "$extensions": {
+          "com.figma": {
+            "modes": {
+              "Dark": {
+                "$value": "{color.gold.900}"
+              },
+              "Light": {
+                "$value": "{color.gold.100}"
+              }
+            }
+          }
+        },
+        "$type": "color"
+      }
+    },
+    "gold": {
+      "100": {
+        "$type": "color",
+        "$value": "#faf0c5"
+      },
+      "900": {
+        "$type": "color",
+        "$value": "#3f2909"
+      }
+    }
+  },
+  "spacing": {
+    "4": {
+      "$type": "dimension",
+      "$value": "1rem"
+    }
+  }
+}
