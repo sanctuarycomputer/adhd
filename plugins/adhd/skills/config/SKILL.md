@@ -54,22 +54,6 @@ For Branch A, extract these fields with targeted regex (the file is a plain Type
 
 Pass these forward as defaults for Phases 1, 2, 3, 4, and 5.
 
-## Phase 1: Leader
-
-Use `AskUserQuestion` with a single multiple-choice question:
-
-```
-Question: "Which side should win on conflict?"
-Header: "Leader"
-Options:
-  - label: "code", description: "This codebase is canonical. Sync pushes changes to Figma."
-  - label: "figma", description: "Figma is canonical. Sync pulls changes into globals.css."
-```
-
-Default selection: the existing `leader` value from Phase 0 if present; otherwise default to `figma` (the safer pull-only path; users wanting `code` can switch explicitly).
-
-Save the answer as `leader`. The value is one of `"code"` or `"figma"`. Both are fully supported by this wizard. (Note: as of Plan 1 of the implementation, the actual code → Figma apply path in `/adhd:sync` is still being built — Plan 2. The wizard saves `leader: "code"` correctly today; sync will surface a clear "apply path not yet implemented" message until Plan 2 lands.)
-
 ## Phase 2: Domains
 
 > **Tool note:** `AskUserQuestion` accepts 2–4 options and does not support multi-select with 5+ items or free-text input. ADHD has five supported domains, so this phase uses a two-step prompt: a binary `AskUserQuestion` first, then a chat-based subset list when needed.
@@ -157,105 +141,6 @@ Then re-issue the chat prompt from Step 2 and wait for the user's next message.
 On success (200 with metadata), save the URL.
 
 This phase **does not** validate that the Figma file has the mandated structure (Primitives / Semantic collections, Light/Dark modes, kebab-case naming). That validation is `/adhd:sync`'s job — running it here would slow the wizard and duplicate logic.
-
-## Phase 4: PAT setup (only when leader = code)
-
-Skip this entire phase if `leader === "figma"`.
-
-Resolve the env var name: `envVarName = config.figma.pat ?? "FIGMA_PAT"`. Phase 0 may have given you `config.figma.pat`; if not, use the default.
-
-### Detection cascade
-
-Try each source in order, stopping at the first hit. Track the **source** (shell, file path, or "absent") for use later.
-
-1. **Shell environment.** Run `Bash` with: `printenv "$ENV_VAR_NAME"` (substituting the actual name). If exit code 0 and stdout is non-empty, source = `"shell"`, value = stdout.
-2. **`.env*` files in the repo root**, in this order: `.env.local`, `.env.development.local`, `.env`. For each, `Read` the file (skip if it doesn't exist). Parse for a line matching `^<envVarName>=(.+)$` (allow optional surrounding quotes). First match wins; source = the file path; value = the captured value.
-3. **Not found anywhere.** source = `"absent"`, no value.
-
-### If a value was found: validate
-
-Use `WebFetch` against `https://api.figma.com/v1/files/<KEY>/variables/local`, where `<KEY>` is the file key from Phase 3. **`WebFetch` does not support custom headers**, so fall back to `Bash` with `curl`:
-
-```bash
-curl -sS -o /tmp/adhd-pat-check.json -w "%{http_code}" \
-  -H "X-FIGMA-TOKEN: <VALUE>" \
-  "https://api.figma.com/v1/files/<KEY>/variables/local"
-```
-
-(Substitute `<VALUE>` and `<KEY>` from runtime; treat the value as untrusted shell input — single-quote it.)
-
-Interpret the HTTP status code:
-
-- **200:** token works, user is on Enterprise, has access. Save the env var name (in memory) for Phase 6's decision on whether to write `figma.pat` to the config. Continue to Phase 5.
-- **401:** token is invalid. Use `AskUserQuestion`:
-
-  ```
-  Question: "Your Figma PAT was rejected (HTTP 401 — invalid token). What would you like to do?"
-  Header: "PAT 401"
-  Options:
-    - label: "Enter a fresh token", description: "Replace the rejected token via chat. (If the existing token came from your shell, the wizard cannot edit your shell rc — it'll ask you to update it manually.)"
-    - label: "Abort", description: "Stop the wizard. No changes made."
-  ```
-
-  On "Enter a fresh token", proceed to "Prompt for a new token" below. On "Abort", exit the wizard. Note the detection source: if it was a `.env*` file, the wizard will overwrite that line; if it was the shell, the wizard will print shell-rc guidance instead of editing.
-- **403:** token doesn't have access (wrong plan or scope). Print:
-  ```
-  Your token does not have access to Figma's Variables API (HTTP 403).
-
-  This API is gated to Figma Enterprise plans with Full seat. Options:
-    1. Upgrade your Figma plan and create a new PAT with file_variables:write scope.
-    2. Enter a different token that has access.
-    3. Cancel and switch leader to "figma" (re-run /adhd:config).
-  ```
-  Then ask:
-  ```
-  AskUserQuestion: "What would you like to do?"
-  Header: "PAT 403"
-  Options:
-    - "Enter a different PAT now"
-    - "Cancel — I'll fix this and re-run /adhd:config later"
-  ```
-  On "Enter a different PAT now", proceed to "Prompt for a new token" below. On cancel, abort the wizard.
-- **404:** file key wrong (shouldn't happen — Phase 3 already validated reachability). Print `Internal: file key validated in Phase 3 but rejected by REST API. Re-running Phase 3.` and re-run Phase 3.
-- **Other (5xx, network, timeout):** print the error and re-prompt.
-
-### Prompt for a new token
-
-If detection found nothing OR validation failed and the user wants to retry, drop to a chat prompt:
-
-```
-Paste your Figma personal access token, or say "abort" to exit.
-
-(The token will only be written to .env.local — gitignored — or used to overwrite an existing entry in the .env* file the previous token came from. It is never written to adhd.config.ts.)
-```
-
-Wait for the user's next chat message. If it's `"abort"`, exit the wizard. Otherwise treat the message as the token value.
-
-`AskUserQuestion` does not support free-text input, which is why this is a chat prompt rather than a structured question. The 401/403 cases above use `AskUserQuestion` for the keep/replace/abort decision; only the actual token value goes through chat.
-
-**Where to write:**
-- If detection-source was a `.env*` file: rewrite that file in place — find the existing `<envVarName>=...` line and replace its value, preserving surrounding lines.
-- If detection-source was the shell: print:
-  ```
-  The token in your shell environment ($ENV_VAR_NAME) is invalid, and /adhd:config can't safely edit your shell rc files.
-
-  Update your shell environment manually (e.g., edit ~/.zshrc or ~/.bashrc), then re-run /adhd:config.
-  ```
-  Abort the wizard.
-- If detection-source was "absent": append a new line to `.env.local` in the repo root.
-  - If `.env.local` doesn't exist, create it.
-  - The line is: `<envVarName>=<value>` (no quotes around the value unless it contains spaces — Figma PATs do not).
-  - After writing, ensure `.env.local` is in `.gitignore`. Read `.gitignore`; if `.env.local` (or `.env*`) is not present, append `.env.local` on its own line.
-
-After writing, re-run the validation step against the new value. Loop until it returns 200 or the user cancels.
-
-### Save state for Phase 6
-
-Track:
-- `envVarName` — the name (e.g., `"FIGMA_PAT"`).
-- Whether `envVarName !== "FIGMA_PAT"` — if so, Phase 6 writes `figma.pat: "<envVarName>"` to the config; otherwise it does not.
-- Whether `.env.local` was created or modified — Phase 7 reports it.
-- Whether `.gitignore` was modified — Phase 7 reports it.
 
 ## Phase 5: cssEntry auto-detect
 
