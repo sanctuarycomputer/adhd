@@ -14,6 +14,9 @@
   --color-gold-800: #5e3d0e;
   --color-gold-900: #3f2909;
   --color-gold-950: #221504;
+
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 1rem;
 }
 
 /* ── Layer 2: semantic role assignments ──────────────────

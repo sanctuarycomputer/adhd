@@ -30,7 +30,7 @@ const SIZE_PX: Record<AvatarSize, number> = {
 };
 
 export const SIZE_TEXT: Record<AvatarSize, string> = {
-  xs: "text-[10px]",
+  xs: "text-2xs",
   sm: "text-xs",
   md: "text-sm",
   lg: "text-base",
