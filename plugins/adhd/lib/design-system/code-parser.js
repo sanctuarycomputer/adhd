@@ -262,6 +262,14 @@ const TAILWIND_Z_INDEX_SCALE = {
   '0': 0, '10': 10, '20': 20, '30': 30, '40': 40, '50': 50,
 };
 
+// Tailwind v4 aspect-ratio utility classes that aren't variables in theme.css.
+// `aspect-video` lives in theme.css (--aspect-video: 16 / 9). The others
+// resolve to literal aspect-ratio values directly in the utility classes.
+const TAILWIND_ASPECT_EXTRAS = {
+  'square': '1 / 1',
+  'auto':   'auto',
+};
+
 function synthesizeTailwindUtilityScale() {
   const out = [];
   const push = (domain, name, value, cssVarPrefix) => {
@@ -287,6 +295,9 @@ function synthesizeTailwindUtilityScale() {
   }
   for (const [name, v] of Object.entries(TAILWIND_Z_INDEX_SCALE)) {
     push('z-index', name, v, '--z-');
+  }
+  for (const [name, v] of Object.entries(TAILWIND_ASPECT_EXTRAS)) {
+    push('aspect', name, v, '--aspect-');
   }
   return out;
 }
