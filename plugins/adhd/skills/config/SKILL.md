@@ -27,7 +27,7 @@ Resolve the path: `adhd.config.ts` at the repo root. Use `Read` to load it. Ther
 Before parsing the config for defaults, scan the raw source text of `adhd.config.ts` for anything that looks like a literal Figma PAT. Run two regex checks against the file's text:
 
 1. `figd_[A-Za-z0-9_-]+` — Figma's standard PAT prefix; strongest signal.
-2. Any string longer than 24 characters assigned to a key literally named `pat`, `token`, or `secret`. (Heuristic: match `(pat|token|secret)\s*:\s*"[^"]{24,}"`.)
+2. Any string longer than 30 characters assigned to a key literally named `pat`, `token`, or `secret`. (Heuristic: match `(pat|token|secret)\s*:\s*"[^"]{30,}"`.) If the matched value also satisfies `^[A-Z][A-Z0-9_]*$` (i.e., it looks like an env var name), skip this heuristic — it's a long but valid name, not a token.
 
 If either matches, **abort the wizard immediately** with this exact message:
 
@@ -66,7 +66,7 @@ Options:
   - label: "figma", description: "Figma is canonical. Sync pulls changes into globals.css."
 ```
 
-Default selection: the existing `leader` value from Phase 0 if present; otherwise no default.
+Default selection: the existing `leader` value from Phase 0 if present; otherwise default to `figma` (the safer pull-only path; users wanting `code` can switch explicitly).
 
 Save the answer as `leader`. The value is one of `"code"` or `"figma"`. Both are fully supported by this wizard. (Note: as of Plan 1 of the implementation, the actual code → Figma apply path in `/adhd:sync` is still being built — Plan 2. The wizard saves `leader: "code"` correctly today; sync will surface a clear "apply path not yet implemented" message until Plan 2 lands.)
 
@@ -293,7 +293,7 @@ CSS:    <"app/globals.css (default)" or the explicit path>
 PAT:    <"loaded from <source>" or "n/a (leader=figma)">
 
 [If .env.local was created or modified:]
-Wrote FIGMA_PAT to .env.local.
+Wrote <envVarName> to .env.local.
 [If .gitignore was modified:]
 Added .env.local to .gitignore.
 

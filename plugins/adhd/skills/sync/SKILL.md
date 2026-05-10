@@ -34,7 +34,7 @@ Stop the workflow on any failure here. Print the failure message and the relevan
   ```
 - **PAT-leak preflight.** Before parsing for fields, scan the source text of the file you just read with two regex checks:
   1. `figd_[A-Za-z0-9_-]+` — Figma PAT prefix.
-  2. `(pat|token|secret)\s*:\s*"[^"]{24,}"` — long opaque value assigned to a credential-named key.
+  2. `(pat|token|secret)\s*:\s*"[^"]{30,}"` — long opaque value assigned to a credential-named key. If the matched value also satisfies `^[A-Z][A-Z0-9_]*$` (i.e., it looks like an env var name), skip this heuristic — it's a valid name, not a token.
 
   On match, abort with the credential-leak message:
 
@@ -76,8 +76,8 @@ Stop the workflow on any failure here. Print the failure message and the relevan
 ADHD sync cannot proceed.
 
 Reason:    leader: "code" is configured, but the apply path is still being built (Plan 2 of the
-           ADHD config + hybrid-writes spec). Phase 1 validation has succeeded — your config and
-           PAT are correct.
+           ADHD config + hybrid-writes spec). Your config schema is valid; PAT validity will be
+           verified by Plan 2's apply path when it ships.
 Next step: For now, switch leader to "figma" via /adhd:config to use the pull-from-Figma path.
            Or wait for Plan 2 to ship the code→Figma writes engine.
 ```
@@ -377,14 +377,7 @@ Translation between Figma variable names and CSS variable names:
 ## Reference: Common errors and fix-up guidance
 
 ### "Cannot find adhd.config.ts at the repo root"
-Create `adhd.config.ts` at the repo root with this minimal shape:
-```ts
-const config = {
-  leader: "code" as const,
-  figma: { url: "https://www.figma.com/design/<KEY>/<NAME>" },
-};
-export default config;
-```
+Run `/adhd:config` — the wizard walks you through creating one. (For reference, the schema is documented in `plugins/adhd/skills/config/SKILL.md` under "Reference: adhd.config.ts schema".)
 
 ### "Figma MCP is not authenticated"
 The Figma MCP needs OAuth. Run the MCP auth flow per Figma MCP documentation, then retry.
