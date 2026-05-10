@@ -126,9 +126,9 @@ We don't leave the temp file in the user's project after capture.
 
 ## Phase 7: Build reverse index (current Figma state)
 
-We need to know which variables exist in the Figma file so we can rebind captured raw values.
+We need to know which variables and styles exist in the Figma file so we can rebind captured raw values during consolidation.
 
-Use `mcp__plugin_figma_figma__use_figma` to run the same EXTRACT_SCRIPT that lib/design-system uses (or a slimmer variant — color + spacing + radius + typography + effects). Save the response to `/tmp/adhd-push-component/figma-state.json`.
+Use `mcp__plugin_figma_figma__use_figma` to run the same EXTRACT_SCRIPT that lib/design-system uses. It returns `{collections, effectStyles, textStyles}` — the reverse-index builder uses all three (variable collections for color/spacing/radius/typography lookups; effectStyles for shadow-style binding via signature match). Save the response to `/tmp/adhd-push-component/figma-state.json`.
 
 Build the reverse index:
 ```bash
@@ -136,8 +136,9 @@ node -e "
 const { buildReverseIndex } = require('./plugins/adhd/lib/push-component/reverse-index');
 const extract = JSON.parse(require('fs').readFileSync('/tmp/adhd-push-component/figma-state.json', 'utf8'));
 const ri = buildReverseIndex(extract);
-// Map can't be serialized — convert to plain arrays
-const plain = Object.fromEntries(Object.entries(ri).map(([k, m]) => [k, [...m.entries()]]));
+// Maps can't be serialized — convert each Map to a plain array of [key, value]
+// entries. Plain arrays (like color_rgba) pass through unchanged.
+const plain = Object.fromEntries(Object.entries(ri).map(([k, m]) => [k, m instanceof Map ? [...m.entries()] : m]));
 require('fs').writeFileSync('/tmp/adhd-push-component/reverse-index.json', JSON.stringify(plain));
 "
 ```

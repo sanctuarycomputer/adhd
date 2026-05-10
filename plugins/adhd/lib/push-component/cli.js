@@ -97,6 +97,7 @@ function buildConsolidationScript(manifest, reverseIndex, pageId) {
 const PAGE_ID = ${JSON.stringify(pageId)};
 const MANIFEST = ${MANIFEST_JSON};
 const REVERSE_INDEX = ${RI_JSON};
+const AUTO_NAME_RE = /^(Frame|Group|Rectangle|Ellipse|Vector|Line|Star|Polygon|Text)\\s+\\d+$/;
 
 // 1. Load the captured node; walk up to its PAGE ancestor.
 // generate_figma_design returns a FRAME (not a PAGE), so we must climb to the page.
@@ -209,22 +210,57 @@ componentSet.x = 40;
 componentSet.y = 40;
 pageNode.name = MANIFEST.componentName;
 
-// 8. Rebind raw fills / paddings / radii to existing Figma variables.
+// 8. Rebind raw fills / paddings / radii / fontSize / effects to existing Figma variables.
 // NOTE: to2 (2-decimal) matches reverse-index.js's colorKey quantization.
-function rgbKey(c) { const to2 = (n) => Math.round(n * 100)/100; return [to2(c.r), to2(c.g), to2(c.b), to2('a' in c ? c.a : 1)].join(','); }
+const to2 = (n) => Math.round(n * 100) / 100;
+function rgbKey(c) { return [to2(c.r), to2(c.g), to2(c.b), to2('a' in c ? c.a : 1)].join(','); }
+function effectSignature(e) {
+  const c = e.color || { r: 0, g: 0, b: 0, a: 1 };
+  const o = e.offset || { x: 0, y: 0 };
+  return [
+    e.type, to2(c.r), to2(c.g), to2(c.b), to2(c.a ?? 1),
+    to2(o.x), to2(o.y), to2(e.radius ?? 0), to2(e.spread ?? 0),
+  ].join('|');
+}
+function effectsArraySignature(arr) { return (arr || []).map(effectSignature).join(';;'); }
+
 const colorIndex = new Map(REVERSE_INDEX.color || []);
+const colorRgbaList = REVERSE_INDEX.color_rgba || [];
 const spacingIndex = new Map(REVERSE_INDEX.spacing || []);
 const radiusIndex = new Map(REVERSE_INDEX.radius || []);
+const typographyIndex = new Map(REVERSE_INDEX.typography || []);
+const effectsIndex = new Map(REVERSE_INDEX.effects || []);
+
+// Color lookup with fuzzy-distance fallback. Threshold tuned against Figma's
+// 8-bit float quantization drift (amber/500 case: distance ≈ 0.006).
+const DISTANCE_THRESHOLD = 0.02;
+function lookupColorFuzzy(rgba) {
+  let best = null;
+  let bestDist = Infinity;
+  const a = rgba.a ?? 1;
+  for (const entry of colorRgbaList) {
+    const da = (entry.rgba.a ?? 1) - a;
+    const dr = entry.rgba.r - rgba.r;
+    const dg = entry.rgba.g - rgba.g;
+    const db = entry.rgba.b - rgba.b;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db + da * da);
+    if (dist < bestDist && dist <= DISTANCE_THRESHOLD) {
+      bestDist = dist;
+      best = entry;
+    }
+  }
+  return best ? { id: best.id, name: best.name } : null;
+}
 
 async function bindNode(n) {
-  // Fills
+  // Fills (exact match first, then fuzzy distance fallback)
   if (Array.isArray(n.fills)) {
     const newFills = [];
     let changed = false;
     for (const fill of n.fills) {
-      if (fill.type === 'SOLID' && fill.color) {
-        const hit = colorIndex.get(rgbKey(fill.color));
-        if (hit && !fill.boundVariables?.color) {
+      if (fill.type === 'SOLID' && fill.color && !fill.boundVariables?.color) {
+        const hit = colorIndex.get(rgbKey(fill.color)) || lookupColorFuzzy(fill.color);
+        if (hit) {
           const v = await figma.variables.getVariableByIdAsync(hit.id);
           if (v) { newFills.push(figma.variables.setBoundVariableForPaint(fill, 'color', v)); changed = true; continue; }
         }
@@ -253,13 +289,64 @@ async function bindNode(n) {
       }
     }
   }
+  // fontSize (TEXT nodes)
+  if (n.type === 'TEXT' && typeof n.fontSize === 'number') {
+    const isBound = n.boundVariables && n.boundVariables.fontSize;
+    if (!isBound) {
+      const hit = typographyIndex.get(n.fontSize);
+      if (hit) {
+        const v = await figma.variables.getVariableByIdAsync(hit.id);
+        if (v) n.setBoundVariable('fontSize', v);
+      }
+    }
+  }
+  // Effects → effect style binding (only when not already styled)
+  if (Array.isArray(n.effects) && n.effects.length > 0 && !n.effectStyleId) {
+    const sig = effectsArraySignature(n.effects);
+    const hit = effectsIndex.get(sig);
+    if (hit) {
+      try { await n.setEffectStyleIdAsync(hit.id); } catch (e) { /* read-only or wrong node type */ }
+    }
+  }
   // Recurse
-  if (Array.isArray(n.children)) for (const c of n.children) await bindNode(c);
+  if ('children' in n && Array.isArray(n.children)) for (const c of n.children) await bindNode(c);
 }
 
 for (const child of componentSet.children) {
   await bindNode(child);
 }
+
+// 8b. Auto-layout promotion: any FRAME/COMPONENT with children but
+// layoutMode=NONE gets HORIZONTAL auto-layout with HUG sizing on both axes.
+// Captured frames from generate_figma_design typically come back as
+// layoutMode=NONE with absolutely-positioned children — STRUCT001 violation.
+const PROMOTABLE = new Set(['FRAME','COMPONENT','INSTANCE']);
+function promoteAutoLayout(n) {
+  if (PROMOTABLE.has(n.type) && 'children' in n && Array.isArray(n.children) && n.children.length > 0 && n.layoutMode === 'NONE') {
+    try {
+      n.layoutMode = 'HORIZONTAL';
+      n.primaryAxisSizingMode = 'AUTO';
+      n.counterAxisSizingMode = 'AUTO';
+    } catch (e) { /* not all node states accept layout changes */ }
+  }
+  if ('children' in n && Array.isArray(n.children)) for (const c of n.children) promoteAutoLayout(c);
+}
+for (const child of componentSet.children) promoteAutoLayout(child);
+
+// 8c. Auto-name rename: any layer matching the default Figma name pattern
+// ("Frame 1234", "Text 567", etc.) is renamed to a stable kebab-case form
+// based on node type + sibling index. Removes STRUCT008 warnings.
+// This is intentionally generic — semantic naming (e.g. "avatar-body") is
+// left to designers or component-specific hints.
+function renameAutoNamed(n, indexInParent) {
+  if (AUTO_NAME_RE.test(n.name)) {
+    try { n.name = n.type.toLowerCase().replace(/_/g, '-') + '-' + indexInParent; } catch (e) {}
+  }
+  if ('children' in n && Array.isArray(n.children)) {
+    for (let i = 0; i < n.children.length; i++) renameAutoNamed(n.children[i], i);
+  }
+}
+for (let i = 0; i < componentSet.children.length; i++) renameAutoNamed(componentSet.children[i], i);
 
 // 9. Prune the now-empty captured root (its variant children have been moved out).
 function pruneEmpty(n) {

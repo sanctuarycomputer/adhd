@@ -141,6 +141,42 @@ test('consolidation-script converts captured FRAMEs to COMPONENTs before combini
   assert.match(script, /figma\.createComponentFromNode/);
 });
 
+test('consolidation-script includes the universal compliance bake', () => {
+  // The script should: (1) bind fontSize to typography vars, (2) bind effects
+  // to effect styles, (3) try distance-based color fallback, (4) promote
+  // layoutMode=NONE FRAMEs/COMPONENTs to auto-layout, (5) rename auto-named
+  // layers. Each is asserted via a stable code marker.
+  const manifest = tmp('manifest.json', JSON.stringify({
+    componentName: 'Avatar',
+    variants: [{ size: 'xs' }, { size: 'sm' }],
+    importPath: '@/app/components/avatar',
+  }));
+  const reverseIndex = tmp('ri.json', JSON.stringify({
+    color: [], spacing: [], radius: [],
+    typography: [], effects: [], color_rgba: [],
+  }));
+  const out = tmp('script.js', '');
+  const result = spawnSync('node', [
+    CLI, 'consolidation-script',
+    '--manifest', manifest,
+    '--captured-page-id', '12:34',
+    '--reverse-index', reverseIndex,
+    '--output', out,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const script = fs.readFileSync(out, 'utf8');
+  // (1) fontSize binding
+  assert.match(script, /setBoundVariable\(['"]fontSize['"]/);
+  // (2) effect-style binding (uses effectStyleIdAsync per Plugin API)
+  assert.match(script, /effectStyleId/);
+  // (3) distance-based fallback color match
+  assert.match(script, /Math\.sqrt/);
+  // (4) auto-layout promotion
+  assert.match(script, /layoutMode\s*=\s*['"]HORIZONTAL['"]/);
+  // (5) auto-name rename
+  assert.match(script, /AUTO_NAME_RE|Frame\\s\+\\d/);
+});
+
 test('preflight subcommand produces a lint report', () => {
   // Build minimal inputs that lint-engine accepts
   const ctx = tmp('ctx.json', JSON.stringify({

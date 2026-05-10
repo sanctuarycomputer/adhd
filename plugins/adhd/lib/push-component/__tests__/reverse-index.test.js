@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildReverseIndex, lookupColor, lookupNumber } = require('../reverse-index');
+const { buildReverseIndex, lookupColor, lookupColorFuzzy, lookupNumber, lookupEffect } = require('../reverse-index');
 
 const EXTRACT = {
   collections: [
@@ -89,4 +89,131 @@ test('skips alias values (aliases resolve through the index, not into it)', () =
   // not brand/surface
   const v = lookupColor(index, { r: 0.98, g: 0.94, b: 0.77, a: 1 });
   assert.equal(v.name, 'gold/100');
+});
+
+test('fuzzy color lookup finds nearest variable within threshold (amber/500 quantization case)', () => {
+  // amber/500 design-system value is rgb(1.0, 0.6, 0).
+  // Figma's 8-bit float quantization returns (0.994, 0.602, 0) which
+  // rounds to (0.99, 0.60, 0.00) — 2-decimal exact match misses.
+  // Distance ≈ 0.006, well within 0.02 threshold.
+  const extract = {
+    collections: [{
+      name: 'color',
+      modes: [{ id: 'M1', name: 'Light' }],
+      variables: [
+        {
+          id: 'V_AMBER', name: 'amber/500', resolvedType: 'COLOR', scopes: [],
+          valuesByMode: { Light: { kind: 'color', r: 1, g: 0.6, b: 0, a: 1 } },
+        },
+      ],
+    }],
+    effectStyles: [], textStyles: [],
+  };
+  const index = buildReverseIndex(extract);
+  // Exact (2-decimal) miss
+  assert.equal(lookupColor(index, { r: 0.9942, g: 0.6020, b: 0, a: 1 }), null);
+  // Fuzzy hit
+  const fuzzy = lookupColorFuzzy(index, { r: 0.9942, g: 0.6020, b: 0, a: 1 }, 0.02);
+  assert.equal(fuzzy && fuzzy.name, 'amber/500');
+});
+
+test('fuzzy color lookup returns null when nothing is within threshold', () => {
+  const index = buildReverseIndex(EXTRACT);
+  const fuzzy = lookupColorFuzzy(index, { r: 0.1, g: 0.1, b: 0.1, a: 1 }, 0.02);
+  assert.equal(fuzzy, null);
+});
+
+test('fuzzy color lookup returns the closest match when multiple are within threshold', () => {
+  const extract = {
+    collections: [{
+      name: 'color',
+      modes: [{ id: 'M1', name: 'Light' }],
+      variables: [
+        { id: 'A', name: 'gray/500', resolvedType: 'COLOR', scopes: [],
+          valuesByMode: { M1: { kind: 'color', r: 0.5, g: 0.5, b: 0.5, a: 1 } } },
+        { id: 'B', name: 'gray/600', resolvedType: 'COLOR', scopes: [],
+          valuesByMode: { M1: { kind: 'color', r: 0.45, g: 0.45, b: 0.45, a: 1 } } },
+      ],
+    }],
+    effectStyles: [], textStyles: [],
+  };
+  const index = buildReverseIndex(extract);
+  // Slightly closer to gray/500
+  const v = lookupColorFuzzy(index, { r: 0.51, g: 0.51, b: 0.51, a: 1 }, 0.1);
+  assert.equal(v && v.name, 'gray/500');
+});
+
+test('typography lookup finds a font-size variable by px value', () => {
+  const extract = {
+    collections: [{
+      name: 'typography',
+      modes: [{ id: 'M1', name: 'Mode 1' }],
+      variables: [
+        { id: 'TXS', name: 'text/xs', resolvedType: 'FLOAT', scopes: [],
+          valuesByMode: { M1: { kind: 'literal', value: 12 } } },
+        { id: 'T2XS', name: 'text/2xs', resolvedType: 'FLOAT', scopes: [],
+          valuesByMode: { M1: { kind: 'literal', value: 10 } } },
+      ],
+    }],
+    effectStyles: [], textStyles: [],
+  };
+  const index = buildReverseIndex(extract);
+  assert.equal(lookupNumber(index, 'typography', 10).name, 'text/2xs');
+  assert.equal(lookupNumber(index, 'typography', 12).name, 'text/xs');
+  assert.equal(lookupNumber(index, 'typography', 11), null);
+});
+
+test('effect lookup finds an effect style by shadow signature', () => {
+  const extract = {
+    collections: [],
+    effectStyles: [
+      {
+        id: 'S:shadow2xs', name: 'shadow/2xs',
+        effects: [{
+          type: 'DROP_SHADOW',
+          color: { r: 0, g: 0, b: 0, a: 0.05 },
+          offset: { x: 0, y: 1 },
+          radius: 2,
+          spread: 0,
+        }],
+      },
+      {
+        id: 'S:shadowMd', name: 'shadow/md',
+        effects: [{
+          type: 'DROP_SHADOW',
+          color: { r: 0, g: 0, b: 0, a: 0.1 },
+          offset: { x: 0, y: 4 },
+          radius: 6,
+          spread: -1,
+        }],
+      },
+    ],
+    textStyles: [],
+  };
+  const index = buildReverseIndex(extract);
+  const hit = lookupEffect(index, [{
+    type: 'DROP_SHADOW',
+    color: { r: 0, g: 0, b: 0, a: 0.05 },
+    offset: { x: 0, y: 1 },
+    radius: 2,
+    spread: 0,
+  }]);
+  assert.equal(hit && hit.id, 'S:shadow2xs');
+});
+
+test('effect lookup returns null when no signature matches', () => {
+  const extract = {
+    collections: [],
+    effectStyles: [
+      { id: 'S:a', name: 'shadow/lg', effects: [{
+        type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.2 }, offset: { x: 0, y: 8 }, radius: 12, spread: 0,
+      }]},
+    ],
+    textStyles: [],
+  };
+  const index = buildReverseIndex(extract);
+  const hit = lookupEffect(index, [{
+    type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.05 }, offset: { x: 0, y: 1 }, radius: 2, spread: 0,
+  }]);
+  assert.equal(hit, null);
 });
