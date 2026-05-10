@@ -12,18 +12,25 @@ function valuesEqual(a, b) {
   return av === bv;
 }
 
+function tokenKey(t) {
+  // Use domain:path as the unique identifier so radius/xs and shadow/xs
+  // (different domains, same leaf path) don't collide in the map.
+  return t.domain + ':' + t.path;
+}
+
 function compareDesignSystems(code, figma) {
   const same = [];
   const conflict = [];
   const codeOnly = [];
   const figmaOnly = [];
 
-  const codeByPath = new Map(code.tokens.map(t => [t.path, t]));
-  const figmaByPath = new Map(figma.tokens.map(t => [t.path, t]));
+  const codeByKey = new Map(code.tokens.map(t => [tokenKey(t), t]));
+  const figmaByKey = new Map(figma.tokens.map(t => [tokenKey(t), t]));
 
   // Tokens that exist on both sides
-  for (const [path, codeTok] of codeByPath) {
-    const figmaTok = figmaByPath.get(path);
+  for (const [key, codeTok] of codeByKey) {
+    const figmaTok = figmaByKey.get(key);
+    const path = codeTok.path;
     if (!figmaTok) {
       codeOnly.push(codeTok);
       continue;
@@ -74,8 +81,8 @@ function compareDesignSystems(code, figma) {
   }
 
   // Tokens only on the figma side
-  for (const [path, figmaTok] of figmaByPath) {
-    if (!codeByPath.has(path)) {
+  for (const [key, figmaTok] of figmaByKey) {
+    if (!codeByKey.has(key)) {
       figmaOnly.push(figmaTok);
     }
   }

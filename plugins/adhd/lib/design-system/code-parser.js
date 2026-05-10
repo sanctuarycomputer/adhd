@@ -70,7 +70,7 @@ function inferDomain(cssVarName) {
   if (stripped.includes('--')) return 'unknown';
 
   if (stripped.startsWith('color-')) return 'color';
-  if (stripped === 'spacing' || stripped.startsWith('space-')) return 'spacing';
+  if (stripped === 'spacing' || stripped.startsWith('space-') || stripped.startsWith('spacing-')) return 'spacing';
   if (stripped.startsWith('radius-')) return 'radius';
   if (
     stripped.startsWith('shadow-') ||
@@ -106,8 +106,12 @@ function pathFromCssVar(cssVarName) {
   // (e.g. --drop-shadow-xs → drop-shadow/xs, --font-weight-bold → font-weight/bold,
   // --text-xs → text/xs). Single-prefix domains drop the prefix entirely.
   // Order matters: longer prefixes must be tried before shorter ones.
-  const SINGLE_PREFIX = {
-    color: 'color-', spacing: 'space-', radius: 'radius-', shadow: 'shadow-',
+  // Order matters when multiple match (longest first wins via the lookup loop below).
+  const SINGLE_PREFIX_ORDERED = {
+    color: ['color-'],
+    spacing: ['spacing-', 'space-'],  // Prefer 'spacing-' (Tailwind v4 native) over the older 'space-'.
+    radius: ['radius-'],
+    shadow: ['shadow-'],
   };
   // Multi-family prefixes keep the family name in the path so they don't
   // collide. Order matters: longer prefixes tried first.
@@ -126,8 +130,13 @@ function pathFromCssVar(cssVarName) {
       }
     }
   }
-  if (SINGLE_PREFIX[domain] && stripped.startsWith(SINGLE_PREFIX[domain])) {
-    rest = stripped.slice(SINGLE_PREFIX[domain].length);
+  if (SINGLE_PREFIX_ORDERED[domain]) {
+    for (const p of SINGLE_PREFIX_ORDERED[domain]) {
+      if (stripped.startsWith(p)) {
+        rest = stripped.slice(p.length);
+        break;
+      }
+    }
   }
   // Split on FIRST hyphen only — first part is "group", rest is "leaf" (with literal hyphens preserved).
   // This mirrors Figma's convention: `/` separates path segments, `-` is literal within a segment.
@@ -192,6 +201,43 @@ function stripKeyframes(body) {
   return out;
 }
 
+// The Tailwind v4 spacing scale, synthesized from the --spacing multiplier.
+// Decimal names use underscore (Figma rejects '.' in variable names).
+const TAILWIND_SPACING_SCALE = {
+  '0': 0, 'px': 1,
+  '0_5': 2, '1': 4, '1_5': 6, '2': 8, '2_5': 10, '3': 12, '3_5': 14,
+  '4': 16, '5': 20, '6': 24, '7': 28, '8': 32, '9': 36, '10': 40,
+  '11': 44, '12': 48, '14': 56, '16': 64, '20': 80, '24': 96,
+  '28': 112, '32': 128, '36': 144, '40': 160, '44': 176, '48': 192,
+  '52': 208, '56': 224, '60': 240, '64': 256, '72': 288, '80': 320, '96': 384,
+};
+
+// Bookend radius values not in theme.css's --radius-{xs..4xl} set.
+const TAILWIND_RADIUS_EXTRAS = { 'none': 0, 'full': 9999 };
+
+function synthesizeTailwindUtilityScale() {
+  const out = [];
+  for (const [name, px] of Object.entries(TAILWIND_SPACING_SCALE)) {
+    out.push({
+      domain: 'spacing',
+      path: name,
+      values: { default: { type: 'literal', value: px + 'px' } },
+      cssVar: '--spacing-' + name,
+      synthetic: true,
+    });
+  }
+  for (const [name, px] of Object.entries(TAILWIND_RADIUS_EXTRAS)) {
+    out.push({
+      domain: 'radius',
+      path: name,
+      values: { default: { type: 'literal', value: px + 'px' } },
+      cssVar: '--radius-' + name,
+      synthetic: true,
+    });
+  }
+  return out;
+}
+
 function loadTailwindDefaultsBody() {
   const file = path.join(__dirname, 'tailwind-defaults.css');
   const css = fs.readFileSync(file, 'utf8');
@@ -241,6 +287,17 @@ function parseCodeDesignSystem(css, opts = {}) {
     const entries = parseEntries(body);
     for (const [cssVar, raw] of Object.entries(entries)) {
       upsert(cssVar, 'default', raw);
+    }
+    // Tailwind v4 doesn't ship explicit `--spacing-N` or `--radius-{none,full}`
+    // variables — most utility classes derive from --spacing at build time
+    // (e.g. `p-4` resolves to `calc(var(--spacing) * 4)`). For Figma these
+    // need to be explicit so designers can pick them. Synthesize them.
+    const synthetic = synthesizeTailwindUtilityScale();
+    for (const t of synthetic) {
+      const key = t.domain + ':' + t.path;
+      if (!tokens.has(key)) {
+        tokens.set(key, t);
+      }
     }
   }
 

@@ -10,7 +10,7 @@ const DOMAIN_COLLECTION = {
 
 const DOMAIN_PREFIX = {
   color: '--color-',
-  spacing: '--space-',
+  spacing: '--spacing-',  // Matches Tailwind v4 (--spacing is the multiplier name).
   radius: '--radius-',
   shadow: '--shadow-',
   typography: '--font-',
