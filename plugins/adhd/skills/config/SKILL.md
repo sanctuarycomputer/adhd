@@ -48,9 +48,10 @@ Do not proceed to Phase 1.
 For Branch A, extract these fields with targeted regex (the file is a plain TypeScript literal, no imports):
 - `figma.url:` → string
 - `domains:` (optional) → array of strings
+- `naming:` (optional) → string (`"kebab-case"`, `"PascalCase"`, `"camelCase"`) or boolean `false`
 - `cssEntry:` (optional) → string path
 
-Pass these forward as defaults for Phases 1, 2, and 3.
+Pass these forward as defaults for Phases 1, 2, 3, and 4.
 
 ## Phase 1: Domains
 
@@ -140,7 +141,36 @@ On success (200 with metadata), save the URL.
 
 This phase **does not** validate that the Figma file has the mandated structure (Primitives / Semantic collections, Light/Dark modes, kebab-case naming). That validation is `/adhd:sync`'s job — running it here would slow the wizard and duplicate logic.
 
-## Phase 3: cssEntry auto-detect
+## Phase 3: Naming convention
+
+ADHD's `/adhd:check` skill validates that components, variant properties, and variant values in the Figma file follow a single naming convention. This phase asks the user which one their file uses (or lets them disable the check). The selection is written to `adhd.config.ts` as the `naming` field.
+
+Use `AskUserQuestion`:
+
+```
+Question: "What naming convention does your Figma file use for components, variant properties, and variant values?"
+Header: "Naming"
+Options:
+  - label: "kebab-case (default — recommended for design systems)", description: "Examples: button, primary-button, size=small. /adhd:check enforces this on all components and variants."
+  - label: "PascalCase", description: "Examples: Button, PrimaryButton, Size=Small. /adhd:check enforces this convention instead."
+  - label: "camelCase", description: "Examples: button, primaryButton, size=small. /adhd:check enforces this convention instead."
+  - label: "Disable check (false)", description: "Skip naming-convention validation entirely. Useful if your Figma file mixes conventions or uses something custom."
+```
+
+Default selection: if Phase 0 (Branch A) provided an existing `naming` value, default to that option; otherwise default to "kebab-case".
+
+Map the user's answer to a config value and save it in memory as `namingSelection`:
+
+| User picks | `namingSelection` |
+|---|---|
+| kebab-case | `"kebab-case"` |
+| PascalCase | `"PascalCase"` |
+| camelCase | `"camelCase"` |
+| Disable check (false) | `false` |
+
+**Storage rule:** if the final selection is `"kebab-case"` (the default), **do not write a `naming` field** to `adhd.config.ts` — its absence means kebab-case. Otherwise (PascalCase, camelCase, or `false`), Phase 5 writes it explicitly.
+
+## Phase 4: cssEntry auto-detect
 
 Try the two conventional Next.js paths, in order. Use `Bash` with `[ -f <path> ] && echo present || echo absent` per path.
 
@@ -160,19 +190,20 @@ Four cases:
   ```
   Wait for the user's next chat message. If it's `"abort"`, exit the wizard. Otherwise validate the path exists via `Bash` with `[ -f <path> ]`. Re-issue the chat prompt on miss. On hit, save the path; if it equals `app/globals.css`, do NOT write a `cssEntry` field.
 
-## Phase 4: Write adhd.config.ts
+## Phase 5: Write adhd.config.ts
 
-Compose the config object from in-memory state. Always include `leader` and `figma.url`. Conditionally include the rest:
+Compose the config object from in-memory state. Always include `figma.url`. Conditionally include the rest:
 
 | Field | Include if |
 |---|---|
 | `domains` | `domainsSelection` is a strict subset (length 1–4) |
+| `naming` | `namingSelection` is anything other than `"kebab-case"` (i.e., `"PascalCase"`, `"camelCase"`, or `false`) |
 | `cssEntry` | resolved path is NOT `app/globals.css` |
 
 Render the file body using this template (omit lines marked optional when their condition is false):
 
 ```ts
-// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config, /adhd:export-for-figma).
+// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config, /adhd:export-for-figma, /adhd:check).
 // No npm package or import required; the skills validate the shape on read.
 
 const config = {
@@ -182,11 +213,15 @@ const config = {
 
   // optional: domains: [<COMMA_QUOTED_LIST>],
 
+  // optional: naming: <NAMING_VALUE>,
+
   // optional: cssEntry: "<CSS_ENTRY>",
 };
 
 export default config;
 ```
+
+When the `naming` line is included, render `<NAMING_VALUE>` as either a quoted string (`"PascalCase"` or `"camelCase"`) or the bare boolean `false` — never as the string `"false"`.
 
 When omitting an optional field, also drop the corresponding `// optional:` placeholder comment — the file should not carry hints about fields that aren't present.
 
@@ -204,9 +239,9 @@ On "No", abort. On "Yes", `Write` the file.
 
 ### .env.local / .gitignore
 
-Phase 4 may have already written `.env.local` and updated `.gitignore`. Don't re-do those writes here; this phase touches only `adhd.config.ts`.
+An earlier phase may have already written `.env.local` and updated `.gitignore`. Don't re-do those writes here; this phase touches only `adhd.config.ts`.
 
-## Phase 5: Report
+## Phase 6: Report
 
 Print a summary of what was done. Tailor to the actual operations:
 
@@ -215,6 +250,7 @@ Config saved to adhd.config.ts.
 
 Figma:   <URL>
 Domains: <"all" or comma-separated list>
+Naming:  <"kebab-case (default)", "PascalCase", "camelCase", or "disabled">
 CSS:     <"app/globals.css (default)" or the explicit path>
 
 <NEXT_STEP>
@@ -249,9 +285,10 @@ const config = {
     url: "https://www.figma.com/design/<key>/<name>",   // required
   },
   domains?: ["colors", "spacing", "typography", "radius", "shadow"],   // optional; omit = all
+  naming?: "kebab-case" | "PascalCase" | "camelCase" | false,           // optional; omit = "kebab-case"
   cssEntry?: "src/app/globals.css",                                     // optional; omit = "app/globals.css"
 };
 export default config;
 ```
 
-The schema is read by `/adhd:config`, `/adhd:sync`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file.
+The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:check`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file.
