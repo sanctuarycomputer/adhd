@@ -117,6 +117,20 @@ function parseCssDimension(raw) {
   return { value: parseFloat(match[1]), unit: match[2] };
 }
 
+function parseFontFamily(raw) {
+  return raw.split(',').map(part => {
+    let s = part.trim();
+    // Strip surrounding quotes (single or double)
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'"))
+    ) {
+      s = s.slice(1, -1);
+    }
+    return s;
+  });
+}
+
 // Match a top-level `@theme {` block (NOT @theme inline / @theme default).
 // Returns { body, end } or null. The caller should slice the input to skip past `end`.
 function findAtThemeBlock(text, label /* 'theme' or 'theme inline' or 'theme default' */) {
@@ -534,5 +548,6 @@ module.exports = {
   rgbObjectToHex,
   // NEW: Plan 1.5 helpers
   parseCssDimension,
+  parseFontFamily,
   round4,
 };
