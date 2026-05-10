@@ -15,10 +15,14 @@
  */
 
 // ============================================================
-// OKLCH → ColorValue conversion (vendored from colorjs.io, MIT)
+// OKLCH conversion (vendored from colorjs.io, MIT)
 // ============================================================
 //
-// Pipeline: OKLCH → OKLab → linear sRGB → companded sRGB → [0,1] components.
+// Shared pipeline: OKLCH → OKLab → linear sRGB → companded sRGB.
+// Two terminal steps:
+//   - oklchToHex: 8-bit hex string (production path, used by normalizeCssValue).
+//   - oklchToColorValue: gamma-encoded [0,1] component object (DTCG-canonical
+//     form; kept for forward compatibility, currently only exercised by tests).
 
 function oklchToOklab(L, C, h) {
   const hRad = (h * Math.PI) / 180;
@@ -747,5 +751,5 @@ module.exports = {
   round4,
   parseFontFamily,
   parseCssColor,
-  parseCssShadow,
+  parseCssShadow,  // wired up if/when shadow output moves to structured objects; currently the production dispatch passes shadow CSS strings through unchanged
 };
