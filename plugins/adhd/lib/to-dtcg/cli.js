@@ -100,6 +100,23 @@ const NAMESPACE_TO_DTCG_PATH = {
   leading: 'leading',
 };
 
+// ============================================================
+// Value-format helpers (DTCG-canonical shapes)
+// ============================================================
+
+function round4(n) {
+  return Math.round(n * 10000) / 10000;
+}
+
+function parseCssDimension(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed === '0') return { value: 0, unit: 'px' };
+  const match = /^(-?\d+\.?\d*)(rem|em|px)$/.exec(trimmed);
+  if (!match) return null;
+  return { value: parseFloat(match[1]), unit: match[2] };
+}
+
 // Match a top-level `@theme {` block (NOT @theme inline / @theme default).
 // Returns { body, end } or null. The caller should slice the input to skip past `end`.
 function findAtThemeBlock(text, label /* 'theme' or 'theme inline' or 'theme default' */) {
@@ -515,4 +532,7 @@ module.exports = {
   variableNameToDtcg,
   normalizeCssValue,
   rgbObjectToHex,
+  // NEW: Plan 1.5 helpers
+  parseCssDimension,
+  round4,
 };
