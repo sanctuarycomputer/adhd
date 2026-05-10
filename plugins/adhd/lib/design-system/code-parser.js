@@ -64,10 +64,13 @@ function inferDomain(cssVarName) {
   for (const p of NON_PUSHABLE_PREFIXES) {
     if (stripped.startsWith(p)) return 'unknown';
   }
-  // Skip Tailwind v4 sub-property companion vars (e.g. --text-xs--line-height,
-  // --font-sans--font-feature-settings). These are typography metadata, not
-  // independent tokens worth pushing as their own Figma variable in v1.
-  if (stripped.includes('--')) return 'unknown';
+  // Tailwind v4 has some `--x--y` companion vars. We allow specific ones we
+  // want to surface as Figma variables (line-height pairings) and reject the
+  // rest (font-feature-settings, font-variation-settings — metadata).
+  if (stripped.includes('--')) {
+    if (/^text-[a-z0-9]+--line-height$/.test(stripped)) return 'typography';
+    return 'unknown';
+  }
 
   if (stripped.startsWith('color-')) return 'color';
   if (stripped === 'spacing' || stripped.startsWith('space-') || stripped.startsWith('spacing-')) return 'spacing';
@@ -141,6 +144,11 @@ function pathFromCssVar(cssVarName) {
     shadow: ['drop-shadow-', 'inset-shadow-', 'text-shadow-'],
     typography: ['font-weight-', 'font-', 'text-', 'leading-', 'tracking-'],
   };
+
+  // Special case: --text-X--line-height → text/X/line-height
+  // (Tailwind v4 ships a line-height value paired with every font-size.)
+  const lhMatch = /^text-([a-z0-9]+)--line-height$/.exec(stripped);
+  if (lhMatch) return 'text/' + lhMatch[1] + '/line-height';
 
   let rest = stripped;
   if (KEEP_PREFIX[domain]) {

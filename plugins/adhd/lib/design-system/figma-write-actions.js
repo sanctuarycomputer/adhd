@@ -226,24 +226,44 @@ function buildFigmaActions(diff, resolutions, direction) {
 
   if (direction === 'pull') {
     const actions = [];
+
+    // Build a lookup from path → domain across BOTH sides so we can resolve
+    // alias targets to the correct CSS var name. An alias target is just a
+    // path string like 'gold/100'; without knowing its domain we'd produce
+    // '--gold-100' instead of '--color-gold-100'.
+    const pathDomain = new Map();
+    const recordDomain = (t) => { if (t && !pathDomain.has(t.path)) pathDomain.set(t.path, t.domain); };
+    for (const t of diff.same || []) recordDomain(t);
+    for (const t of diff.codeOnly || []) recordDomain(t);
+    for (const t of diff.figmaOnly || []) recordDomain(t);
+    for (const c of diff.conflict || []) recordDomain({ path: c.path, domain: c.domain });
+
+    const aliasCssVar = (target) => {
+      const targetDomain = pathDomain.get(target) || 'unknown';
+      if (targetDomain === 'unknown') {
+        // Best-effort fallback: drop the slash, no domain prefix.
+        return '--' + target.replace(/\//g, '-');
+      }
+      return pathToCssVar(targetDomain, target);
+    };
+
     // Figma-only: add to code
     for (const t of diff.figmaOnly) {
       const cssVar = pathToCssVar(t.domain, t.path);
-      const isPrimitive = ('default' in t.values);
       for (const [mode, val] of Object.entries(t.values)) {
         if (mode === 'default') {
           actions.push({
             kind: 'set-primitive',
             cssVar,
             value: val.type === 'literal' ? val.value : null,
-            valueAlias: val.type === 'alias' ? '--' + val.target.replace(/\//g, '-') : null,
+            valueAlias: val.type === 'alias' ? aliasCssVar(val.target) : null,
           });
         } else {
           actions.push({
             kind: 'set-semantic',
             cssVar, mode,
             value: val.type === 'literal' ? val.value : null,
-            valueAlias: val.type === 'alias' ? '--' + val.target.replace(/\//g, '-') : null,
+            valueAlias: val.type === 'alias' ? aliasCssVar(val.target) : null,
           });
         }
       }
@@ -259,14 +279,14 @@ function buildFigmaActions(diff, resolutions, direction) {
             kind: 'set-primitive',
             cssVar,
             value: val.type === 'literal' ? val.value : null,
-            valueAlias: val.type === 'alias' ? '--' + val.target.replace(/\//g, '-') : null,
+            valueAlias: val.type === 'alias' ? aliasCssVar(val.target) : null,
           });
         } else {
           actions.push({
             kind: 'set-semantic',
             cssVar, mode: c.mode,
             value: val.type === 'literal' ? val.value : null,
-            valueAlias: val.type === 'alias' ? '--' + val.target.replace(/\//g, '-') : null,
+            valueAlias: val.type === 'alias' ? aliasCssVar(val.target) : null,
           });
         }
       }
