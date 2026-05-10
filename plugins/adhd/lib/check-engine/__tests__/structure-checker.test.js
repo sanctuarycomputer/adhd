@@ -198,3 +198,50 @@ test('STRUCT006: flags a FRAME with wasInstance: true (warning, not error)', () 
   assert.ok(struct006, 'expected STRUCT006 violation');
   assert.equal(struct006.severity, 'warning');
 });
+
+test('STRUCT007: flags sibling components sharing a name prefix outside a Component Set', () => {
+  const node = makeFrame({
+    type: 'FRAME',
+    children: [
+      { id: '1:2', name: 'Button/primary', type: 'COMPONENT' },
+      { id: '1:3', name: 'Button/secondary', type: 'COMPONENT' },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const struct007 = violations.find(v => v.rule === 'STRUCT007');
+  assert.ok(struct007, 'expected STRUCT007 violation');
+  assert.equal(struct007.severity, 'warning');
+  assert.match(struct007.message, /Button\/\.\.\./);
+});
+
+test('STRUCT007: does not flag a single child component (no siblings to group)', () => {
+  const node = makeFrame({
+    children: [{ id: '1:2', name: 'Button/primary', type: 'COMPONENT' }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT007').length, 0);
+});
+
+test('STRUCT007: does not flag siblings inside a Component Set (parent is COMPONENT_SET)', () => {
+  const node = {
+    id: '1:1', name: 'Button', type: 'COMPONENT_SET',
+    componentPropertyDefinitions: { variant: { type: 'VARIANT', defaultValue: 'primary', variantOptions: ['primary', 'secondary'] } },
+    children: [
+      { id: '1:2', name: 'Button/primary', type: 'COMPONENT', variantProperties: { variant: 'primary' } },
+      { id: '1:3', name: 'Button/secondary', type: 'COMPONENT', variantProperties: { variant: 'secondary' } },
+    ],
+  };
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT007').length, 0);
+});
+
+test('STRUCT007: does not flag two components with different prefixes', () => {
+  const node = makeFrame({
+    children: [
+      { id: '1:2', name: 'Button/primary', type: 'COMPONENT' },
+      { id: '1:3', name: 'Avatar/circle', type: 'COMPONENT' },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT007').length, 0);
+});

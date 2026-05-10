@@ -121,6 +121,24 @@ function visit(node, ctx, parentPath) {
     }
   }
 
+  // STRUCT007: sibling components share a name prefix but aren't wrapped in a Component Set
+  if (Array.isArray(node.children) && node.type !== 'COMPONENT_SET') {
+    const components = node.children.filter(c => c.type === 'COMPONENT');
+    const byPrefix = {};
+    for (const c of components) {
+      const prefix = c.name.split('/')[0];
+      byPrefix[prefix] = byPrefix[prefix] || [];
+      byPrefix[prefix].push(c);
+    }
+    for (const [prefix, group] of Object.entries(byPrefix)) {
+      if (group.length >= 2) {
+        push('STRUCT007', 'warning',
+          `${group.length} sibling components named "${prefix}/..." should be wrapped in a Component Set.`);
+        break;
+      }
+    }
+  }
+
   // STRUCT010: variant properties declared
   if (node.type === 'COMPONENT_SET' && Array.isArray(node.children) && node.children.length > 0) {
     const hasDefs = node.componentPropertyDefinitions &&
