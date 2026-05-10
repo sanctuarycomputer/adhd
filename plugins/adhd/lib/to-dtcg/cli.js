@@ -189,6 +189,86 @@ function parseCssColor(raw) {
   throw new Error(`Unparseable CSS color: ${raw}`);
 }
 
+function splitTopLevel(str, separator) {
+  const out = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '(') depth++;
+    else if (str[i] === ')') depth--;
+    else if (str[i] === separator && depth === 0) {
+      out.push(str.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(str.slice(start));
+  return out;
+}
+
+function tokenizeShadow(s) {
+  // Split on whitespace, but keep rgb(...)/rgba(...) intact.
+  const tokens = [];
+  let i = 0;
+  while (i < s.length) {
+    if (/\s/.test(s[i])) { i++; continue; }
+    if (s.slice(i, i + 4) === 'rgb(' || s.slice(i, i + 5) === 'rgba(') {
+      const start = i;
+      let depth = 0;
+      while (i < s.length) {
+        if (s[i] === '(') depth++;
+        else if (s[i] === ')') {
+          depth--;
+          if (depth === 0) { i++; break; }
+        }
+        i++;
+      }
+      tokens.push(s.slice(start, i));
+    } else {
+      const start = i;
+      while (i < s.length && !/\s/.test(s[i])) i++;
+      tokens.push(s.slice(start, i));
+    }
+  }
+  return tokens;
+}
+
+function parseSingleShadow(str) {
+  let s = str.trim();
+  let inset = false;
+  if (/^inset\b/.test(s)) {
+    inset = true;
+    s = s.slice(5).trim();
+  }
+  const tokens = tokenizeShadow(s);
+  if (tokens.length < 3) {
+    throw new Error(`Shadow needs at least offsetX, offsetY, color: ${str}`);
+  }
+  const colorToken = tokens[tokens.length - 1];
+  const dimensionTokens = tokens.slice(0, -1);
+  if (dimensionTokens.length < 2 || dimensionTokens.length > 4) {
+    throw new Error(`Shadow needs 2-4 dimension values: ${str}`);
+  }
+  const [offsetX, offsetY, blur, spread] = dimensionTokens;
+  const parseDim = (raw, name) => {
+    const dim = parseCssDimension(raw);
+    if (!dim) throw new Error(`Bad shadow ${name}: ${raw}`);
+    return dim;
+  };
+  return {
+    color: parseCssColor(colorToken),
+    offsetX: parseDim(offsetX, 'offsetX'),
+    offsetY: parseDim(offsetY, 'offsetY'),
+    blur:    blur !== undefined ? parseDim(blur, 'blur') : { value: 0, unit: 'px' },
+    spread:  spread !== undefined ? parseDim(spread, 'spread') : { value: 0, unit: 'px' },
+    inset:   inset,
+  };
+}
+
+function parseCssShadow(raw) {
+  const shadowStrings = splitTopLevel(raw, ',');
+  return shadowStrings.map(s => parseSingleShadow(s.trim()));
+}
+
 // Match a top-level `@theme {` block (NOT @theme inline / @theme default).
 // Returns { body, end } or null. The caller should slice the input to skip past `end`.
 function findAtThemeBlock(text, label /* 'theme' or 'theme inline' or 'theme default' */) {
@@ -608,5 +688,6 @@ module.exports = {
   parseCssDimension,
   parseFontFamily,
   parseCssColor,
+  parseCssShadow,
   round4,
 };
