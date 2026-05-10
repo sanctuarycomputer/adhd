@@ -212,6 +212,23 @@ Track:
 
 ## Phase 5: cssEntry auto-detect
 
+Try the two conventional Next.js paths, in order. Use `Bash` with `[ -f <path> ] && echo present || echo absent` per path.
+
+1. `app/globals.css`
+2. `src/app/globals.css`
+
+Four cases:
+
+- **Only `app/globals.css` exists:** save `cssEntry = "app/globals.css"`. This is the default — do NOT write a `cssEntry` field to the config.
+- **Only `src/app/globals.css` exists:** save `cssEntry = "src/app/globals.css"`. Phase 6 writes it explicitly.
+- **Both exist:** prefer `app/globals.css` and print `Both app/globals.css and src/app/globals.css exist. Using app/globals.css. Edit adhd.config.ts manually if you want to use the other.` Do NOT write a `cssEntry` field.
+- **Neither exists:** prompt the user.
+  ```
+  AskUserQuestion: "Where does this project's Tailwind CSS entry file live?"
+  Header: "CSS entry"
+  ```
+  (Free-text path relative to the repo root.) Validate that the path exists with `[ -f <path> ]`. Re-prompt on miss. On hit, save the path; if it equals `app/globals.css`, do NOT write a `cssEntry` field.
+
 ## Phase 6: Write adhd.config.ts
 
 ## Phase 7: Report
