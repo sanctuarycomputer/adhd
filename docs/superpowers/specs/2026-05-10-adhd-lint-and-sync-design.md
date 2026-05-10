@@ -1,6 +1,6 @@
-# /adhd:check and /adhd:sync — Frame-Scoped Design Validation and Token Sync
+# /adhd:lint and /adhd:sync — Frame-Scoped Design Validation and Token Sync
 
-**Goal:** Add `/adhd:check` (read-only) and refactor `/adhd:sync` (refactored from existing) to operate on a **single Figma frame, component, component set, or page**. Both validate design tokens and frame structure; `/adhd:sync` additionally writes Figma's variable values into `globals.css`. The output format is paste-ready for sharing with designers via Slack, Figma comments, or GitHub issues.
+**Goal:** Add `/adhd:lint` (read-only) and refactor `/adhd:sync` (refactored from existing) to operate on a **single Figma frame, component, component set, or page**. Both validate design tokens and frame structure; `/adhd:sync` additionally writes Figma's variable values into `globals.css`. The output format is paste-ready for sharing with designers via Slack, Figma comments, or GitHub issues.
 
 **Architectural premise:** the Figma MCP cannot enumerate all variables in a file — it only returns variables *referenced by* a queried node and its descendants. Rather than fight that limitation, we lean into it: design validation is now scoped to "the component you're about to ship," which is the natural unit of design-system work anyway.
 
@@ -13,7 +13,7 @@
 ```
 /adhd:config            setup wizard                  (shipped)
 /adhd:seed              code → DTCG JSON for Figma    (rename of export-for-figma)
-/adhd:check             frame/page → violation report (new, read-only)
+/adhd:lint             frame/page → violation report (new, read-only)
 /adhd:sync              frame/page → globals.css      (refactored, frame-scoped)
 /adhd:to-dtcg           model-invocable converter     (shipped)
 ```
@@ -33,7 +33,7 @@ node-id from URL         get_design_context                                - sam
                                                                             violations
 ```
 
-The pipeline is implemented in `plugins/adhd/lib/check-engine/` and consumed by both skills. The diff engine and report formatter share one source of truth.
+The pipeline is implemented in `plugins/adhd/lib/lint-engine/` and consumed by both skills. The diff engine and report formatter share one source of truth.
 
 ---
 
@@ -118,7 +118,7 @@ Walk `globals.css` (path from `adhd.config.ts → cssEntry`, with the same auto-
 :root[data-theme="dark"] { ... }       → semantic Dark values
 ```
 
-The existing `lib/to-dtcg/` parser is the source; the new `lib/check-engine/` consumes it and emits a comparable map.
+The existing `lib/to-dtcg/` parser is the source; the new `lib/lint-engine/` consumes it and emits a comparable map.
 
 ### Step 3 — Token-name normalization
 
@@ -163,7 +163,7 @@ This feeds directly into the report formatter and `/adhd:sync`'s prompt loop.
 
 The MCP `get_design_context` response gives us the layered structure (per-node: type, name, layout mode, fills/strokes/effects, instance status, etc.). From that we evaluate:
 
-### Error severity (block /adhd:sync unless user explicitly bypasses; cause /adhd:check to exit non-zero)
+### Error severity (block /adhd:sync unless user explicitly bypasses; cause /adhd:lint to exit non-zero)
 
 | ID | Rule | What it detects |
 |---|---|---|
@@ -236,7 +236,7 @@ The `nodePath` (human-readable breadcrumb) and `deepLink` (clickable URL) make t
 6. Apply chosen writes via lib/to-dtcg/ → globals.css
 7. Per-domain commit: "ADHD sync: <domain> (N changes)"
    (existing pattern from current /adhd:sync; one commit per domain edited)
-8. Write report file (adhd-check-report.md) with what was applied + what was skipped
+8. Write report file (adhd-lint-report.md) with what was applied + what was skipped
 ```
 
 The `[a]ll-figma` / `[k]eep-all` shortcuts let the user batch-resolve conflicts when they know the answer is uniform. Saves typing through 30 prompts when the answer is consistent.
@@ -249,7 +249,7 @@ Writes go through the existing `lib/to-dtcg/` writer. If a write fails partway, 
 
 ## Report output
 
-Single markdown file at `adhd-check-report.md` (gitignored), also echoed to the terminal. Same content for both consumers. Designed to be paste-ready into a Figma comment, Slack message, or GitHub issue.
+Single markdown file at `adhd-lint-report.md` (gitignored), also echoed to the terminal. Same content for both consumers. Designed to be paste-ready into a Figma comment, Slack message, or GitHub issue.
 
 ```markdown
 # ADHD check report
@@ -289,7 +289,7 @@ Deep-links are real Figma URLs (`https://figma.com/design/<fileKey>?node-id=<nod
 
 ### Exit codes
 
-- `/adhd:check` — `0` if no errors (warnings allowed), `1` otherwise.
+- `/adhd:lint` — `0` if no errors (warnings allowed), `1` otherwise.
 - `/adhd:sync` — `0` on user-confirmed completion, `1` on user-aborted.
 
 ### Why not auto-post comments to Figma
@@ -346,13 +346,13 @@ The `naming` field controls only **STRUCT009** (naming convention check). `false
 
 ## Acceptance criteria
 
-1. `/adhd:check` invoked with a Figma URL pointing at a frame produces a markdown report listing all variable and structure violations, with deep-links per node.
-2. `/adhd:check` invoked with no argument uses the current Figma selection.
-3. `/adhd:check` exits `0` when only warnings are present, `1` when any errors are present.
+1. `/adhd:lint` invoked with a Figma URL pointing at a frame produces a markdown report listing all variable and structure violations, with deep-links per node.
+2. `/adhd:lint` invoked with no argument uses the current Figma selection.
+3. `/adhd:lint` exits `0` when only warnings are present, `1` when any errors are present.
 4. `/adhd:sync` shows the full violation list, prompts to proceed if structure errors exist, then runs the variable diff.
 5. `/adhd:sync` auto-writes missing variables and per-conflict prompts (with `[a]ll-figma` / `[k]eep-all` batch shortcuts).
 6. `/adhd:sync` commits one commit per modified domain.
-7. Both commands write `adhd-check-report.md` (gitignored) containing the paste-ready markdown.
+7. Both commands write `adhd-lint-report.md` (gitignored) containing the paste-ready markdown.
 8. `naming: false` in `adhd.config.ts` disables STRUCT009.
 9. File-key mismatch between argument URL and configured `figma.url` is rejected before any MCP call.
 10. Empty variable list, broken alias, missing `globals.css`, MCP unreachable — all handled with explicit messages from the table above.

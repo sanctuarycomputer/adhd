@@ -1,14 +1,14 @@
-# /adhd:check and /adhd:sync Implementation Plan
+# /adhd:lint and /adhd:sync Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `/adhd:check` (read-only) and refactor `/adhd:sync` (write) to operate on a Figma frame, component, component set, or page — validating tokens + structure and emitting a paste-ready markdown report.
+**Goal:** Build `/adhd:lint` (read-only) and refactor `/adhd:sync` (write) to operate on a Figma frame, component, component set, or page — validating tokens + structure and emitting a paste-ready markdown report.
 
-**Architecture:** A new pure JS library `plugins/adhd/lib/check-engine/` does all the work (parse, normalize, categorize, structure-check, format report). It exposes a CLI that takes pre-fetched MCP responses + globals.css path and emits structured violations. The two skills (`check`, `sync`) orchestrate: call MCP via tool calls, write the response to a temp JSON file, run the CLI, present results, and (for `sync`) apply writes via the existing `to-dtcg` writer.
+**Architecture:** A new pure JS library `plugins/adhd/lib/lint-engine/` does all the work (parse, normalize, categorize, structure-check, format report). It exposes a CLI that takes pre-fetched MCP responses + globals.css path and emits structured violations. The two skills (`check`, `sync`) orchestrate: call MCP via tool calls, write the response to a temp JSON file, run the CLI, present results, and (for `sync`) apply writes via the existing `to-dtcg` writer.
 
 **Tech Stack:** Node 20+ (zero deps, matches `lib/to-dtcg/` convention), `node:test` for unit tests, Claude Code skills for user-facing commands. No external libraries.
 
-**Spec:** `docs/superpowers/specs/2026-05-10-adhd-check-and-sync-design.md`
+**Spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
 **Precondition (separate PR before this plan starts):** `/adhd:export-for-figma` is renamed to `/adhd:seed`. This plan assumes the new name throughout. The rename PR touches: `plugins/adhd/skills/export-for-figma/` → `plugins/adhd/skills/seed/`, references in `README.md`, `AGENTS.md`, `example/AGENTS.md`, the `to-dtcg` README, and the existing config/sync skills' cross-references.
 
@@ -19,7 +19,7 @@
 ### New files
 
 ```
-plugins/adhd/lib/check-engine/
+plugins/adhd/lib/lint-engine/
 ├── README.md                          # usage + dev workflow (mirror of lib/to-dtcg/README.md style)
 ├── cli.js                             # entry point — orchestrates the engine
 ├── name-normalizer.js                 # Figma path → CSS var name
@@ -47,11 +47,11 @@ plugins/adhd/skills/check/SKILL.md      # new user-invocable skill
 ### Modified files
 
 ```
-plugins/adhd/skills/sync/SKILL.md        # refactor to use check-engine + frame-scoped input
+plugins/adhd/skills/sync/SKILL.md        # refactor to use lint-engine + frame-scoped input
 plugins/adhd/skills/config/SKILL.md      # add naming convention question + schema entry
 scripts/validate-skill-frontmatter.js    # no logic change; just exercises the new skill
-README.md                                 # update command table to reflect /adhd:check
-example/.gitignore                        # add adhd-check-report.md
+README.md                                 # update command table to reflect /adhd:lint
+example/.gitignore                        # add adhd-lint-report.md
 ```
 
 ### Why this decomposition
@@ -65,9 +65,9 @@ Each module has one clear responsibility and one input/output contract. Names ma
 This task is a **fact-finding gate**. The spec assumes shapes for `get_variable_defs` and `get_design_context` responses that we haven't fully verified (especially `variantProperties` exposure on `COMPONENT` nodes inside a Component Set). If MCP doesn't return what we need, structure rules need adjustment before the rest of the plan runs.
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/__fixtures__/sample-mcp-variable-defs.json`
-- Create: `plugins/adhd/lib/check-engine/__fixtures__/sample-mcp-design-context.json`
-- Create: `plugins/adhd/lib/check-engine/__fixtures__/sample-globals.css`
+- Create: `plugins/adhd/lib/lint-engine/__fixtures__/sample-mcp-variable-defs.json`
+- Create: `plugins/adhd/lib/lint-engine/__fixtures__/sample-mcp-design-context.json`
+- Create: `plugins/adhd/lib/lint-engine/__fixtures__/sample-globals.css`
 
 - [ ] **Step 1: Pick a Figma frame for fixture capture**
 
@@ -90,7 +90,7 @@ mcp__figma__get_design_context(nodeId: "<picked-id>") → __fixtures__/sample-mc
 
 - [ ] **Step 3: Capture local globals.css**
 
-Copy `example/app/globals.css` to `plugins/adhd/lib/check-engine/__fixtures__/sample-globals.css`.
+Copy `example/app/globals.css` to `plugins/adhd/lib/lint-engine/__fixtures__/sample-globals.css`.
 
 - [ ] **Step 4: Verify the design-context shape supports our rules**
 
@@ -114,29 +114,29 @@ If any field is absent or named differently, **stop and update the spec** before
 - [ ] **Step 5: Commit fixtures**
 
 ```bash
-git add plugins/adhd/lib/check-engine/__fixtures__/
-git commit -m "Capture MCP fixtures for check-engine development"
+git add plugins/adhd/lib/lint-engine/__fixtures__/
+git commit -m "Capture MCP fixtures for lint-engine development"
 ```
 
 ---
 
-## Task 1: Scaffold lib/check-engine + smoke test
+## Task 1: Scaffold lib/lint-engine + smoke test
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/cli.js`
-- Create: `plugins/adhd/lib/check-engine/__tests__/cli.test.js`
-- Create: `plugins/adhd/lib/check-engine/README.md`
+- Create: `plugins/adhd/lib/lint-engine/cli.js`
+- Create: `plugins/adhd/lib/lint-engine/__tests__/cli.test.js`
+- Create: `plugins/adhd/lib/lint-engine/README.md`
 
 - [ ] **Step 1: Create empty CLI scaffolding**
 
-Write `plugins/adhd/lib/check-engine/cli.js`:
+Write `plugins/adhd/lib/lint-engine/cli.js`:
 
 ```js
 #!/usr/bin/env node
 'use strict';
 
 /**
- * ADHD check-engine CLI.
+ * ADHD lint-engine CLI.
  * Inputs (all required, passed as flags):
  *   --variable-defs <path>     JSON file with MCP get_variable_defs response
  *   --design-context <path>    JSON file with MCP get_design_context response
@@ -152,7 +152,7 @@ Write `plugins/adhd/lib/check-engine/cli.js`:
  */
 
 function main() {
-  console.error('check-engine: not implemented yet');
+  console.error('lint-engine: not implemented yet');
   process.exit(2);
 }
 
@@ -161,7 +161,7 @@ main();
 
 - [ ] **Step 2: Write the smoke test**
 
-Write `plugins/adhd/lib/check-engine/__tests__/cli.test.js`:
+Write `plugins/adhd/lib/lint-engine/__tests__/cli.test.js`:
 
 ```js
 'use strict';
@@ -183,32 +183,32 @@ test('cli prints a not-implemented message and exits 2 when invoked with no args
 - [ ] **Step 3: Run the test to confirm it passes**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/cli.test.js
+node --test plugins/adhd/lib/lint-engine/__tests__/cli.test.js
 ```
 
 Expected: 1 test passing.
 
 - [ ] **Step 4: Add a README**
 
-Write `plugins/adhd/lib/check-engine/README.md`:
+Write `plugins/adhd/lib/lint-engine/README.md`:
 
 ```markdown
-# check-engine
+# lint-engine
 
-Pure-JS engine that powers `/adhd:check` and `/adhd:sync`. Takes pre-fetched
+Pure-JS engine that powers `/adhd:lint` and `/adhd:sync`. Takes pre-fetched
 Figma MCP responses + a local `globals.css` and produces a violation report.
 
 ## Usage
 
 ```bash
-node plugins/adhd/lib/check-engine/cli.js \
+node plugins/adhd/lib/lint-engine/cli.js \
   --variable-defs /tmp/vars.json \
   --design-context /tmp/ctx.json \
   --globals-css example/app/globals.css \
   --config example/adhd.config.ts \
   --target "Page 1 / Card" \
   --target-url "https://figma.com/design/<file>?node-id=123-456" \
-  --output adhd-check-report.md
+  --output adhd-lint-report.md
 ```
 
 Emits the full markdown report to `--output` and a JSON summary to stdout.
@@ -217,7 +217,7 @@ Exit 0 = no errors (warnings allowed); exit 1 = at least one error.
 ## Tests
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/
+node --test plugins/adhd/lib/lint-engine/__tests__/
 ```
 
 ## Architecture
@@ -234,8 +234,8 @@ node --test plugins/adhd/lib/check-engine/__tests__/
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/
-git commit -m "Scaffold lib/check-engine with smoke-test CLI"
+git add plugins/adhd/lib/lint-engine/
+git commit -m "Scaffold lib/lint-engine with smoke-test CLI"
 ```
 
 ---
@@ -245,12 +245,12 @@ git commit -m "Scaffold lib/check-engine with smoke-test CLI"
 Translates Figma's collection-prefixed paths to CSS variable names. `Primitives/color/brand/600` ↔ `--color-brand-600`.
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/name-normalizer.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/name-normalizer.test.js`
+- Create: `plugins/adhd/lib/lint-engine/name-normalizer.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/name-normalizer.test.js`
 
 - [ ] **Step 1: Write the failing tests**
 
-Write `plugins/adhd/lib/check-engine/__tests__/name-normalizer.test.js`:
+Write `plugins/adhd/lib/lint-engine/__tests__/name-normalizer.test.js`:
 
 ```js
 'use strict';
@@ -293,14 +293,14 @@ test('throws on inputs that are clearly not Figma paths', () => {
 - [ ] **Step 2: Run the tests to confirm they fail**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/name-normalizer.test.js
+node --test plugins/adhd/lib/lint-engine/__tests__/name-normalizer.test.js
 ```
 
 Expected: all tests fail with "Cannot find module".
 
 - [ ] **Step 3: Implement name-normalizer.js**
 
-Write `plugins/adhd/lib/check-engine/name-normalizer.js`:
+Write `plugins/adhd/lib/lint-engine/name-normalizer.js`:
 
 ```js
 'use strict';
@@ -349,7 +349,7 @@ module.exports = { figmaToCssVar, cssVarToFigma };
 - [ ] **Step 4: Run the tests**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/name-normalizer.test.js
+node --test plugins/adhd/lib/lint-engine/__tests__/name-normalizer.test.js
 ```
 
 Expected: all 5 tests pass.
@@ -357,7 +357,7 @@ Expected: all 5 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/name-normalizer.js plugins/adhd/lib/check-engine/__tests__/name-normalizer.test.js
+git add plugins/adhd/lib/lint-engine/name-normalizer.js plugins/adhd/lib/lint-engine/__tests__/name-normalizer.test.js
 git commit -m "Add name-normalizer for Figma path ↔ CSS var conversion"
 ```
 
@@ -368,8 +368,8 @@ git commit -m "Add name-normalizer for Figma path ↔ CSS var conversion"
 Compares values across Figma and CSS forms (hex case differences, px/rem unit normalization, shadow object equality).
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/value-normalizer.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/value-normalizer.test.js`
+- Create: `plugins/adhd/lib/lint-engine/value-normalizer.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/value-normalizer.test.js`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -429,7 +429,7 @@ test('valuesMatch deep-equals shadow objects', () => {
 - [ ] **Step 2: Run tests, confirm failure**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/value-normalizer.test.js
+node --test plugins/adhd/lib/lint-engine/__tests__/value-normalizer.test.js
 ```
 
 - [ ] **Step 3: Implement value-normalizer.js**
@@ -530,7 +530,7 @@ Expected: all 8 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/value-normalizer.js plugins/adhd/lib/check-engine/__tests__/value-normalizer.test.js
+git add plugins/adhd/lib/lint-engine/value-normalizer.js plugins/adhd/lib/lint-engine/__tests__/value-normalizer.test.js
 git commit -m "Add value-normalizer with color/dimension/shadow comparison"
 ```
 
@@ -541,8 +541,8 @@ git commit -m "Add value-normalizer with color/dimension/shadow comparison"
 Parses `globals.css` and extracts a comparable map. Reuses regex patterns from `lib/to-dtcg/`.
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/theme-parser.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/theme-parser.test.js`
+- Create: `plugins/adhd/lib/lint-engine/theme-parser.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/theme-parser.test.js`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -618,7 +618,7 @@ test('parseTheme tolerates whitespace, comments, and ordering variations', () =>
 - [ ] **Step 2: Run tests, confirm failure**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/theme-parser.test.js
+node --test plugins/adhd/lib/lint-engine/__tests__/theme-parser.test.js
 ```
 
 - [ ] **Step 3: Implement theme-parser.js**
@@ -674,7 +674,7 @@ Expected: all 5 tests pass. If the fixture-based first test fails because `sampl
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/theme-parser.js plugins/adhd/lib/check-engine/__tests__/theme-parser.test.js
+git add plugins/adhd/lib/lint-engine/theme-parser.js plugins/adhd/lib/lint-engine/__tests__/theme-parser.test.js
 git commit -m "Add theme-parser for globals.css → comparable map"
 ```
 
@@ -685,8 +685,8 @@ git commit -m "Add theme-parser for globals.css → comparable map"
 Categorizes Figma variables as missing/same/conflict against the local theme, handling Light/Dark separately.
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/variable-categorizer.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/variable-categorizer.test.js`
+- Create: `plugins/adhd/lib/lint-engine/variable-categorizer.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/variable-categorizer.test.js`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -840,7 +840,7 @@ Expected: all 5 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/variable-categorizer.js plugins/adhd/lib/check-engine/__tests__/variable-categorizer.test.js
+git add plugins/adhd/lib/lint-engine/variable-categorizer.js plugins/adhd/lib/lint-engine/__tests__/variable-categorizer.test.js
 git commit -m "Add variable-categorizer with Light/Dark mode support"
 ```
 
@@ -853,8 +853,8 @@ Implements STRUCT001–STRUCT010 against the MCP `get_design_context` response.
 **Note for implementer:** This task depends on the fixture captured in Task 0. The exact field names used below (`layoutMode`, `boundVariables`, `componentPropertyDefinitions`, etc.) are best-guess based on the Figma plugin/REST API; verify against your captured fixture and adjust if needed. If a field name differs, update the rule's detection logic but keep the same rule ID and severity.
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/structure-checker.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/structure-checker.test.js`
+- Create: `plugins/adhd/lib/lint-engine/structure-checker.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/structure-checker.test.js`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1165,7 +1165,7 @@ Expected: all 9 tests pass. If a test fails because the fixture's actual MCP sha
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/structure-checker.js plugins/adhd/lib/check-engine/__tests__/structure-checker.test.js
+git add plugins/adhd/lib/lint-engine/structure-checker.js plugins/adhd/lib/lint-engine/__tests__/structure-checker.test.js
 git commit -m "Add structure-checker for STRUCT001-010 rule evaluation"
 ```
 
@@ -1176,8 +1176,8 @@ git commit -m "Add structure-checker for STRUCT001-010 rule evaluation"
 Produces the markdown report (paste-ready into Figma comments / Slack / GitHub).
 
 **Files:**
-- Create: `plugins/adhd/lib/check-engine/report-formatter.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/report-formatter.test.js`
+- Create: `plugins/adhd/lib/lint-engine/report-formatter.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/report-formatter.test.js`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1343,7 +1343,7 @@ Expected: all 6 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/report-formatter.js plugins/adhd/lib/check-engine/__tests__/report-formatter.test.js
+git add plugins/adhd/lib/lint-engine/report-formatter.js plugins/adhd/lib/lint-engine/__tests__/report-formatter.test.js
 git commit -m "Add report-formatter for paste-ready markdown output"
 ```
 
@@ -1354,12 +1354,12 @@ git commit -m "Add report-formatter for paste-ready markdown output"
 Wires up all the pieces into the runnable CLI.
 
 **Files:**
-- Modify: `plugins/adhd/lib/check-engine/cli.js`
-- Test: `plugins/adhd/lib/check-engine/__tests__/cli.test.js`
+- Modify: `plugins/adhd/lib/lint-engine/cli.js`
+- Test: `plugins/adhd/lib/lint-engine/__tests__/cli.test.js`
 
 - [ ] **Step 1: Extend the CLI test**
 
-Replace the contents of `plugins/adhd/lib/check-engine/__tests__/cli.test.js`:
+Replace the contents of `plugins/adhd/lib/lint-engine/__tests__/cli.test.js`:
 
 ```js
 'use strict';
@@ -1448,12 +1448,12 @@ test('cli exits 1 when variable conflicts exist', () => {
 - [ ] **Step 2: Run the test, confirm failure**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/cli.test.js
+node --test plugins/adhd/lib/lint-engine/__tests__/cli.test.js
 ```
 
 - [ ] **Step 3: Implement cli.js**
 
-Overwrite `plugins/adhd/lib/check-engine/cli.js`:
+Overwrite `plugins/adhd/lib/lint-engine/cli.js`:
 
 ```js
 #!/usr/bin/env node
@@ -1551,10 +1551,10 @@ function main() {
 main();
 ```
 
-- [ ] **Step 4: Run all check-engine tests**
+- [ ] **Step 4: Run all lint-engine tests**
 
 ```bash
-node --test plugins/adhd/lib/check-engine/__tests__/
+node --test plugins/adhd/lib/lint-engine/__tests__/
 ```
 
 Expected: every test passes (cli + 6 module tests).
@@ -1562,13 +1562,13 @@ Expected: every test passes (cli + 6 module tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/adhd/lib/check-engine/cli.js plugins/adhd/lib/check-engine/__tests__/cli.test.js
-git commit -m "Wire up check-engine CLI orchestrator"
+git add plugins/adhd/lib/lint-engine/cli.js plugins/adhd/lib/lint-engine/__tests__/cli.test.js
+git commit -m "Wire up lint-engine CLI orchestrator"
 ```
 
 ---
 
-## Task 9: /adhd:check skill
+## Task 9: /adhd:lint skill
 
 User-invocable skill that orchestrates MCP fetches and runs the CLI.
 
@@ -1592,9 +1592,9 @@ Validate that a Figma frame/page is ready for code translation. Reports two clas
 - **Variable issues** — Figma variables used by the frame that are missing locally or have conflicting values.
 - **Structure issues** — STRUCT001–STRUCT010 best-practice violations (auto-layout, naming, variant properties, etc.).
 
-Output: a markdown report saved to `adhd-check-report.md` (gitignored), plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
+Output: a markdown report saved to `adhd-lint-report.md` (gitignored), plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
-**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-check-and-sync-design.md`
+**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
 ## Phase 1: Validate config
 
@@ -1639,27 +1639,27 @@ echo '<get_design_context response JSON>' > /tmp/adhd/ctx.json
 Use the `Bash` tool:
 
 ```bash
-node plugins/adhd/lib/check-engine/cli.js \
+node plugins/adhd/lib/lint-engine/cli.js \
   --variable-defs /tmp/adhd/vars.json \
   --design-context /tmp/adhd/ctx.json \
   --globals-css <path-from-config-or-auto-detect> \
   --config adhd.config.ts \
   --target "<node-name-from-Phase-2>" \
   --target-url "https://figma.com/design/<fileKey>?node-id=<nodeId-with-hyphen>" \
-  --output adhd-check-report.md
+  --output adhd-lint-report.md
 ```
 
 Globals path resolution: if `adhd.config.ts` has `cssEntry`, use it. Otherwise auto-detect `app/globals.css` then `src/app/globals.css` (matching `/adhd:config`'s logic).
 
 ## Phase 5: Present results
 
-Read `adhd-check-report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
+Read `adhd-lint-report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
 
 - If exit code 0 and zero violations: "✓ No issues found."
 - If exit code 0 with warnings only: "⚠ N warnings (see report). Frame is ready for code translation."
 - If exit code 1: "✗ N errors, M warnings. Frame has issues that should be resolved before code translation."
 
-Mention the report file path: "Full report: `adhd-check-report.md` (paste-ready for Figma comments / Slack)."
+Mention the report file path: "Full report: `adhd-lint-report.md` (paste-ready for Figma comments / Slack)."
 
 ## Common errors
 
@@ -1683,7 +1683,7 @@ Expected: 5/5 skills valid (config, seed, sync, check, to-dtcg).
 
 ```bash
 git add plugins/adhd/skills/check/SKILL.md
-git commit -m "Add /adhd:check skill"
+git commit -m "Add /adhd:lint skill"
 ```
 
 ---
@@ -1704,7 +1704,7 @@ Refactor the existing `/adhd:sync` to:
 
 ```markdown
 ---
-description: "Sync design tokens from a Figma frame, component, component set, or page into this repo's globals.css. Runs the same checks as /adhd:check, then writes Figma's variable values into globals.css with per-conflict prompts. Optional argument: a Figma URL with node-id. If no argument, uses the current Figma selection."
+description: "Sync design tokens from a Figma frame, component, component set, or page into this repo's globals.css. Runs the same checks as /adhd:lint, then writes Figma's variable values into globals.css with per-conflict prompts. Optional argument: a Figma URL with node-id. If no argument, uses the current Figma selection."
 disable-model-invocation: true
 argument-hint: "[<figma-url-with-node-id>]"
 allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
@@ -1714,24 +1714,24 @@ allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp
 
 Frame-scoped variable sync from Figma → code. Pulls the values of variables referenced by the target Figma frame and writes them into `globals.css`. Auto-applies missing variables; prompts per-conflict when local has a different value.
 
-**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-check-and-sync-design.md`
+**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
-## Phase 1: Validate config (same as /adhd:check)
+## Phase 1: Validate config (same as /adhd:lint)
 
 Read `adhd.config.ts`. If missing, abort: "Run /adhd:config first."
 Extract `figma.url`, `naming` (default `kebab-case`), and `cssEntry` (or auto-detect).
 
-## Phase 2: Resolve target node (same as /adhd:check)
+## Phase 2: Resolve target node (same as /adhd:lint)
 
-Parse `$ARGUMENTS` for a Figma URL or use current selection. Validate file-key match. Call `mcp__figma__get_metadata` to confirm node exists and is the right type (FRAME / COMPONENT / COMPONENT_SET / CANVAS). Same error messages as /adhd:check.
+Parse `$ARGUMENTS` for a Figma URL or use current selection. Validate file-key match. Call `mcp__figma__get_metadata` to confirm node exists and is the right type (FRAME / COMPONENT / COMPONENT_SET / CANVAS). Same error messages as /adhd:lint.
 
-## Phase 3: Fetch from MCP (same as /adhd:check)
+## Phase 3: Fetch from MCP (same as /adhd:lint)
 
 Call `get_variable_defs` and `get_design_context` for the node. Write to `/tmp/adhd/vars.json` and `/tmp/adhd/ctx.json`.
 
 ## Phase 4: Run the engine
 
-Same CLI invocation as /adhd:check, writing the report to `adhd-check-report.md`. Capture stdout (JSON summary).
+Same CLI invocation as /adhd:lint, writing the report to `adhd-lint-report.md`. Capture stdout (JSON summary).
 
 ## Phase 5: Handle structure issues
 
@@ -1742,7 +1742,7 @@ If any structure violations have `severity: "error"`:
 2. Use `AskUserQuestion`:
    - Question: "N structure errors found. Proceed with variable sync anyway?"
    - Options: "Proceed — sync variables despite structure errors" / "Abort — fix structure issues in Figma first"
-3. If user picks Abort: print "Sync aborted. See adhd-check-report.md for details." and exit.
+3. If user picks Abort: print "Sync aborted. See adhd-lint-report.md for details." and exit.
 
 If only structure warnings (no errors): print them as a heads-up but continue without prompting.
 
@@ -1790,21 +1790,21 @@ If multiple domains were touched, this produces multiple commits. If none were t
 
 ## Phase 9: Final report
 
-Update `adhd-check-report.md` with a "Sync result" section listing:
+Update `adhd-lint-report.md` with a "Sync result" section listing:
 - Variables added (with token + value)
 - Variables overwritten (with old + new value)
 - Variables kept (with local + figma values, "no change")
 - Structure issues (unchanged from Phase 4 report — purely informational)
 
-Echo the sync-result section to the user. Print: "Sync complete. <N> changes across <M> domains. Full report: adhd-check-report.md."
+Echo the sync-result section to the user. Print: "Sync complete. <N> changes across <M> domains. Full report: adhd-lint-report.md."
 
 ## Common errors
 
-(Same table as /adhd:check, plus:)
+(Same table as /adhd:lint, plus:)
 
 | Error | Fix-up guidance |
 |---|---|
-| `Edit failed: variable not found in target block` | The variable was expected in `@theme {}` (etc.) but the block doesn't have it. Re-run `/adhd:check` to confirm classification, then file an issue if the engine is wrong. |
+| `Edit failed: variable not found in target block` | The variable was expected in `@theme {}` (etc.) but the block doesn't have it. Re-run `/adhd:lint` to confirm classification, then file an issue if the engine is wrong. |
 | `git commit failed: nothing to commit` | All conflicts were resolved as "keep local"; no writes were made. Not an error. |
 ```
 
@@ -1909,7 +1909,7 @@ Find the command table near the top of `README.md`. Replace it with:
 | Command | Direction | What it does |
 |---|---|---|
 | `/adhd:config` | — | Interactive wizard that produces `adhd.config.ts` |
-| `/adhd:check` | read-only | Validates a Figma frame/page against local theme + structure best-practices |
+| `/adhd:lint` | read-only | Validates a Figma frame/page against local theme + structure best-practices |
 | `/adhd:sync` | Figma → code | Pulls Figma values for the variables a frame uses into `globals.css` |
 | `/adhd:seed` | code → Figma | Generates a DTCG JSON file you import into Figma via TokensBrücke |
 | `/adhd:to-dtcg` | utility | Model-invocable converter wrapped by the user-facing skills |
@@ -1922,7 +1922,7 @@ Find the command table near the top of `README.md`. Replace it with:
 Edit `example/.gitignore`. Find the line `adhd-export-for-figma.json` (or `adhd-seed.json` post-rename) and add a sibling line:
 
 ```
-adhd-check-report.md
+adhd-lint-report.md
 ```
 
 - [ ] **Step 3: Verify marketplace.json**
@@ -1940,17 +1940,17 @@ Read `.claude-plugin/marketplace.json`. The plugin entry doesn't enumerate indiv
 - [ ] **Step 4: Run all tests + validation**
 
 ```bash
-node --test plugins/adhd/lib/to-dtcg/__tests__/ plugins/adhd/lib/check-engine/__tests__/
+node --test plugins/adhd/lib/to-dtcg/__tests__/ plugins/adhd/lib/lint-engine/__tests__/
 node scripts/validate-skill-frontmatter.js
 ```
 
-Expected: all to-dtcg tests pass (62), all check-engine tests pass (count varies by tasks completed), 5/5 skills valid.
+Expected: all to-dtcg tests pass (62), all lint-engine tests pass (count varies by tasks completed), 5/5 skills valid.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add README.md example/.gitignore .claude-plugin/marketplace.json
-git commit -m "Update README, gitignore, marketplace metadata for /adhd:check + /adhd:sync"
+git commit -m "Update README, gitignore, marketplace metadata for /adhd:lint + /adhd:sync"
 ```
 
 ---
@@ -1959,25 +1959,25 @@ git commit -m "Update README, gitignore, marketplace metadata for /adhd:check + 
 
 The unit tests cover the engine. This task verifies the skills actually work end-to-end against a real Figma file.
 
-- [ ] **Step 1: Run /adhd:check against a known-good frame**
+- [ ] **Step 1: Run /adhd:lint against a known-good frame**
 
 In a Claude session in `example/`:
 
 ```
-/adhd:check https://figma.com/design/<configured-file>?node-id=<known-good-frame>
+/adhd:lint https://figma.com/design/<configured-file>?node-id=<known-good-frame>
 ```
 
 Expected:
-- Skill resolves the node, fetches MCP data, runs CLI, produces `adhd-check-report.md`.
+- Skill resolves the node, fetches MCP data, runs CLI, produces `adhd-lint-report.md`.
 - Report has 0 errors (the example app is set up to be clean).
 - Exit code 0.
 
-- [ ] **Step 2: Run /adhd:check against a known-bad frame**
+- [ ] **Step 2: Run /adhd:lint against a known-bad frame**
 
 Either modify a frame in Figma to violate a rule (e.g., remove auto-layout, paste a raw hex fill), or use a known-bad fixture frame.
 
 ```
-/adhd:check https://figma.com/design/<configured-file>?node-id=<known-bad-frame>
+/adhd:lint https://figma.com/design/<configured-file>?node-id=<known-bad-frame>
 ```
 
 Expected:
@@ -2022,9 +2022,9 @@ gh pr create --title "..." --body "..."
 gh pr checks <num> --watch
 ```
 
-Expected: `to-dtcg unit tests`, `project hygiene` (which now also runs check-engine tests via the same `npm test` or equivalent), and skill frontmatter validator all pass.
+Expected: `to-dtcg unit tests`, `project hygiene` (which now also runs lint-engine tests via the same `npm test` or equivalent), and skill frontmatter validator all pass.
 
-> If `package.json`'s test script doesn't run check-engine tests, update it (see Task 12 follow-up — may need a `package.json` change to add `node --test plugins/adhd/lib/check-engine/__tests__/` to the test script, OR update the CI workflow to run both directories explicitly).
+> If `package.json`'s test script doesn't run lint-engine tests, update it (see Task 12 follow-up — may need a `package.json` change to add `node --test plugins/adhd/lib/lint-engine/__tests__/` to the test script, OR update the CI workflow to run both directories explicitly).
 
 - [ ] **Step 7: No commit needed** — this task is verification only.
 

@@ -1,5 +1,5 @@
 ---
-description: "Convert design tokens between code (CSS) and Figma (MCP variable defs) representations and the canonical DTCG (Design Token Community Group) JSON shape. Used by /adhd:export-for-figma, /adhd:check, and /adhd:sync-from-figma. Wraps the deterministic Node converter at plugins/adhd/lib/to-dtcg/cli.js."
+description: "Convert design tokens between code (CSS) and Figma (MCP variable defs) representations and the canonical DTCG (Design Token Community Group) JSON shape. Used by /adhd:export-for-figma, /adhd:lint, and /adhd:sync-from-figma. Wraps the deterministic Node converter at plugins/adhd/lib/to-dtcg/cli.js."
 disable-model-invocation: false
 allowed-tools: Read Write Bash mcp__figma__get_variable_defs
 ---

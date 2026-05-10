@@ -5,16 +5,16 @@ argument-hint: "[<figma-url-with-node-id>]"
 allowed-tools: Read Write Bash mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
 ---
 
-# ADHD Check
+# ADHD Lint
 
 Validate that a Figma frame/page is ready for code translation. Reports two classes of issue:
 
 - **Variable issues** — Figma variables used by the frame that are missing locally or have conflicting values.
 - **Structure issues** — STRUCT001–STRUCT010 best-practice violations (auto-layout, naming, variant properties, etc.).
 
-Output: a markdown report saved to `adhd-check-report.md` (gitignored), plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
+Output: a markdown report saved to `adhd-lint-report.md` (gitignored), plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
-**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-check-and-sync-design.md`
+**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
 ## Phase 1: Validate config
 
@@ -60,27 +60,27 @@ This avoids shell-escaping issues that arise when piping JSON through `echo` —
 Use the `Bash` tool:
 
 ```bash
-node plugins/adhd/lib/check-engine/cli.js \
+node plugins/adhd/lib/lint-engine/cli.js \
   --variable-defs /tmp/adhd/vars.json \
   --design-context /tmp/adhd/ctx.json \
   --globals-css <path-from-config-or-auto-detect> \
   --config adhd.config.ts \
   --target "<node-name-from-Phase-2>" \
   --target-url "https://figma.com/design/<fileKey>?node-id=<nodeId-with-hyphen>" \
-  --output adhd-check-report.md
+  --output adhd-lint-report.md
 ```
 
 Globals path resolution: if `adhd.config.ts` has `cssEntry`, use it. Otherwise auto-detect `app/globals.css` then `src/app/globals.css` (matching `/adhd:config`'s logic).
 
 ## Phase 5: Present results
 
-Read `adhd-check-report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
+Read `adhd-lint-report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
 
 - If exit code 0 and zero violations: "✓ No issues found."
 - If exit code 0 with warnings only: "⚠ N warnings (see report). Frame is ready for code translation."
 - If exit code 1: "✗ N errors, M warnings. Frame has issues that should be resolved before code translation."
 
-Mention the report file path: "Full report: `adhd-check-report.md` (paste-ready for Figma comments / Slack)."
+Mention the report file path: "Full report: `adhd-lint-report.md` (paste-ready for Figma comments / Slack)."
 
 ## Common errors
 

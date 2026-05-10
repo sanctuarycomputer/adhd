@@ -143,7 +143,7 @@ This phase **does not** validate that the Figma file has the mandated structure 
 
 ## Phase 3: Naming convention
 
-ADHD's `/adhd:check` skill validates that components, variant properties, and variant values in the Figma file follow a single naming convention. This phase asks the user which one their file uses (or lets them disable the check). The selection is written to `adhd.config.ts` as the `naming` field.
+ADHD's `/adhd:lint` skill validates that components, variant properties, and variant values in the Figma file follow a single naming convention. This phase asks the user which one their file uses (or lets them disable the check). The selection is written to `adhd.config.ts` as the `naming` field.
 
 Use `AskUserQuestion`:
 
@@ -151,9 +151,9 @@ Use `AskUserQuestion`:
 Question: "What naming convention does your Figma file use for components, variant properties, and variant values?"
 Header: "Naming"
 Options:
-  - label: "kebab-case (default — recommended for design systems)", description: "Examples: button, primary-button, size=small. /adhd:check enforces this on all components and variants."
-  - label: "PascalCase", description: "Examples: Button, PrimaryButton, Size=Small. /adhd:check enforces this convention instead."
-  - label: "camelCase", description: "Examples: button, primaryButton, size=small. /adhd:check enforces this convention instead."
+  - label: "kebab-case (default — recommended for design systems)", description: "Examples: button, primary-button, size=small. /adhd:lint enforces this on all components and variants."
+  - label: "PascalCase", description: "Examples: Button, PrimaryButton, Size=Small. /adhd:lint enforces this convention instead."
+  - label: "camelCase", description: "Examples: button, primaryButton, size=small. /adhd:lint enforces this convention instead."
   - label: "Disable check (false)", description: "Skip naming-convention validation entirely. Useful if your Figma file mixes conventions or uses something custom."
 ```
 
@@ -203,7 +203,7 @@ Compose the config object from in-memory state. Always include `figma.url`. Cond
 Render the file body using this template (omit lines marked optional when their condition is false):
 
 ```ts
-// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config, /adhd:export-for-figma, /adhd:check).
+// adhd.config.ts — read by the ADHD skills (/adhd:sync, /adhd:config, /adhd:export-for-figma, /adhd:lint).
 // No npm package or import required; the skills validate the shape on read.
 
 const config = {
@@ -291,4 +291,4 @@ const config = {
 export default config;
 ```
 
-The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:check`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file.
+The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:lint`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file.

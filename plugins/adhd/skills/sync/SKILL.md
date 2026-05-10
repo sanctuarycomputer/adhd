@@ -1,5 +1,5 @@
 ---
-description: "Sync design tokens from a Figma frame, component, component set, or page into this repo's globals.css. Runs the same checks as /adhd:check, then writes Figma's variable values into globals.css with per-conflict prompts. Optional argument: a Figma URL with node-id. If no argument, uses the current Figma selection."
+description: "Sync design tokens from a Figma frame, component, component set, or page into this repo's globals.css. Runs the same checks as /adhd:lint, then writes Figma's variable values into globals.css with per-conflict prompts. Optional argument: a Figma URL with node-id. If no argument, uses the current Figma selection."
 disable-model-invocation: true
 argument-hint: "[<figma-url-with-node-id>]"
 allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp__figma__get_variable_defs mcp__figma__get_design_context
@@ -9,15 +9,15 @@ allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata mcp
 
 Frame-scoped variable sync from Figma → code. Pulls the values of variables referenced by the target Figma frame and writes them into `globals.css`. Auto-applies missing variables; prompts per-conflict when local has a different value.
 
-**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-check-and-sync-design.md`
+**Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
-## Phase 1: Validate config (same as /adhd:check)
+## Phase 1: Validate config (same as /adhd:lint)
 
 Read `adhd.config.ts` at the repo root. If missing, abort: "Run /adhd:config first."
 
 Extract `figma.url` (required), `naming` (optional, defaults to `kebab-case`), and `cssEntry` (or auto-detect `app/globals.css` then `src/app/globals.css`). Extract the file key from `figma.url` — the segment after `/design/`.
 
-## Phase 2: Resolve target node (same as /adhd:check)
+## Phase 2: Resolve target node (same as /adhd:lint)
 
 Parse `$ARGUMENTS`:
 
@@ -32,7 +32,7 @@ Call `mcp__figma__get_metadata`. Confirm node type is `FRAME`, `COMPONENT`, `COM
 If `get_metadata` errors with "Node not found", abort with: "Node not found in <fileKey>. Verify the URL or selection."
 If it errors with "MCP unreachable" / similar, abort with: "Figma MCP not configured. Run /adhd:config to verify setup."
 
-## Phase 3: Fetch from MCP (same as /adhd:check)
+## Phase 3: Fetch from MCP (same as /adhd:lint)
 
 Call `mcp__figma__get_variable_defs` and `mcp__figma__get_design_context` for the resolved node ID.
 
@@ -49,17 +49,17 @@ This avoids shell-escaping issues that arise when piping JSON through `echo` —
 
 ## Phase 4: Run the engine
 
-Same CLI invocation as `/adhd:check`, writing the report to `adhd-check-report.md`. Capture stdout (JSON summary).
+Same CLI invocation as `/adhd:lint`, writing the report to `adhd-lint-report.md`. Capture stdout (JSON summary).
 
 ```bash
-node plugins/adhd/lib/check-engine/cli.js \
+node plugins/adhd/lib/lint-engine/cli.js \
   --variable-defs /tmp/adhd/vars.json \
   --design-context /tmp/adhd/ctx.json \
   --globals-css <path-from-config-or-auto-detect> \
   --config adhd.config.ts \
   --target "<node-name-from-Phase-2>" \
   --target-url "https://figma.com/design/<fileKey>?node-id=<nodeId-with-hyphen>" \
-  --output adhd-check-report.md
+  --output adhd-lint-report.md
 ```
 
 ## Phase 5: Handle structure issues
@@ -71,7 +71,7 @@ If any structure violations have `severity: "error"`:
 2. Use `AskUserQuestion`:
    - Question: "N structure errors found. Proceed with variable sync anyway?"
    - Options: "Proceed — sync variables despite structure errors" / "Abort — fix structure issues in Figma first"
-3. If user picks Abort: print "Sync aborted. See adhd-check-report.md for details." and exit.
+3. If user picks Abort: print "Sync aborted. See adhd-lint-report.md for details." and exit.
 
 If only structure warnings (no errors): print them as a heads-up but continue without prompting.
 
@@ -119,13 +119,13 @@ If multiple domains were touched, this produces multiple commits. If none were t
 
 ## Phase 9: Final report
 
-Update `adhd-check-report.md` with a "Sync result" section listing:
+Update `adhd-lint-report.md` with a "Sync result" section listing:
 - Variables added (with token + value)
 - Variables overwritten (with old + new value)
 - Variables kept (with local + figma values, "no change")
 - Structure issues (unchanged from Phase 4 report — purely informational)
 
-Echo the sync-result section to the user. Print: "Sync complete. <N> changes across <M> domains. Full report: adhd-check-report.md."
+Echo the sync-result section to the user. Print: "Sync complete. <N> changes across <M> domains. Full report: adhd-lint-report.md."
 
 ## Common errors
 
@@ -135,5 +135,5 @@ Echo the sync-result section to the user. Print: "Sync complete. <N> changes acr
 | `URL points at wrong file` | Open the configured Figma file (printed in error) and copy a node URL from there. |
 | `Select a frame, component, or page` | Click on a frame in Figma desktop, or pass a node-id URL. |
 | `Figma MCP not configured` / `MCP unreachable` | Make sure Figma desktop is running with Dev Mode enabled. Re-run `/adhd:config` to verify setup. |
-| `Edit failed: variable not found in target block` | The variable was expected in `@theme {}` (etc.) but the block doesn't have it. Re-run `/adhd:check` to confirm classification, then file an issue if the engine is wrong. |
+| `Edit failed: variable not found in target block` | The variable was expected in `@theme {}` (etc.) but the block doesn't have it. Re-run `/adhd:lint` to confirm classification, then file an issue if the engine is wrong. |
 | `git commit failed: nothing to commit` | All conflicts were resolved as "keep local"; no writes were made. Not an error. |

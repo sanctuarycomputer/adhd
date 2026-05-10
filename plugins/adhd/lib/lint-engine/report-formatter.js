@@ -12,7 +12,7 @@ function formatReport({ variable = [], structure = [] }, meta) {
   const warnings = structure.filter(v => v.severity === 'warning').length;
   const lines = [];
 
-  lines.push('# ADHD check report');
+  lines.push('# ADHD lint report');
   lines.push(`**Target:** ${meta.target}  ([open in Figma](${meta.targetUrl}))`);
   lines.push(`**Run at:** ${fmtTime(meta.runAt)}`);
   lines.push(`**Result:** ${errors} errors, ${warnings} warnings`);

@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * ADHD check-engine CLI.
+ * ADHD lint-engine CLI.
  * Inputs (all required, passed as flags):
  *   --variable-defs <path>     JSON file with MCP get_variable_defs response
  *   --design-context <path>    JSON file with MCP get_design_context response

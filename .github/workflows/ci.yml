@@ -17,8 +17,8 @@ jobs:
           node-version: '20'
       - name: Run to-dtcg tests
         run: node --test plugins/adhd/lib/to-dtcg/__tests__/
-      - name: Run check-engine tests
-        run: node --test plugins/adhd/lib/check-engine/__tests__/
+      - name: Run lint-engine tests
+        run: node --test plugins/adhd/lib/lint-engine/__tests__/
 
   hygiene:
     name: project hygiene

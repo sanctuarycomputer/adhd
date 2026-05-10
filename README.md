@@ -21,7 +21,7 @@ After install, four slash commands are available:
 | Command | Direction | What it does |
 |---|---|---|
 | `/adhd:config` | — | Interactive wizard that produces `adhd.config.ts` |
-| `/adhd:check` | read-only | Validates a Figma frame/page against local theme + structure best-practices |
+| `/adhd:lint` | read-only | Validates a Figma frame/page against local theme + structure best-practices |
 | `/adhd:sync` | Figma → code | Pulls Figma values for the variables a frame uses into `globals.css` |
 | `/adhd:export-for-figma` | code → Figma | Generates a DTCG JSON file you import into Figma via TokensBrücke |
 | `/adhd:to-dtcg` | utility | Model-invocable converter wrapped by the user-facing skills |

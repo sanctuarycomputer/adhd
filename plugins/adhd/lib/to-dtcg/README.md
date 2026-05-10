@@ -4,7 +4,7 @@ Zero-dependency Node.js script that converts design tokens between code (CSS) an
 
 Used by ADHD's user-facing skills:
 - `/adhd:export-for-figma` — code → DTCG (user imports manually into Figma via plugin)
-- `/adhd:check` — code DTCG vs. Figma DTCG diff
+- `/adhd:lint` — code DTCG vs. Figma DTCG diff
 - `/adhd:sync-from-figma` — Figma DTCG → CSS edits
 
 Wrapped by the model-invocable skill at `plugins/adhd/skills/to-dtcg/SKILL.md`.
