@@ -131,6 +131,64 @@ function parseFontFamily(raw) {
   });
 }
 
+function parseCssColor(raw) {
+  if (typeof raw !== 'string') {
+    throw new Error(`Unparseable CSS color: ${raw}`);
+  }
+  const s = raw.trim().toLowerCase();
+
+  // Named colors (only the few we need to support).
+  if (s === 'transparent') return { colorSpace: 'srgb', components: [0, 0, 0], alpha: 0 };
+  if (s === 'black') return { colorSpace: 'srgb', components: [0, 0, 0], alpha: 1 };
+  if (s === 'white') return { colorSpace: 'srgb', components: [1, 1, 1], alpha: 1 };
+
+  // Hex: #rgb / #rrggbb / #rrggbbaa
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(s);
+  if (hex) {
+    let h = hex[1];
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+    const a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    return {
+      colorSpace: 'srgb',
+      components: [round4(r), round4(g), round4(b)],
+      alpha: round4(a),
+    };
+  }
+
+  // rgb() / rgba() legacy: comma-separated 0–255 ints, optional 0–1 alpha.
+  const rgbLegacy = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/.exec(s);
+  if (rgbLegacy) {
+    return {
+      colorSpace: 'srgb',
+      components: [
+        round4(parseInt(rgbLegacy[1], 10) / 255),
+        round4(parseInt(rgbLegacy[2], 10) / 255),
+        round4(parseInt(rgbLegacy[3], 10) / 255),
+      ],
+      alpha: rgbLegacy[4] !== undefined ? round4(parseFloat(rgbLegacy[4])) : 1,
+    };
+  }
+
+  // rgb() / rgba() modern: space-separated, optional / alpha.
+  const rgbModern = /^rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)(?:\s*\/\s*([\d.]+))?\s*\)$/.exec(s);
+  if (rgbModern) {
+    return {
+      colorSpace: 'srgb',
+      components: [
+        round4(parseInt(rgbModern[1], 10) / 255),
+        round4(parseInt(rgbModern[2], 10) / 255),
+        round4(parseInt(rgbModern[3], 10) / 255),
+      ],
+      alpha: rgbModern[4] !== undefined ? round4(parseFloat(rgbModern[4])) : 1,
+    };
+  }
+
+  throw new Error(`Unparseable CSS color: ${raw}`);
+}
+
 // Match a top-level `@theme {` block (NOT @theme inline / @theme default).
 // Returns { body, end } or null. The caller should slice the input to skip past `end`.
 function findAtThemeBlock(text, label /* 'theme' or 'theme inline' or 'theme default' */) {
@@ -549,5 +607,6 @@ module.exports = {
   // NEW: Plan 1.5 helpers
   parseCssDimension,
   parseFontFamily,
+  parseCssColor,
   round4,
 };
