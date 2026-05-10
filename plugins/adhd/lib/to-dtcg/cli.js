@@ -56,6 +56,20 @@ function clamp01(c) {
   return Math.max(0, Math.min(1, c));
 }
 
+function channelToHex(c) {
+  const v = Math.round(clamp01(c) * 255);
+  return v.toString(16).padStart(2, '0');
+}
+
+function oklchToHex(L, C, h) {
+  const lab = oklchToOklab(L, C, h);
+  const lin = oklabToLinearSrgb(lab);
+  const r = linearToCompandedSrgb(lin.r);
+  const g = linearToCompandedSrgb(lin.g);
+  const b = linearToCompandedSrgb(lin.b);
+  return `#${channelToHex(r)}${channelToHex(g)}${channelToHex(b)}`;
+}
+
 function oklchToColorValue(L, C, h) {
   const lab = oklchToOklab(L, C, h);
   const lin = oklabToLinearSrgb(lab);
@@ -381,25 +395,23 @@ function normalizeCssValue(raw, namespace, dtcgType) {
     return raw;
   }
 
-  // OKLCH -> ColorValue object.
+  // OKLCH -> hex string (TokensBrücke / sd-tailwindv4 / community plugins read hex).
   const oklchMatch = /^oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/.exec(raw);
   if (oklchMatch) {
     const L = parseFloat(oklchMatch[1]) / 100;
     const C = parseFloat(oklchMatch[2]);
     const H = parseFloat(oklchMatch[3]);
-    const cv = oklchToColorValue(L, C, H);
-    if (oklchMatch[4] !== undefined) cv.alpha = round4(parseFloat(oklchMatch[4]));
-    return cv;
+    return oklchToHex(L, C, H);
   }
 
   // Type-specific dispatch.
   if (dtcgType === 'color') {
-    return parseCssColor(raw);
+    // Pass through hex / rgb() / rgba() strings as-is. TokensBrücke handles all three.
+    return raw;
   }
   if (dtcgType === 'dimension') {
-    const dim = parseCssDimension(raw);
-    if (!dim) throw new Error(`Unparseable dimension '${raw}' (expected rem/em/px)`);
-    return dim;
+    // Pass through CSS dimension strings as-is.
+    return raw;
   }
   if (dtcgType === 'fontFamily') {
     return parseFontFamily(raw);
@@ -408,7 +420,9 @@ function normalizeCssValue(raw, namespace, dtcgType) {
     return parseFloat(raw);
   }
   if (dtcgType === 'shadow') {
-    return parseCssShadow(raw);
+    // Pass through CSS shadow strings as-is. TokensBrücke and sd-tailwindv4 both
+    // expect CSS shadow strings (not structured objects).
+    return raw;
   }
 
   // Pass-through for non-ADHD-managed names.
@@ -542,6 +556,15 @@ function rgbObjectToColorValue({ r, g, b, a }) {
   };
 }
 
+function rgbObjectToHex({ r, g, b, a }) {
+  const ch = (c) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0');
+  if (a !== undefined && a < 1) {
+    const aCh = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+    return `#${ch(r)}${ch(g)}${ch(b)}${aCh}`;
+  }
+  return `#${ch(r)}${ch(g)}${ch(b)}`;
+}
+
 function figmaVariableNameToDtcg(name) {
   // "colors/gold/100" → { namespace: "color", dtcgPath: "color.gold.100" }
   // "colors/brand/surface" → { namespace: "color", dtcgPath: "color.brand.surface" }
@@ -609,15 +632,10 @@ function parseFigmaResponse(json) {
       return `{${target.dtcgPath}}`;
     }
     if (value && typeof value === 'object' && 'r' in value && 'g' in value && 'b' in value) {
-      return rgbObjectToColorValue(value);
+      return rgbObjectToHex(value);
     }
-    // Spacing or other dimension-typed values come back as strings; parse them.
+    // Spacing or other dimension values come back as strings; pass through.
     if (typeof value === 'string') {
-      if (namespace === 'spacing' || namespace === 'radius' || namespace === 'text') {
-        const dim = parseCssDimension(value);
-        if (!dim) throw new Error(`Unparseable Figma dimension: ${value}`);
-        return dim;
-      }
       if (namespace === 'font') {
         return parseFontFamily(value);
       }
@@ -715,14 +733,16 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs,
-  oklchToColorValue,
+  oklchToHex,
+  oklchToColorValue,  // keep for tests
   parseCssTokens,
   parseFigmaResponse,
   buildDtcgFromCssTokens,
   stringifyDtcgStable,
   variableNameToDtcg,
   normalizeCssValue,
-  rgbObjectToColorValue,
+  rgbObjectToHex,
+  rgbObjectToColorValue,  // keep for tests
   parseCssDimension,
   round4,
   parseFontFamily,

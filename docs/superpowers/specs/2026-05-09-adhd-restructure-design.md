@@ -113,7 +113,7 @@ Exit codes: 0 on success; 1 on parse error; 2 on bad arguments.
 | `color` | `color` | hex `#rrggbb` or `#rrggbbaa` |
 | `spacing` | `dimension` | unit string (`1rem`, `0.25rem`) |
 | `radius` | `dimension` | unit string |
-| `shadow` | `shadow` | DTCG shadow object `{ offsetX, offsetY, blur, spread, color }` |
+| `shadow` | `shadow` | CSS shadow string (`"0 4px 6px -1px rgba(0, 0, 0, 0.1)"`) |
 | `font` | `fontFamily` | string or array of strings |
 | `text` | `dimension` | unit string |
 | `fontWeight` | `fontWeight` | number |
