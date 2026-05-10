@@ -1,25 +1,67 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * ADHD design-system CLI.
- *
- * Modes:
- *   compare  — read both sides, output { same, conflict, codeOnly, figmaOnly } as JSON
- *   apply    — read a resolved-actions JSON, output the write-script payload
- *
- * Inputs depend on mode; see --help.
- */
+const fs = require('node:fs');
+const path = require('node:path');
+const { parseCodeDesignSystem } = require('./code-parser');
+const { parseFigmaDesignSystem } = require('./figma-parser');
+const { compareDesignSystems } = require('./comparator');
+const { buildFigmaActions } = require('./figma-write-actions');
+
+function parseArgs(argv) {
+  const args = {};
+  args._ = [];
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') { args.help = true; continue; }
+    if (a.startsWith('--')) {
+      args[a.slice(2)] = argv[++i];
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+function printUsage() {
+  console.log(`Usage:
+  cli.js compare --code <globals.css> --figma <figma.json> --output <diff.json>
+  cli.js apply   --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json>
+
+compare:
+  Reads globals.css and a figma-extract JSON (the result of running
+  figma-extract-script.js inside use_figma). Produces a diff JSON.
+
+apply:
+  Reads a diff JSON and a resolutions JSON (user's choices for each
+  conflict). Produces an actions list. For push, actions are Figma
+  variable mutations. For pull, actions are CSS edits.`);
+}
 
 function main() {
-  const args = process.argv.slice(2);
-  if (args[0] === '--help' || args[0] === '-h') {
-    console.log(`Usage:
-  cli.js compare --code <globals.css> --figma <figma.json> --output <diff.json>
-  cli.js apply   --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json>`);
+  const args = parseArgs(process.argv);
+  if (args.help) { printUsage(); process.exit(0); }
+  const cmd = args._[0];
+
+  if (cmd === 'compare') {
+    const css = fs.readFileSync(args.code, 'utf8');
+    const figmaExtract = JSON.parse(fs.readFileSync(args.figma, 'utf8'));
+    const codeDS = parseCodeDesignSystem(css);
+    const figmaDS = parseFigmaDesignSystem(figmaExtract);
+    const diff = compareDesignSystems(codeDS, figmaDS);
+    fs.writeFileSync(args.output, JSON.stringify(diff, null, 2));
     process.exit(0);
   }
-  console.error('design-system: not implemented yet');
+
+  if (cmd === 'apply') {
+    const diff = JSON.parse(fs.readFileSync(args.diff, 'utf8'));
+    const resolutions = JSON.parse(fs.readFileSync(args.resolutions, 'utf8'));
+    const actions = buildFigmaActions(diff, resolutions, args.direction);
+    fs.writeFileSync(args.output, JSON.stringify(actions, null, 2));
+    process.exit(0);
+  }
+
+  console.error('Unknown command. Use --help.');
   process.exit(2);
 }
 
