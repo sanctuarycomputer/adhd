@@ -241,23 +241,12 @@ The Figma MCP needs to be authenticated for the wizard to test reachability. Run
 ### "Cannot reach the Figma file"
 The URL is well-formed but Figma returned 404 or no metadata. Confirm the URL is correct (copy from your browser's address bar), and that your authenticated MCP user has access to the file.
 
-### "Your Figma PAT was rejected (HTTP 401)"
-The token in `process.env.FIGMA_PAT` (or the customized env var) is invalid. The wizard will prompt for a fresh one. If the token came from your shell environment, the wizard cannot edit your shell rc — you'll need to update it manually.
-
-### "Your token does not have access to Figma's Variables API (HTTP 403)"
-Figma's variable read/write REST endpoints are gated to Enterprise plans with Full seat. Options: upgrade your Figma plan, generate a new token with `file_variables:write` scope, or switch `leader` to `"figma"` and use only the read-side MCP path.
-
-### "figma.pat must be the NAME of an env var"
-You set `figma.pat` to a value that doesn't look like an env var name (kebab-case, lowercase letters, or longer than ~30 chars). Set it to a name like `FIGMA_PAT` or `MY_TEAM_FIGMA_TOKEN`, and put the actual token value in `.env.local` or your shell.
-
 ## Reference: adhd.config.ts schema
 
 ```ts
 const config = {
-  leader: "code" | "figma",       // required
   figma: {
     url: "https://www.figma.com/design/<key>/<name>",   // required
-    pat?: "FIGMA_PAT",            // optional env var NAME (default "FIGMA_PAT" if omitted)
   },
   domains?: ["colors", "spacing", "typography", "radius", "shadow"],   // optional; omit = all
   cssEntry?: "src/app/globals.css",                                     // optional; omit = "app/globals.css"
@@ -265,6 +254,4 @@ const config = {
 export default config;
 ```
 
-`figma.pat` stores the **name** of the environment variable holding the token. The token value lives in `process.env[<name>]`, populated by your shell or by `.env.local` / `.env.development.local` / `.env` (loaded in that priority order).
-
-The wizard never writes the token itself to `adhd.config.ts`. The PAT-leak preflight (Phase 0) actively blocks any commit that does.
+The schema is read by `/adhd:config`, `/adhd:sync`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file.
