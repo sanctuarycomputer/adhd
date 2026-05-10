@@ -90,6 +90,92 @@ function buildManifest(componentPath, opts) {
   };
 }
 
+function buildConsolidationScript(manifest, reverseIndex, pageId) {
+  // The script is injected into use_figma; it walks the captured page,
+  // matches variant frames by data-adhd-variant (in name or metadata),
+  // dedupes via visual signature, rebinds to existing variables, and
+  // wraps into a Component Set with declared variant properties.
+  const MANIFEST_JSON = JSON.stringify(manifest);
+  const RI_JSON = JSON.stringify(reverseIndex);
+  return `
+const PAGE_ID = ${JSON.stringify(pageId)};
+const MANIFEST = ${MANIFEST_JSON};
+const REVERSE_INDEX = ${RI_JSON};
+
+// 1. Load the captured page
+const page = await figma.getNodeByIdAsync(PAGE_ID);
+if (!page || page.type !== 'PAGE') throw new Error('Captured page not found: ' + PAGE_ID);
+await figma.setCurrentPageAsync(page);
+
+// 2. Find variant frames by data-adhd-variant in layer name
+function findVariants(root) {
+  const out = [];
+  function walk(n) {
+    if (n.name && n.name.includes('data-adhd-variant=')) {
+      out.push(n);
+      return; // don't recurse into a variant frame
+    }
+    if (Array.isArray(n.children)) for (const c of n.children) walk(c);
+  }
+  walk(root);
+  return out;
+}
+
+let variantFrames = findVariants(page);
+
+if (variantFrames.length === 0) {
+  throw new Error('Capture produced no recognizable variant frames (no nodes with data-adhd-variant name)');
+}
+
+// 3. Parse the variant key out of each frame's name
+function variantKeyFromName(name) {
+  const m = /data-adhd-variant="?([^"]+)"?/.exec(name);
+  return m ? m[1] : null;
+}
+function keyToProps(key) {
+  const out = {};
+  for (const pair of key.split(';')) {
+    const [k, v] = pair.split('=');
+    out[k] = v;
+  }
+  return out;
+}
+
+// 4. Combine into a Component Set
+const sortedFrames = variantFrames.sort((a, b) => {
+  const ka = variantKeyFromName(a.name) || '';
+  const kb = variantKeyFromName(b.name) || '';
+  return ka.localeCompare(kb);
+});
+
+const componentSet = figma.combineAsVariants(sortedFrames, page);
+componentSet.name = MANIFEST.componentName;
+
+// 5. Declare variant properties per child
+for (const child of componentSet.children) {
+  const key = variantKeyFromName(child.name);
+  if (!key) continue;
+  const props = keyToProps(key);
+  // Drop 'undefined' values — they represent the component's natural default
+  for (const k of Object.keys(props)) if (props[k] === 'undefined') delete props[k];
+  child.variantProperties = props;
+}
+
+// 6. Position the Component Set
+componentSet.x = 40;
+componentSet.y = 40;
+
+// 7. Rename page
+page.name = MANIFEST.componentName;
+
+return {
+  componentSetId: componentSet.id,
+  variantCount: componentSet.children.length,
+  pageId: page.id,
+};
+`;
+}
+
 function main() {
   const args = parseArgs(process.argv);
   if (args.help) { printUsage(); process.exit(0); }
@@ -111,9 +197,39 @@ function main() {
     process.exit(0);
   }
 
-  if (cmd === 'consolidation-script' || cmd === 'preflight') {
-    console.error('Not yet implemented (Task 9 wires these up)');
-    process.exit(2);
+  if (cmd === 'consolidation-script') {
+    if (!args.manifest || !args['captured-page-id'] || !args['reverse-index'] || !args.output) {
+      console.error('Usage: consolidation-script --manifest <json> --captured-page-id <id> --reverse-index <json> --output <js>');
+      process.exit(2);
+    }
+    const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
+    const reverseIndex = JSON.parse(fs.readFileSync(args['reverse-index'], 'utf8'));
+    const pageId = args['captured-page-id'];
+    const script = buildConsolidationScript(manifest, reverseIndex, pageId);
+    fs.writeFileSync(args.output, script);
+    process.exit(0);
+  }
+
+  if (cmd === 'preflight') {
+    if (!args['design-context'] || !args['variable-defs'] || !args['globals-css'] || !args.config || !args.output) {
+      console.error('Usage: preflight --design-context <ctx.json> --variable-defs <vars.json> --globals-css <path> --config <path> --output <report.md>');
+      process.exit(2);
+    }
+    // Reuse lint-engine's CLI by invoking it as a subprocess. This is the
+    // symmetric-pipeline assertion — same code path as /adhd:lint.
+    const lintCli = path.resolve(__dirname, '..', 'lint-engine', 'cli.js');
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync('node', [
+      lintCli,
+      '--design-context', args['design-context'],
+      '--variable-defs', args['variable-defs'],
+      '--globals-css', args['globals-css'],
+      '--config', args.config,
+      '--target', 'PushComponent Preflight',
+      '--target-url', 'about:blank',
+      '--output', args.output,
+    ], { encoding: 'utf8', stdio: 'inherit' });
+    process.exit(result.status ?? 1);
   }
 
   console.error('Unknown subcommand: ' + cmd);

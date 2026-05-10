@@ -94,3 +94,55 @@ test('generate-preview subcommand emits a TSX file', () => {
   assert.match(tsx, /import \{ Avatar \}/);
   assert.match(tsx, /data-adhd-variant=/);
 });
+
+test('consolidation-script subcommand emits a JS string with placeholders substituted', () => {
+  const manifest = tmp('manifest.json', JSON.stringify({
+    componentName: 'Avatar',
+    variants: [{ size: 'xs' }, { size: 'sm' }],
+    importPath: '@/app/components/avatar',
+  }));
+  const reverseIndex = tmp('ri.json', JSON.stringify({ color: [], spacing: [], radius: [] }));
+  const out = tmp('script.js', '');
+  const result = spawnSync('node', [
+    CLI, 'consolidation-script',
+    '--manifest', manifest,
+    '--captured-page-id', '12:34',
+    '--reverse-index', reverseIndex,
+    '--output', out,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const script = fs.readFileSync(out, 'utf8');
+  // Script must reference the page id and component name
+  assert.match(script, /12:34/);
+  assert.match(script, /Avatar/);
+  // Script must contain the data-adhd-variant matcher
+  assert.match(script, /data-adhd-variant/);
+});
+
+test('preflight subcommand produces a lint report', () => {
+  // Build minimal inputs that lint-engine accepts
+  const ctx = tmp('ctx.json', JSON.stringify({
+    id: '1:1', name: 'Avatar', type: 'COMPONENT_SET',
+    componentPropertyDefinitions: { size: { type: 'VARIANT', defaultValue: 'sm', variantOptions: ['xs','sm'] } },
+    children: [
+      { id: '1:2', name: 'Avatar/size=xs', type: 'COMPONENT', variantProperties: { size: 'xs' }, layoutMode: 'VERTICAL', children: [] },
+      { id: '1:3', name: 'Avatar/size=sm', type: 'COMPONENT', variantProperties: { size: 'sm' }, layoutMode: 'VERTICAL', children: [] },
+    ],
+  }));
+  const vars = tmp('vars.json', JSON.stringify({}));
+  const css = tmp('globals.css', '@theme {}');
+  const cfg = tmp('adhd.config.ts', 'export default { naming: "kebab-case" };');
+  const out = tmp('report.md', '');
+  const result = spawnSync('node', [
+    CLI, 'preflight',
+    '--design-context', ctx,
+    '--variable-defs', vars,
+    '--globals-css', css,
+    '--config', cfg,
+    '--output', out,
+  ], { encoding: 'utf8' });
+  // exit 0 if no errors; the synthetic input here has none
+  assert.equal(result.status, 0, result.stderr);
+  const report = fs.readFileSync(out, 'utf8');
+  assert.match(report, /ADHD/);
+});
