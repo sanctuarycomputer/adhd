@@ -46,7 +46,11 @@ function main() {
   if (cmd === 'compare') {
     const css = fs.readFileSync(args.code, 'utf8');
     const figmaExtract = JSON.parse(fs.readFileSync(args.figma, 'utf8'));
-    const codeDS = parseCodeDesignSystem(css);
+    // Default: include Tailwind v4's full default theme so push/pull see
+    // the complete design system, not just what's redeclared in globals.css.
+    // Disable with --no-tailwind-defaults if you only want explicit overrides.
+    const includeTailwindDefaults = !('no-tailwind-defaults' in args);
+    const codeDS = parseCodeDesignSystem(css, { includeTailwindDefaults });
     const figmaDS = parseFigmaDesignSystem(figmaExtract);
     const diff = compareDesignSystems(codeDS, figmaDS);
     fs.writeFileSync(args.output, JSON.stringify(diff, null, 2));

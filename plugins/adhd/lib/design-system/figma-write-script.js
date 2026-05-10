@@ -139,8 +139,17 @@ for (const a of actions) {
       const v = figma.variables.createVariable(a.path, col, type);
       v.scopes = tokenScopesFor(a.domain, a.path);
       for (const [mode, val] of Object.entries(a.valuesByMode)) {
-        const modeId = figmaModeIds[mode === 'default' ? 'mode 1' : mode];
-        if (!modeId) { errors.push({action: a, err: 'No mode ' + mode}); continue; }
+        // mode=default means mode-independent: write to ALL modes of the
+        // destination collection. Handles the case where a primitive (no modes
+        // in code) is being added to an existing multi-mode collection.
+        let targetModeIds;
+        if (mode === 'default') {
+          targetModeIds = col.modes.map(m => m.modeId);
+        } else {
+          const modeId = figmaModeIds[mode];
+          if (!modeId) { errors.push({action: a, err: 'No mode ' + mode}); continue; }
+          targetModeIds = [modeId];
+        }
         if (val.type === 'literal') {
           let resolved;
           if (type === 'COLOR') {
@@ -160,11 +169,15 @@ for (const a of actions) {
               ? String(a.resolvedByMode[mode])
               : String(val.value);
           }
-          v.setValueForMode(modeId, resolved);
+          for (const modeId of targetModeIds) {
+            v.setValueForMode(modeId, resolved);
+          }
         } else if (val.type === 'alias') {
           const target = await findVarByName(col, val.target);
           if (!target) { errors.push({action: a, err: 'Alias target not found: ' + val.target}); continue; }
-          v.setValueForMode(modeId, figma.variables.createVariableAlias(target));
+          for (const modeId of targetModeIds) {
+            v.setValueForMode(modeId, figma.variables.createVariableAlias(target));
+          }
         }
       }
       applied.push(a);
