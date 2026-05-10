@@ -91,10 +91,6 @@ function buildManifest(componentPath, opts) {
 }
 
 function buildConsolidationScript(manifest, reverseIndex, pageId) {
-  // The script is injected into use_figma; it walks the captured page,
-  // matches variant frames by data-adhd-variant (in name or metadata),
-  // dedupes via visual signature, rebinds to existing variables, and
-  // wraps into a Component Set with declared variant properties.
   const MANIFEST_JSON = JSON.stringify(manifest);
   const RI_JSON = JSON.stringify(reverseIndex);
   return `
@@ -111,66 +107,143 @@ await figma.setCurrentPageAsync(page);
 function findVariants(root) {
   const out = [];
   function walk(n) {
-    if (n.name && n.name.includes('data-adhd-variant=')) {
-      out.push(n);
-      return; // don't recurse into a variant frame
-    }
+    if (n.name && n.name.includes('data-adhd-variant=')) { out.push(n); return; }
     if (Array.isArray(n.children)) for (const c of n.children) walk(c);
   }
   walk(root);
   return out;
 }
-
 let variantFrames = findVariants(page);
-
 if (variantFrames.length === 0) {
-  throw new Error('Capture produced no recognizable variant frames (no nodes with data-adhd-variant name)');
+  throw new Error('Capture produced no recognizable variant frames');
 }
 
-// 3. Parse the variant key out of each frame's name
+// 3. Extract variant key
 function variantKeyFromName(name) {
-  const m = /data-adhd-variant="?([^"]+)"?/.exec(name);
-  return m ? m[1] : null;
+  const m = /data-adhd-variant="?([^"]+)"?/.exec(name); return m ? m[1] : null;
 }
 function keyToProps(key) {
   const out = {};
-  for (const pair of key.split(';')) {
-    const [k, v] = pair.split('=');
-    out[k] = v;
-  }
+  for (const pair of key.split(';')) { const [k, v] = pair.split('='); out[k] = v; }
   return out;
 }
 
-// 4. Combine into a Component Set
-const sortedFrames = variantFrames.sort((a, b) => {
-  const ka = variantKeyFromName(a.name) || '';
-  const kb = variantKeyFromName(b.name) || '';
-  return ka.localeCompare(kb);
-});
-
-const componentSet = figma.combineAsVariants(sortedFrames, page);
-componentSet.name = MANIFEST.componentName;
-
-// 5. Declare variant properties per child
-for (const child of componentSet.children) {
-  const key = variantKeyFromName(child.name);
-  if (!key) continue;
-  const props = keyToProps(key);
-  // Drop 'undefined' values — they represent the component's natural default
-  for (const k of Object.keys(props)) if (props[k] === 'undefined') delete props[k];
-  child.variantProperties = props;
+// 4. Visual-signature dedup (inline implementation matching visual-signature.js)
+function structuralHash(node) {
+  const RELEVANT = ['type','width','height','layoutMode','paddingTop','paddingBottom','paddingLeft','paddingRight','itemSpacing','cornerRadius','fills','strokes','effects','characters','fontSize'];
+  function pick(n) {
+    if (!n || typeof n !== 'object') return n;
+    if (Array.isArray(n)) return n.map(pick);
+    const out = {};
+    for (const k of RELEVANT) if (k in n) out[k] = pick(n[k]);
+    if (Array.isArray(n.children)) out.children = n.children.map(pick);
+    return out;
+  }
+  // Inline hash (no crypto in Figma sandbox; use a deterministic JSON-stringify)
+  return JSON.stringify(pick(node));
+}
+const bySig = new Map();
+for (const f of variantFrames) {
+  const sig = structuralHash(f);
+  if (!bySig.has(sig)) bySig.set(sig, []);
+  bySig.get(sig).push(f);
+}
+const survivors = [];
+const collapsed = [];
+for (const [sig, frames] of bySig) {
+  const sorted = frames.sort((a,b) => (variantKeyFromName(a.name)||'').localeCompare(variantKeyFromName(b.name)||''));
+  survivors.push(sorted[0]);
+  for (let i = 1; i < sorted.length; i++) { collapsed.push(sorted[i].name); sorted[i].remove(); }
 }
 
-// 6. Position the Component Set
-componentSet.x = 40;
-componentSet.y = 40;
+// 5. Compute effective variant properties (drop axes that don't distinguish any survivors)
+const survivorProps = survivors.map(s => keyToProps(variantKeyFromName(s.name) || ''));
+const axisNames = new Set();
+for (const p of survivorProps) for (const k of Object.keys(p)) axisNames.add(k);
+const effectiveAxes = new Set();
+for (const axis of axisNames) {
+  const values = new Set(survivorProps.map(p => p[axis]));
+  if (values.size > 1) effectiveAxes.add(axis);
+}
 
-// 7. Rename page
+// 6. Combine into Component Set
+const sorted = survivors.sort((a,b) => (variantKeyFromName(a.name)||'').localeCompare(variantKeyFromName(b.name)||''));
+const componentSet = figma.combineAsVariants(sorted, page);
+componentSet.name = MANIFEST.componentName;
+
+// 7. Set variantProperties only for effective axes; drop 'undefined' values
+for (const child of componentSet.children) {
+  const key = variantKeyFromName(child.name);
+  const props = key ? keyToProps(key) : {};
+  const effective = {};
+  for (const k of Object.keys(props)) {
+    if (effectiveAxes.has(k) && props[k] !== 'undefined') effective[k] = props[k];
+  }
+  child.variantProperties = effective;
+}
+
+// 8. Rebind raw fills / paddings / radii to existing Figma variables.
+// NOTE: to2 (2-decimal) matches reverse-index.js's colorKey quantization.
+function rgbKey(c) { const to2 = (n) => Math.round(n * 100)/100; return [to2(c.r), to2(c.g), to2(c.b), to2('a' in c ? c.a : 1)].join(','); }
+const colorIndex = new Map(REVERSE_INDEX.color || []);
+const spacingIndex = new Map(REVERSE_INDEX.spacing || []);
+const radiusIndex = new Map(REVERSE_INDEX.radius || []);
+
+async function bindNode(n) {
+  // Fills
+  if (Array.isArray(n.fills)) {
+    const newFills = [];
+    let changed = false;
+    for (const fill of n.fills) {
+      if (fill.type === 'SOLID' && fill.color) {
+        const hit = colorIndex.get(rgbKey(fill.color));
+        if (hit && !fill.boundVariables?.color) {
+          const v = await figma.variables.getVariableByIdAsync(hit.id);
+          if (v) { newFills.push(figma.variables.setBoundVariableForPaint(fill, 'color', v)); changed = true; continue; }
+        }
+      }
+      newFills.push(fill);
+    }
+    if (changed) n.fills = newFills;
+  }
+  // Padding / itemSpacing
+  for (const field of ['paddingTop','paddingBottom','paddingLeft','paddingRight','itemSpacing']) {
+    if (typeof n[field] === 'number' && n[field] !== 0) {
+      const hit = spacingIndex.get(n[field]);
+      if (hit && !n.boundVariables?.[field]) {
+        const v = await figma.variables.getVariableByIdAsync(hit.id);
+        if (v) n.setBoundVariable(field, v);
+      }
+    }
+  }
+  // Corner radii
+  for (const field of ['topLeftRadius','topRightRadius','bottomLeftRadius','bottomRightRadius']) {
+    if (typeof n[field] === 'number' && n[field] !== 0) {
+      const hit = radiusIndex.get(n[field]);
+      if (hit && !n.boundVariables?.[field]) {
+        const v = await figma.variables.getVariableByIdAsync(hit.id);
+        if (v) n.setBoundVariable(field, v);
+      }
+    }
+  }
+  // Recurse
+  if (Array.isArray(n.children)) for (const c of n.children) await bindNode(c);
+}
+
+let boundCount = 0;
+for (const child of componentSet.children) {
+  await bindNode(child);
+}
+
+// 9. Position and finalize
+componentSet.x = 40; componentSet.y = 40;
 page.name = MANIFEST.componentName;
 
 return {
   componentSetId: componentSet.id,
   variantCount: componentSet.children.length,
+  collapsedCount: collapsed.length,
+  effectiveAxes: [...effectiveAxes],
   pageId: page.id,
 };
 `;
