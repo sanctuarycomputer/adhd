@@ -96,6 +96,41 @@ test('exposure-only entries do not appear in any classification', () => {
   assert.equal(r.figmaOnly.length, 0);
 });
 
+test('effect styles: classifies code-only / figma-only / same by name', () => {
+  const code = {
+    tokens: [], exposure: [],
+    styles: {
+      effects: [{ name: 'md' }, { name: 'lg' }, { name: 'inset-shadow/xs' }],
+      text: [],
+    },
+  };
+  const figma = {
+    tokens: [], exposure: [],
+    styles: {
+      effects: [{ name: 'md' }, { name: 'old-style' }],
+      text: [],
+    },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.ok(r.styles);
+  assert.ok(r.styles.effects);
+  assert.equal(r.styles.effects.same.length, 1);
+  assert.equal(r.styles.effects.same[0].name, 'md');
+  assert.equal(r.styles.effects.codeOnly.length, 2);
+  assert.deepEqual(
+    r.styles.effects.codeOnly.map(s => s.name).sort(),
+    ['inset-shadow/xs', 'lg'],
+  );
+  assert.equal(r.styles.effects.figmaOnly.length, 1);
+  assert.equal(r.styles.effects.figmaOnly[0].name, 'old-style');
+});
+
+test('comparator returns styles.effects shape even when both sides have empty effects', () => {
+  const empty = { tokens: [], exposure: [], styles: { effects: [], text: [] } };
+  const r = compareDesignSystems(empty, empty);
+  assert.deepEqual(r.styles.effects, { same: [], codeOnly: [], figmaOnly: [] });
+});
+
 test('comparing per mode independently — token can be same in light, conflict in dark', () => {
   const code = {
     tokens: [{

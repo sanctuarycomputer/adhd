@@ -101,29 +101,79 @@ test('font-family typography token produces STRING create-variable', () => {
   );
 });
 
-test('shadow token produces a skip-shadow action (deferred, not pushed)', () => {
+test('shadow token produces a create-effect-style action', () => {
   const diff = {
     same: [], conflict: [], figmaOnly: [],
     codeOnly: [{
       domain: 'shadow',
       path: 'md',
+      cssVar: '--shadow-md',
       values: {
         default: { type: 'literal', value: '0 4px 6px rgba(0,0,0,0.1)' },
       },
     }],
   };
-  // Suppress the warning during the test to keep TAP output clean.
-  const origWarn = console.warn;
-  console.warn = () => {};
-  let actions;
-  try {
-    actions = buildFigmaActions(diff, [], 'push');
-  } finally {
-    console.warn = origWarn;
-  }
+  const actions = buildFigmaActions(diff, [], 'push');
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].kind, 'skip-shadow');
-  assert.equal(actions[0].path, 'md');
+  assert.equal(actions[0].kind, 'create-effect-style');
+  assert.equal(actions[0].name, 'md');
+  assert.equal(actions[0].effects.length, 1);
+  assert.equal(actions[0].effects[0].type, 'DROP_SHADOW');
+  assert.equal(actions[0].effects[0].offset.x, 0);
+  assert.equal(actions[0].effects[0].offset.y, 4);
+  assert.equal(actions[0].effects[0].radius, 6);
+  assert.equal(actions[0].effects[0].spread, 0);
+  assert.equal(actions[0].effects[0].visible, true);
+  assert.equal(actions[0].effects[0].blendMode, 'NORMAL');
+});
+
+test('inset-shadow token produces INNER_SHADOW effects', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'shadow',
+      path: 'inset-shadow/2xs',
+      cssVar: '--inset-shadow-2xs',
+      values: {
+        default: { type: 'literal', value: 'inset 0 1px rgb(0 0 0 / 0.05)' },
+      },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].kind, 'create-effect-style');
+  assert.equal(actions[0].effects[0].type, 'INNER_SHADOW');
+});
+
+test('multi-shadow CSS produces multi-effect create-effect-style action', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'shadow',
+      path: 'md',
+      cssVar: '--shadow-md',
+      values: {
+        default: { type: 'literal', value: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' },
+      },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions[0].effects.length, 2);
+  assert.equal(actions[0].effects[0].spread, -1);
+  assert.equal(actions[0].effects[1].spread, -2);
+});
+
+test('shadow whose name already exists in Figma is skipped (additive policy)', () => {
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'shadow', path: 'md', cssVar: '--shadow-md',
+      values: { default: { type: 'literal', value: '0 4px 6px rgba(0,0,0,0.1)' } },
+    }],
+    styles: { figmaOnly: [{ name: 'md' }] },
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions.length, 0);
 });
 
 test('color token still emits COLOR-typed create-variable (regression guard)', () => {

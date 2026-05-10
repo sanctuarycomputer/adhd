@@ -87,7 +87,25 @@ function compareDesignSystems(code, figma) {
     }
   }
 
-  return { same, conflict, codeOnly, figmaOnly };
+  // ── Effect styles ──────────────────────────────────────────────────────
+  // Diff by name only. Each side may not have styles at all (older callers).
+  // The full effect-payload comparison is intentionally not attempted: Figma
+  // and code use different units / representations, and the push policy is
+  // "additive" — we only need to know which names already exist to avoid
+  // double-creating, and which names exist in code but not Figma to push.
+  const codeEffects = (code.styles && code.styles.effects) || [];
+  const figmaEffects = (figma.styles && figma.styles.effects) || [];
+  const codeEffectNames = new Set(codeEffects.map(s => s.name));
+  const figmaEffectNames = new Set(figmaEffects.map(s => s.name));
+  const styles = {
+    effects: {
+      same: codeEffects.filter(s => figmaEffectNames.has(s.name)),
+      codeOnly: codeEffects.filter(s => !figmaEffectNames.has(s.name)),
+      figmaOnly: figmaEffects.filter(s => !codeEffectNames.has(s.name)),
+    },
+  };
+
+  return { same, conflict, codeOnly, figmaOnly, styles };
 }
 
 module.exports = { compareDesignSystems, valuesEqual };

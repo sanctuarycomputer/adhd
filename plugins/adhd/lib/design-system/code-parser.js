@@ -441,7 +441,17 @@ function parseCodeDesignSystem(css, opts = {}) {
     themeOpenRe2.lastIndex = i + 1;
   }
 
-  return { tokens: Array.from(tokens.values()), exposure };
+  // Synthesize a `styles.effects` list from shadow-domain tokens so the
+  // comparator can diff against Figma's effect styles by name. The actual
+  // effect payload is parsed lazily by figma-write-actions when needed.
+  const tokenList = Array.from(tokens.values());
+  const shadowTokens = tokenList.filter(t => t.domain === 'shadow');
+  const styles = {
+    effects: shadowTokens.map(t => ({ name: t.path })),
+    text: [],
+  };
+
+  return { tokens: tokenList, exposure, styles };
 }
 
 module.exports = { parseCodeDesignSystem, pathFromCssVar, inferDomain };

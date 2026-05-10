@@ -134,7 +134,20 @@ const errors = [];
 for (const a of actions) {
   try {
     if (a.kind === 'skip-shadow') {
-      skipped.push({ action: a, reason: a.reason || 'shadow deferred to v2' });
+      skipped.push({ action: a, reason: a.reason || 'shadow skipped' });
+      continue;
+    }
+    if (a.kind === 'create-effect-style') {
+      // Skip if a style with this name already exists (additive policy).
+      const existing = await figma.getLocalEffectStylesAsync();
+      if (existing.some(s => s.name === a.name)) {
+        skipped.push({ action: a, reason: 'effect style already exists: ' + a.name });
+        continue;
+      }
+      const style = figma.createEffectStyle();
+      style.name = a.name;
+      style.effects = a.effects;
+      applied.push(a);
       continue;
     }
     if (a.kind === 'create-variable') {

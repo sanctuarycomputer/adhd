@@ -1,5 +1,7 @@
 'use strict';
 
+const { parseShadow } = require('./shadow-parser');
+
 const DOMAIN_COLLECTION = {
   color: 'color',
   spacing: 'spacing',
@@ -113,17 +115,64 @@ function buildFigmaActions(diff, resolutions, direction) {
 
   if (direction === 'push') {
     const actions = [];
+    // Existing-effect-style names already in Figma (to dedupe creates).
+    // Supports both the comparator's new shape (diff.styles.effects.figmaOnly)
+    // and a flat legacy shape (diff.styles.figmaOnly) used in tests.
+    const existingEffectNames = new Set([
+      ...(((diff.styles && diff.styles.effects && diff.styles.effects.figmaOnly) || []).map(s => s.name)),
+      ...(((diff.styles && diff.styles.figmaOnly) || []).map(s => s.name)),
+      // Tokens that map to effect styles already on the Figma side. We don't
+      // currently surface these via figmaOnly (they live in extract.effectStyles,
+      // not extract.collections), but include here for forward-compat.
+      ...(((diff.styles && diff.styles.effects && diff.styles.effects.same) || []).map(s => s.name)),
+    ]);
     // Code-only: create in Figma
     for (const t of diff.codeOnly) {
-      // v1: skip shadow tokens — they're composite values that belong in
-      // Figma effect styles, not variables. Emit a skip-shadow marker.
+      // Shadow tokens map to Figma effect styles, not variables. Parse the
+      // CSS shadow string and emit a create-effect-style action.
       if (t.domain === 'shadow') {
-        // eslint-disable-next-line no-console
-        console.warn('[adhd] Skipping shadow token "' + t.path + '" — shadows are deferred to effect styles in v2.');
+        // Pick the canonical literal value (default or first available mode).
+        const repValue = t.values.default || Object.values(t.values).find(v => v && v.type === 'literal');
+        if (!repValue || repValue.type !== 'literal') {
+          actions.push({ kind: 'skip-shadow', path: t.path, reason: 'No literal value to parse' });
+          continue;
+        }
+        let parsed;
+        try {
+          parsed = parseShadow(repValue.value);
+        } catch (err) {
+          actions.push({ kind: 'skip-shadow', path: t.path, reason: 'parseShadow failed: ' + err.message });
+          continue;
+        }
+        if (!parsed.length) {
+          actions.push({ kind: 'skip-shadow', path: t.path, reason: 'parseShadow returned empty' });
+          continue;
+        }
+        // CSS path like `drop-shadow/md` or `md`. Use as-is for the style name.
+        const styleName = t.path;
+        if (existingEffectNames.has(styleName)) {
+          // Already in Figma — additive policy: skip.
+          continue;
+        }
+        // Map CSS family → Figma effect type. `--text-shadow-*` doesn't have a
+        // 1:1 Figma equivalent; we use DROP_SHADOW as the closest.
+        const cssVar = t.cssVar || '';
+        const effectType = (cssVar.startsWith('--inset-shadow-') || styleName.startsWith('inset-shadow/'))
+          ? 'INNER_SHADOW'
+          : 'DROP_SHADOW';
+        const effects = parsed.map(s => ({
+          type: s.inset ? 'INNER_SHADOW' : effectType,
+          color: s.color,
+          offset: { x: s.offsetX, y: s.offsetY },
+          radius: s.blur,
+          spread: s.spread,
+          visible: true,
+          blendMode: 'NORMAL',
+        }));
         actions.push({
-          kind: 'skip-shadow',
-          path: t.path,
-          reason: 'Shadow tokens are deferred (composite values; planned for v2 as Figma effect styles).',
+          kind: 'create-effect-style',
+          name: styleName,
+          effects,
         });
         continue;
       }
