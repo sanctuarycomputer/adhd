@@ -17,7 +17,7 @@ const SAMPLE_COMPONENTS = [
   { slug: 'logo', rawPath: 'components/design-system/logo/index.tsx', importPath: '@/components/design-system/logo' },
 ];
 
-test('installRoute writes the seven generated files with .design-system suffix when prodExcluded', () => {
+test('installRoute writes the full generated file set with .design-system suffix when prodExcluded', () => {
   const root = makeTempProject();
   installRoute(root, {
     groupName: '(design-system)',
@@ -33,10 +33,12 @@ test('installRoute writes the seven generated files with .design-system suffix w
   assert.ok(fs.existsSync(path.join(docsDir, 'tokens', '[domain]', 'page.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'page.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.design-system.tsx')));
-  // componentMap + PropToggle are plain .tsx modules so TS module resolution finds them.
+  // Shared modules (imported by the route files) are plain .tsx so TS resolves them.
   assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
+  assert.ok(fs.existsSync(path.join(docsDir, 'tokenDomains.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
   assert.ok(!fs.existsSync(path.join(docsDir, 'componentMap.design-system.tsx')));
+  assert.ok(!fs.existsSync(path.join(docsDir, 'tokenDomains.design-system.tsx')));
   assert.ok(!fs.existsSync(path.join(docsDir, 'PropToggle.design-system.tsx')));
 });
 
@@ -76,6 +78,7 @@ test('all written files start with the marker comment', () => {
     'components/[component]/page.design-system.tsx',
     'components/[component]/error.design-system.tsx',
     'componentMap.tsx',
+    'tokenDomains.tsx',
     'PropToggle.tsx',
   ]) {
     const content = fs.readFileSync(path.join(docsDir, f), 'utf8');
@@ -248,7 +251,7 @@ test('detectExistingInstall returns marker-bearing files', () => {
     cssEntry: 'app/globals.css',
   });
   const found = detectExistingInstall(root);
-  assert.ok(found.length >= 7);
+  assert.ok(found.length >= 8);
   assert.ok(found.every(p => p.includes('-docs')));
 });
 

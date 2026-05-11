@@ -4,11 +4,19 @@ const MARKER_COMMENT = `// design-system-docs-route — auto-generated installer
 // Remove this comment to disable future overwrites from re-running the installer.
 `;
 
-// The list of token domains is shared verbatim between the sidebar (layout) and
-// the tokens page (so the page can look up the right renderer by slug). Both
-// copies embed the same source string from here. The `tailwindDocs` field is
-// the URL to Tailwind v4's relevant theme section, used in empty-state messaging.
-const TOKEN_DOMAINS_SRC = `const TOKEN_DOMAINS = [
+// tokenDomains.tsx — the single source of truth for the token-domain catalog
+// (sidebar entries + per-domain renderer keys). Generated once per install and
+// imported by both layout.* and tokens/[domain]/page.*. The `tailwindDocs`
+// field is the URL to Tailwind v4's relevant theme section, used in
+// empty-state messaging on each domain page.
+const TOKEN_DOMAINS_TSX = `${MARKER_COMMENT}export type TokenDomain = {
+  slug: string;
+  label: string;
+  varPrefix: string;
+  tailwindDocs: string;
+};
+
+export const TOKEN_DOMAINS: TokenDomain[] = [
   { slug: "colors", label: "Colors", varPrefix: "--color-", tailwindDocs: "https://tailwindcss.com/docs/colors" },
   { slug: "spacing", label: "Spacing", varPrefix: "--spacing", tailwindDocs: "https://tailwindcss.com/docs/theme#spacing" },
   { slug: "typography", label: "Typography", varPrefix: "--text-", tailwindDocs: "https://tailwindcss.com/docs/font-size" },
@@ -21,7 +29,8 @@ const TOKEN_DOMAINS_SRC = `const TOKEN_DOMAINS = [
   { slug: "breakpoint", label: "Breakpoints", varPrefix: "--breakpoint-", tailwindDocs: "https://tailwindcss.com/docs/responsive-design" },
   { slug: "ease", label: "Easing", varPrefix: "--ease-", tailwindDocs: "https://tailwindcss.com/docs/transition-timing-function" },
   { slug: "animate", label: "Animation", varPrefix: "--animate-", tailwindDocs: "https://tailwindcss.com/docs/animation" },
-];`;
+];
+`;
 
 // Tokens-page CSS reader. Kept inline because the tokens page is a runtime
 // server component in the consumer's app and can't import ADHD's lib helpers.
@@ -162,18 +171,17 @@ export function getComponent(slug: string): ComponentEntry | null {
 }
 `;
 
-// Layout: sidebar (token domains baked-in, component list baked-in via the
-// generated componentMap). No fs reads, no async — pure server component.
+// Layout: sidebar links into the token-domain catalog and the static component
+// map. No fs reads, no async — pure server component.
 const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
 import Link from "next/link";
+import { TOKEN_DOMAINS } from "./tokenDomains";
 import { componentEntries } from "./componentMap";
 
 export const metadata: Metadata = {
   title: "Design System Docs",
   robots: { index: false, follow: false },
 };
-
-${TOKEN_DOMAINS_SRC}
 
 export default function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -225,47 +233,25 @@ export default function DesignSystemDocsLayout({ children }: { children: React.R
 }
 `;
 
-// Landing page — welcome + brief troubleshooting. Static. No fs reads.
+// Landing page — minimal welcome + a couple of quick notes. The sidebar carries
+// the actual navigation; each domain/component route has its own targeted UI
+// for its own failure modes (the component page surfaces "not in static map",
+// error.tsx catches runtime crashes, token pages link to Tailwind docs for
+// empty domains). Nothing to repeat here.
 const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemIndex() {
   return (
-    <div className="flex flex-col gap-8">
-      <header>
-        <h2 className="text-2xl font-medium">Design System</h2>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400 max-w-prose">
-          Pick a token domain or a component from the sidebar. Tokens are read live from your
-          <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
-          <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks. Components are statically imported from <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code>.
-        </p>
-        <p className="mt-3 text-xs text-zinc-500 max-w-prose">
-          After editing <code>adhd.config.ts</code> (adding, renaming, or removing components), re-run <code>/adhd:setup-design-system-docs-route</code> in this project to regenerate the static component map.
-        </p>
-      </header>
-
-      <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">Troubleshooting</h3>
-        <div className="flex flex-col gap-4 text-sm text-zinc-700 dark:text-zinc-300 max-w-prose">
-          <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
-            <summary className="cursor-pointer font-medium">Component shows in the sidebar but the page says &ldquo;not in the static map&rdquo;</summary>
-            <p className="mt-3">
-              The static map is generated at setup time. If the sidebar lists a component but its page reports it&apos;s not in the map, the layout is out of sync with <code>componentMap.tsx</code>. Re-run <code>/adhd:setup-design-system-docs-route</code>; both files will be regenerated together.
-            </p>
-          </details>
-
-          <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
-            <summary className="cursor-pointer font-medium">Component fails to render at runtime</summary>
-            <p className="mt-3">
-              The error boundary at <code>components/[component]/error.tsx</code> will catch it and show the message + a Try Again button. Most often: the component throws on mount without required props, or it expects context (theme provider, router) that the docs route doesn&apos;t provide.
-            </p>
-          </details>
-
-          <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
-            <summary className="cursor-pointer font-medium">Token domain shows &ldquo;no custom tokens&rdquo; but you have some</summary>
-            <p className="mt-3">
-              The parser supports <code>@theme {"{ ... }"}</code> and <code>@theme inline {"{ ... }"}</code>. If your tokens are in a different syntax (e.g. plain <code>:root</code>), they won&apos;t be picked up — Tailwind v4 only treats <code>@theme</code> declarations as design tokens.
-            </p>
-          </details>
-        </div>
-      </section>
+    <div className="flex flex-col gap-4">
+      <h2 className="text-2xl font-medium">Design System</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-prose">
+        Pick a token domain or a component from the sidebar. Tokens are read live from your
+        <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
+        <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks. Components are statically imported from
+        <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code> — after editing the components map, re-run
+        <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">/adhd:setup-design-system-docs-route</code> to regenerate the static imports.
+      </p>
+      <p className="text-xs text-zinc-500 max-w-prose">
+        Only <code>@theme {"{ ... }"}</code> and <code>@theme inline {"{ ... }"}</code> declarations are picked up — plain <code>:root</code> variables aren&apos;t.
+      </p>
     </div>
   );
 }
@@ -273,11 +259,12 @@ const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemInd
 
 // Tokens domain page — reads globals.css at request time, renders whatever's
 // declared. cssEntry is baked at install time (substituted from adhd.config.ts).
+// The TOKEN_DOMAINS list is imported from the shared catalog, so adding a new
+// domain only requires editing one file.
 const TOKENS_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
 import path from "node:path";
 import { notFound } from "next/navigation";
-
-${TOKEN_DOMAINS_SRC}
+import { TOKEN_DOMAINS, type TokenDomain } from "../../tokenDomains";
 
 ${READ_CSS_SRC}
 
@@ -285,7 +272,7 @@ ${PARSE_TOKENS_SRC}
 
 const CSS_ENTRY = "__CSS_ENTRY__";
 
-function EmptyState({ domain }: { domain: typeof TOKEN_DOMAINS[number] }) {
+function EmptyState({ domain }: { domain: TokenDomain }) {
   return (
     <div className="rounded border border-dashed border-zinc-300 dark:border-zinc-700 p-6 text-sm text-zinc-600 dark:text-zinc-400">
       No custom <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">{domain.varPrefix}*</code> tokens declared in your <code>@theme</code>.
@@ -702,5 +689,6 @@ module.exports = {
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
+  TOKEN_DOMAINS_TSX,
   PROP_TOGGLE_TSX,
 };

@@ -10,6 +10,7 @@ const {
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
+  TOKEN_DOMAINS_TSX,
   PROP_TOGGLE_TSX,
 } = require('../templates');
 
@@ -27,13 +28,26 @@ test('LAYOUT_TSX sets robots: noindex / nofollow', () => {
   assert.match(LAYOUT_TSX, /robots:\s*\{[^}]*index:\s*false[^}]*follow:\s*false/);
 });
 
-test('LAYOUT_TSX renders sidebar nav linking every token domain', () => {
+test('LAYOUT_TSX imports the TOKEN_DOMAINS catalog from the shared tokenDomains module', () => {
+  // Single source of truth lives in tokenDomains.tsx; the layout just imports it
+  // and iterates. Inlining the labels here would duplicate the catalog (the
+  // duplication the rewrite was meant to remove).
+  assert.match(LAYOUT_TSX, /import \{ TOKEN_DOMAINS \} from "\.\/tokenDomains"/);
+});
+
+test('TOKEN_DOMAINS_TSX exports the full Tailwind v4 token-domain catalog', () => {
+  // The catalog is THE source of truth — every token domain rendered by the
+  // tokens page must be listed here with its varPrefix and Tailwind docs link.
   for (const label of [
     'Colors', 'Spacing', 'Typography', 'Font Families', 'Font Weights',
     'Tracking', 'Leading', 'Radius', 'Shadows', 'Breakpoints', 'Easing', 'Animation',
   ]) {
-    assert.match(LAYOUT_TSX, new RegExp(label), `missing sidebar label: ${label}`);
+    assert.match(TOKEN_DOMAINS_TSX, new RegExp(`label: "${label}"`), `missing domain label: ${label}`);
   }
+  // Shape: each entry has slug + label + varPrefix + tailwindDocs.
+  assert.match(TOKEN_DOMAINS_TSX, /slug:\s*"colors".*varPrefix:\s*"--color-".*tailwindDocs:/s);
+  assert.match(TOKEN_DOMAINS_TSX, /export const TOKEN_DOMAINS:/);
+  assert.match(TOKEN_DOMAINS_TSX, /export type TokenDomain/);
 });
 
 test('LAYOUT_TSX imports componentEntries from componentMap (no runtime config read)', () => {
@@ -64,11 +78,14 @@ test('INDEX_PAGE_TSX is a landing page describing the static-import flow', () =>
   assert.match(INDEX_PAGE_TSX, /re-run/);
 });
 
-test('INDEX_PAGE_TSX has a Troubleshooting section keyed to the new failure modes', () => {
-  assert.match(INDEX_PAGE_TSX, /Troubleshooting/);
-  assert.match(INDEX_PAGE_TSX, /not in the static map/i);
-  // Old broad-dynamic-import troubleshooting is gone
+test('INDEX_PAGE_TSX has no Troubleshooting section (each route handles its own failure modes)', () => {
+  // The component page surfaces "not in static map" itself; error.tsx catches
+  // runtime crashes; token pages link to Tailwind docs for empty domains.
+  // The landing page just orients the user — no duplicated troubleshooting copy.
+  assert.doesNotMatch(INDEX_PAGE_TSX, /Troubleshooting/);
   assert.doesNotMatch(INDEX_PAGE_TSX, /app-build-manifest|broad dynamic/i);
+  // It still mentions the re-run command so the user knows how to refresh the map.
+  assert.match(INDEX_PAGE_TSX, /\/adhd:setup-design-system-docs-route/);
 });
 
 test('TOKENS_PAGE_TSX reads globals.css from a baked CSS_ENTRY constant', () => {
@@ -76,6 +93,12 @@ test('TOKENS_PAGE_TSX reads globals.css from a baked CSS_ENTRY constant', () => 
   assert.match(TOKENS_PAGE_TSX, /parseTokens/);
   // Tokens page no longer reads adhd.config.ts at request time
   assert.doesNotMatch(TOKENS_PAGE_TSX, /readConfig|adhd\.config\.ts/);
+});
+
+test('TOKENS_PAGE_TSX imports TOKEN_DOMAINS from the shared catalog (no inlined list)', () => {
+  assert.match(TOKENS_PAGE_TSX, /import \{ TOKEN_DOMAINS, type TokenDomain \} from "\.\.\/\.\.\/tokenDomains"/);
+  // The inline `const TOKEN_DOMAINS = [...]` block from earlier versions is gone.
+  assert.doesNotMatch(TOKENS_PAGE_TSX, /const TOKEN_DOMAINS = \[/);
 });
 
 test('COMPONENT_PAGE_TSX uses getComponent from the static componentMap (no dynamic import)', () => {

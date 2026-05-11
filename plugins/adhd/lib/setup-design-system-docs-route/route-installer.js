@@ -9,6 +9,7 @@ const {
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
+  TOKEN_DOMAINS_TSX,
   PROP_TOGGLE_TSX,
 } = require('./templates');
 
@@ -69,6 +70,9 @@ function installRoute(projectRoot, opts) {
     { abs: path.join(componentsDir, `page${pageExt}`), body: COMPONENT_PAGE_TSX },
     { abs: path.join(componentsDir, `error${pageExt}`), body: COMPONENT_ERROR_TSX },
     { abs: path.join(docsDir, `componentMap${moduleExt}`), body: renderComponentMap(components) },
+    // Shared token-domain catalog: imported by layout (sidebar nav) and the
+    // tokens page (renderer keys + empty-state link targets). One source of truth.
+    { abs: path.join(docsDir, `tokenDomains${moduleExt}`), body: TOKEN_DOMAINS_TSX },
     { abs: path.join(docsDir, `PropToggle${moduleExt}`), body: PROP_TOGGLE_TSX },
   ];
 
