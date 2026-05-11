@@ -4,9 +4,9 @@
 
 **Goal:** Implement `/adhd:pull-component` — pulls a Figma Component Set back into a React source file, updating only design-token lookup tables and union type members; function body and JSX never modified.
 
-**Architecture:** Zero-deps Node library at `plugins/adhd/lib/pull-component/`, mirroring the shape of `lib/push-component/`. Single skill at `plugins/adhd/skills/pull-component/SKILL.md` orchestrating an 11-phase flow. The React file is its own snapshot — no external state stored. Mapping (component path → Figma URL) lives in `adhd.config.ts` under `components.<path>.figma.url`, written by push on first push and by pull on first scaffold. Pre-flight reuses `lint-engine`'s `checkStructure` + variable-categorizer; class-resolver re-exports lint-engine's theme-parser + variable-categorizer to enforce one canonical Tailwind-to-design-token resolution.
+**Architecture:** This skill runs inside Claude Code. The LLM is the diff/apply engine — it reads the React source, the Figma extract, computes the diff in working memory, prompts the user via `AskUserQuestion`, and applies changes via `Edit` tool calls. Traditional library code is reserved for the deterministic, testable surface: `config-writer.js` (mutates `adhd.config.ts` to add/read component mappings) and the existing `lint-engine` (reused for pre-flight via subprocess). The SKILL prompt is detailed enough that any Claude Code agent executes it the same way — every invariant (function body untouched, off-system comment format, abort conditions) is stated explicitly.
 
-**Tech Stack:** Node 20 (lib runs zero-deps), TypeScript Compiler API (transitive dep via Next.js for parse-react.js), `node --test` runner, Figma MCP `use_figma`/`generate_figma_design` invoked from the SKILL only.
+**Tech Stack:** Node 20 (lib runs zero-deps), TS compiler API for `config-writer.js` (already a transitive dep), `node --test` runner, Figma MCP `use_figma` invoked from the SKILL.
 
 ---
 
@@ -16,1335 +16,37 @@
 
 | File | Responsibility |
 |---|---|
-| `parse-react.js` | TS compiler API walker; extract unions, props interface, lookup tables, function-body bounds |
-| `class-resolver.js` | Re-exports lint-engine theme-parser + variable-categorizer; tokenizes multi-class strings; resolves each to design-token tuple |
-| `differ.js` | Pure: `(localExtract, figmaExtract) → diff.json` |
-| `apply.js` | Pure: `(sourceText, resolutions) → newSourceText`; preserves whitespace/comments/line endings |
-| `config-writer.js` | Add/read `components.<path>.figma.url` in `adhd.config.ts`; idempotent |
-| `cli.js` | Subcommands: `parse`, `extract`, `diff`, `apply`, `config-write` |
+| `config-writer.js` | Read & idempotently add `components.<path>.figma.url` in `adhd.config.ts`; also `reverseLookupPath(source, figmaUrl)` |
+| `cli.js` | Subcommands: `config-write`, `config-read`, `config-reverse` (deterministic schema ops only — everything else lives in the SKILL) |
 | `README.md` | One-paragraph module readme |
-| `__tests__/parse-react.test.js` | Avatar fixture extraction tests |
-| `__tests__/class-resolver.test.js` | Tailwind resolution tests |
-| `__tests__/differ.test.js` | Diff shape tests |
-| `__tests__/apply.test.js` | Source rewrite tests |
-| `__tests__/config-writer.test.js` | Config update tests |
-| `__tests__/cli.test.js` | Subcommand surface tests |
-| `__fixtures__/badge-base.tsx` | Minimal synthetic component (Badge with 2 sizes + 2 variants) for fast unit tests |
-| `__fixtures__/badge-figma-clean.json` | Figma extract matching `badge-base.tsx` |
-| `__fixtures__/badge-figma-cell-change.json` | 1 cell differs |
-| `__fixtures__/badge-figma-added-variant.json` | Figma has new variant value |
-| `__fixtures__/badge-figma-removed-variant.json` | Figma missing a variant value |
-| `__fixtures__/badge-figma-unbound.json` | Figma has unbound raw values |
-| `__fixtures__/badge-after-cell-change.tsx` | Golden output after applying cell change |
-| `__fixtures__/badge-after-added-variant.tsx` | Golden output after adding variant |
-| `__fixtures__/badge-after-removed-variant.tsx` | Golden output after removing variant |
-| `__fixtures__/badge-after-unbound-allowed.tsx` | Golden output after `--allow-unbound` confirm |
+| `__tests__/config-writer.test.js` | Unit tests for the three pure functions |
+| `__tests__/cli.test.js` | CLI surface tests |
 
 **New skill — `plugins/adhd/skills/pull-component/SKILL.md`:**
-The 11-phase orchestrator, `disable-model-invocation: true`.
+The 11-phase orchestrator, `disable-model-invocation: true`. This is the "intelligence" layer: extracts Figma via `use_figma`, reads the React source via `Read`, computes the diff in-context, prompts via `AskUserQuestion`, applies via `Edit`.
 
 **Modified files:**
-- `plugins/adhd/skills/push-component/SKILL.md` — insert mapping-write step between Phase 11 finalize and Phase 12 report
+- `plugins/adhd/skills/push-component/SKILL.md` — insert mapping-write step between Phase 11 (finalize) and Phase 12 (report)
 - `.claude-plugin/marketplace.json` — bump description to list 6 commands
-- `README.md` — add pull-component row to command table; add scoped subsection
-- `.github/workflows/ci.yml` — add `--test plugins/adhd/lib/pull-component/__tests__/`
+- `README.md` — add pull-component row to command table; add "Pull a component" subsection
+- `.github/workflows/ci.yml` — add `node --test plugins/adhd/lib/pull-component/__tests__/`
+
+**Out-of-bounds (do NOT create):**
+- `parse-react.js` / `differ.js` / `apply.js` / `class-resolver.js` — these would be brittle pattern-matching reimplementations of work the LLM already does well. The SKILL handles these via Read + reasoning + Edit.
 
 ---
 
-## Task 1: Scaffold library, CI step, and the synthetic Badge fixture
+## Task 1: Scaffold lib + CI + config-writer
 
 **Files:**
-- Create: `plugins/adhd/lib/pull-component/cli.js` (stub)
+- Create: `plugins/adhd/lib/pull-component/cli.js`
+- Create: `plugins/adhd/lib/pull-component/config-writer.js`
 - Create: `plugins/adhd/lib/pull-component/README.md`
 - Create: `plugins/adhd/lib/pull-component/__tests__/cli.test.js`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-base.tsx`
+- Create: `plugins/adhd/lib/pull-component/__tests__/config-writer.test.js`
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Write the failing test for cli `--help`**
-
-`plugins/adhd/lib/pull-component/__tests__/cli.test.js`:
-
-```javascript
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
-const path = require('node:path');
-
-const CLI = path.resolve(__dirname, '..', 'cli.js');
-
-test('cli with --help prints subcommand usage and exits 0', () => {
-  const result = spawnSync('node', [CLI, '--help'], { encoding: 'utf8' });
-  assert.equal(result.status, 0);
-  assert.match(result.stdout, /Usage:/);
-  assert.match(result.stdout, /parse/);
-  assert.match(result.stdout, /extract/);
-  assert.match(result.stdout, /diff/);
-  assert.match(result.stdout, /apply/);
-  assert.match(result.stdout, /config-write/);
-});
-
-test('cli with no args exits 2 with usage', () => {
-  const result = spawnSync('node', [CLI], { encoding: 'utf8' });
-  assert.equal(result.status, 2);
-});
-
-test('cli with unknown subcommand exits 2', () => {
-  const result = spawnSync('node', [CLI, 'unknown'], { encoding: 'utf8' });
-  assert.equal(result.status, 2);
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/cli.test.js`
-Expected: FAIL — `cli.js` does not exist.
-
-- [ ] **Step 3: Implement the cli stub**
-
-`plugins/adhd/lib/pull-component/cli.js`:
-
-```javascript
-#!/usr/bin/env node
-'use strict';
-
-function parseArgs(argv) {
-  const args = { _: [] };
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--help' || a === '-h') { args.help = true; continue; }
-    if (a.startsWith('--')) { args[a.slice(2)] = argv[++i]; }
-    else { args._.push(a); }
-  }
-  return args;
-}
-
-function printUsage() {
-  console.log(`Usage:
-  cli.js parse <component-path> --output <manifest.json>
-  cli.js extract <figma-state.json> --output <figma.json>
-  cli.js diff --local <local.json> --figma <figma.json> --output <diff.json>
-  cli.js apply --source <component.tsx> --resolutions <resolutions.json> --output <newsource.tsx>
-  cli.js config-write --config <adhd.config.ts> --path <relative-path> --figma-url <url>`);
-}
-
-function main() {
-  const args = parseArgs(process.argv);
-  if (args.help) { printUsage(); process.exit(0); }
-  if (args._.length === 0) { printUsage(); process.exit(2); }
-  const cmd = args._[0];
-  // Subcommands wired in later tasks. Reject unknown to keep behavior strict.
-  console.error('Unknown subcommand: ' + cmd);
-  process.exit(2);
-}
-
-main();
-```
-
-- [ ] **Step 4: Add the synthetic Badge fixture**
-
-`plugins/adhd/lib/pull-component/__fixtures__/badge-base.tsx`:
-
-```tsx
-export type BadgeSize = "sm" | "md" | "lg";
-export type BadgeTone = "neutral" | "danger";
-
-export interface BadgeProps {
-  label: string;
-  size?: BadgeSize;
-  tone?: BadgeTone;
-}
-
-export const BADGE_BOX: Record<BadgeSize, string> = {
-  sm: "px-2 py-0.5",
-  md: "px-3 py-1",
-  lg: "px-4 py-2",
-};
-
-export const BADGE_TEXT: Record<BadgeSize, string> = {
-  sm: "text-xs",
-  md: "text-sm",
-  lg: "text-base",
-};
-
-export const BADGE_TONE: Record<BadgeTone, string> = {
-  neutral: "bg-zinc-100 text-zinc-700",
-  danger: "bg-red-100 text-red-700",
-};
-
-export function Badge({ label, size = "md", tone = "neutral" }: BadgeProps) {
-  // Function body — pull never modifies this region.
-  const box = BADGE_BOX[size];
-  const text = BADGE_TEXT[size];
-  const tonecls = BADGE_TONE[tone];
-  return <span className={`${box} ${text} ${tonecls} rounded`}>{label}</span>;
-}
-```
-
-- [ ] **Step 5: Add module README**
-
-`plugins/adhd/lib/pull-component/README.md`:
-
-```markdown
-# lib/pull-component
-
-Engine modules for `/adhd:pull-component`. Reads a Figma Component Set and
-reconciles it back into a React source file. Updates lookup tables and
-union types only — never modifies the function body or JSX.
-
-Modules:
-- `parse-react.js` — TS compiler API walker (extracts unions, props, lookup tables)
-- `class-resolver.js` — wraps lint-engine's Tailwind-to-design-token resolution
-- `differ.js` — pure: local + figma → diff
-- `apply.js` — pure: source + resolutions → new source
-- `config-writer.js` — manages `adhd.config.ts` component mappings
-- `cli.js` — orchestrator with subcommands invoked by SKILL.md
-
-See `docs/superpowers/specs/2026-05-10-adhd-pull-component.md` for the
-authoritative spec.
-```
-
-- [ ] **Step 6: Add CI step**
-
-Modify `.github/workflows/ci.yml`. Locate the `lib-tests` job, add after the push-component test step:
-
-```yaml
-      - name: Run pull-component tests
-        run: node --test plugins/adhd/lib/pull-component/__tests__/
-```
-
-- [ ] **Step 7: Run tests, verify pass**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/`
-Expected: 3 cli tests PASS.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add plugins/adhd/lib/pull-component .github/workflows/ci.yml
-git commit -m "Scaffold lib/pull-component with cli stub + badge fixture"
-```
-
----
-
-## Task 2: parse-react.js — extract unions, props, lookup tables from a React file
-
-**Files:**
-- Create: `plugins/adhd/lib/pull-component/parse-react.js`
-- Create: `plugins/adhd/lib/pull-component/__tests__/parse-react.test.js`
-
-- [ ] **Step 1: Write the failing tests**
-
-`plugins/adhd/lib/pull-component/__tests__/parse-react.test.js`:
-
-```javascript
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const { parseReactComponent } = require('../parse-react');
-
-const BADGE = fs.readFileSync(
-  path.resolve(__dirname, '..', '__fixtures__', 'badge-base.tsx'),
-  'utf8',
-);
-
-test('extracts string literal unions', () => {
-  const result = parseReactComponent(BADGE);
-  assert.deepEqual(result.unions.BadgeSize, ['sm', 'md', 'lg']);
-  assert.deepEqual(result.unions.BadgeTone, ['neutral', 'danger']);
-});
-
-test('extracts props interface with union references', () => {
-  const result = parseReactComponent(BADGE);
-  assert.equal(result.componentName, 'Badge');
-  assert.deepEqual(result.props.size, { unionRef: 'BadgeSize', optional: true });
-  assert.deepEqual(result.props.tone, { unionRef: 'BadgeTone', optional: true });
-  assert.deepEqual(result.props.label, { type: 'string', optional: false });
-});
-
-test('extracts single-axis Record<Union, string> lookup tables', () => {
-  const result = parseReactComponent(BADGE);
-  assert.deepEqual(result.tables.BADGE_BOX, {
-    axis: 'BadgeSize',
-    nested: false,
-    entries: { sm: 'px-2 py-0.5', md: 'px-3 py-1', lg: 'px-4 py-2' },
-  });
-  assert.deepEqual(result.tables.BADGE_TONE, {
-    axis: 'BadgeTone',
-    nested: false,
-    entries: { neutral: 'bg-zinc-100 text-zinc-700', danger: 'bg-red-100 text-red-700' },
-  });
-});
-
-test('records function body bounds (start/end positions) and never visits inside', () => {
-  const result = parseReactComponent(BADGE);
-  // Body bounds must encompass the function body. Anything between
-  // result.functionBody.start and .end is OFF LIMITS for apply().
-  assert.ok(result.functionBody.start > 0);
-  assert.ok(result.functionBody.end > result.functionBody.start);
-  // The string at those bounds should contain "return" (the JSX return)
-  assert.match(BADGE.slice(result.functionBody.start, result.functionBody.end), /return </);
-});
-
-test('handles a 2-axis nested Record table', () => {
-  const SOURCE = `
-export type S = "a" | "b";
-export type T = "x" | "y";
-export interface FooProps { s?: S; t?: T; }
-export const T2: Record<S, Record<T, string>> = {
-  a: { x: "p-1", y: "p-2" },
-  b: { x: "p-3", y: "p-4" },
-};
-export function Foo({ s = "a", t = "x" }: FooProps) { return <span />; }
-`;
-  const result = parseReactComponent(SOURCE);
-  assert.deepEqual(result.tables.T2, {
-    axis: 'S',
-    nested: true,
-    innerAxis: 'T',
-    entries: { a: { x: 'p-1', y: 'p-2' }, b: { x: 'p-3', y: 'p-4' } },
-  });
-});
-
-test('ignores tables with non-string value types', () => {
-  const SOURCE = `
-export type S = "a" | "b";
-export interface FooProps { s?: S; }
-export const SIZE_PX: Record<S, number> = { a: 1, b: 2 };
-export function Foo() { return <span />; }
-`;
-  const result = parseReactComponent(SOURCE);
-  assert.equal(result.tables.SIZE_PX, undefined);
-});
-
-test('ignores tables defined inside a function body', () => {
-  const SOURCE = `
-export type S = "a" | "b";
-export interface FooProps { s?: S; }
-export function Foo() {
-  const INLINE: Record<S, string> = { a: "x", b: "y" };
-  return <span />;
-}
-`;
-  const result = parseReactComponent(SOURCE);
-  assert.equal(result.tables.INLINE, undefined);
-});
-
-test('aborts on file with no exported function component', () => {
-  const SOURCE = `export const NOT_A_COMPONENT = 42;`;
-  assert.throws(() => parseReactComponent(SOURCE), /no exported function component/i);
-});
-```
-
-- [ ] **Step 2: Verify tests fail**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/parse-react.test.js`
-Expected: FAIL — module not found.
-
-- [ ] **Step 3: Implement parse-react.js**
-
-`plugins/adhd/lib/pull-component/parse-react.js`:
-
-```javascript
-'use strict';
-
-const ts = require('typescript');
-
-function parseReactComponent(source) {
-  const sourceFile = ts.createSourceFile('component.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-
-  const unions = {};
-  const props = {};
-  const tables = {};
-  let componentName = null;
-  let propsInterfaceName = null;
-  let functionBody = null;
-
-  // Pass 1: union aliases, props interface, function body bounds, function name.
-  for (const stmt of sourceFile.statements) {
-    if (ts.isTypeAliasDeclaration(stmt) && ts.isUnionTypeNode(stmt.type)) {
-      const members = [];
-      let allLiterals = true;
-      for (const member of stmt.type.types) {
-        if (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)) {
-          members.push(member.literal.text);
-        } else {
-          allLiterals = false;
-          break;
-        }
-      }
-      if (allLiterals) unions[stmt.name.text] = members;
-    }
-    if ((ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) && /Props$/.test(stmt.name.text)) {
-      propsInterfaceName = stmt.name.text;
-      const memberList = ts.isInterfaceDeclaration(stmt) ? stmt.members : (ts.isTypeLiteralNode(stmt.type) ? stmt.type.members : []);
-      for (const member of memberList) {
-        if (!ts.isPropertySignature(member) || !member.name) continue;
-        const propName = member.name.getText(sourceFile);
-        const optional = !!member.questionToken;
-        if (member.type && ts.isTypeReferenceNode(member.type)) {
-          const refName = member.type.typeName.getText(sourceFile);
-          if (unions[refName]) {
-            props[propName] = { unionRef: refName, optional };
-          } else {
-            props[propName] = { type: refName, optional };
-          }
-        } else if (member.type) {
-          const kind = member.type.kind;
-          if (kind === ts.SyntaxKind.StringKeyword) props[propName] = { type: 'string', optional };
-          else if (kind === ts.SyntaxKind.NumberKeyword) props[propName] = { type: 'number', optional };
-          else if (kind === ts.SyntaxKind.BooleanKeyword) props[propName] = { type: 'boolean', optional };
-          else props[propName] = { type: 'unknown', optional };
-        }
-      }
-    }
-    if (ts.isFunctionDeclaration(stmt) && stmt.modifiers && stmt.modifiers.some(m => m.kind === ts.SyntaxKind.ExportKeyword) && stmt.name && stmt.body) {
-      componentName = stmt.name.text;
-      functionBody = { start: stmt.body.getStart(sourceFile), end: stmt.body.getEnd() };
-    }
-  }
-
-  if (!componentName) {
-    throw new Error('No exported function component found in source');
-  }
-
-  // Pass 2: lookup tables. Only top-level VariableStatement with a Record<Union, string> annotation.
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const decl of stmt.declarationList.declarations) {
-      if (!decl.name || !ts.isIdentifier(decl.name)) continue;
-      const name = decl.name.text;
-      const annot = decl.type;
-      if (!annot || !ts.isTypeReferenceNode(annot)) continue;
-      if (annot.typeName.getText(sourceFile) !== 'Record') continue;
-      if (!annot.typeArguments || annot.typeArguments.length !== 2) continue;
-      const outer = annot.typeArguments[0];
-      const inner = annot.typeArguments[1];
-      const outerName = outer.getText(sourceFile);
-      if (!unions[outerName]) continue;
-
-      const init = decl.initializer;
-      if (!init || !ts.isObjectLiteralExpression(init)) continue;
-
-      // 1-axis: Record<Union, string>
-      if (inner.kind === ts.SyntaxKind.StringKeyword) {
-        const entries = {};
-        for (const prop of init.properties) {
-          if (!ts.isPropertyAssignment(prop)) continue;
-          const key = prop.name && ts.isIdentifier(prop.name) ? prop.name.text : (ts.isStringLiteral(prop.name) ? prop.name.text : null);
-          if (!key) continue;
-          if (!ts.isStringLiteral(prop.initializer)) continue;
-          entries[key] = prop.initializer.text;
-        }
-        tables[name] = { axis: outerName, nested: false, entries };
-        continue;
-      }
-
-      // 2-axis: Record<OuterUnion, Record<InnerUnion, string>>
-      if (ts.isTypeReferenceNode(inner) && inner.typeName.getText(sourceFile) === 'Record' && inner.typeArguments && inner.typeArguments.length === 2 && inner.typeArguments[1].kind === ts.SyntaxKind.StringKeyword) {
-        const innerName = inner.typeArguments[0].getText(sourceFile);
-        if (!unions[innerName]) continue;
-        const entries = {};
-        for (const prop of init.properties) {
-          if (!ts.isPropertyAssignment(prop)) continue;
-          const outerKey = prop.name && ts.isIdentifier(prop.name) ? prop.name.text : (ts.isStringLiteral(prop.name) ? prop.name.text : null);
-          if (!outerKey || !ts.isObjectLiteralExpression(prop.initializer)) continue;
-          entries[outerKey] = {};
-          for (const inProp of prop.initializer.properties) {
-            if (!ts.isPropertyAssignment(inProp)) continue;
-            const innerKey = inProp.name && ts.isIdentifier(inProp.name) ? inProp.name.text : (ts.isStringLiteral(inProp.name) ? inProp.name.text : null);
-            if (!innerKey) continue;
-            if (!ts.isStringLiteral(inProp.initializer)) continue;
-            entries[outerKey][innerKey] = inProp.initializer.text;
-          }
-        }
-        tables[name] = { axis: outerName, nested: true, innerAxis: innerName, entries };
-      }
-    }
-  }
-
-  return { componentName, propsInterfaceName, unions, props, tables, functionBody };
-}
-
-module.exports = { parseReactComponent };
-```
-
-- [ ] **Step 4: Verify tests pass**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/parse-react.test.js`
-Expected: 8 tests PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add plugins/adhd/lib/pull-component/parse-react.js plugins/adhd/lib/pull-component/__tests__/parse-react.test.js
-git commit -m "parse-react: extract unions, props, lookup tables via TS compiler API"
-```
-
----
-
-## Task 3: class-resolver.js — wrap lint-engine for Tailwind-to-design-token resolution
-
-**Files:**
-- Create: `plugins/adhd/lib/pull-component/class-resolver.js`
-- Create: `plugins/adhd/lib/pull-component/__tests__/class-resolver.test.js`
-
-- [ ] **Step 1: Write the failing tests**
-
-`plugins/adhd/lib/pull-component/__tests__/class-resolver.test.js`:
-
-```javascript
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { resolveClassString, resolveClass } = require('../class-resolver');
-
-const SAMPLE_GLOBALS_CSS = `
-@import "tailwindcss";
-@theme {
-  --color-zinc-100: oklch(0.967 0.001 286.375);
-  --color-red-100: oklch(0.936 0.032 17.717);
-  --color-red-700: oklch(0.444 0.177 26.899);
-  --color-zinc-700: oklch(0.37 0.013 285.805);
-  --spacing: 0.25rem;
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-}
-`;
-
-test('resolves a single utility class to a design-token tuple', () => {
-  const r = resolveClass('bg-red-100', SAMPLE_GLOBALS_CSS);
-  assert.equal(r.domain, 'color');
-  assert.equal(r.path, 'red/100');
-});
-
-test('returns null for an unknown utility', () => {
-  assert.equal(resolveClass('bg-not-a-color', SAMPLE_GLOBALS_CSS), null);
-});
-
-test('classifies layout-only tokens as ignored', () => {
-  assert.equal(resolveClass('flex', SAMPLE_GLOBALS_CSS), null);
-  assert.equal(resolveClass('items-center', SAMPLE_GLOBALS_CSS), null);
-});
-
-test('resolves a typography token', () => {
-  const r = resolveClass('text-xs', SAMPLE_GLOBALS_CSS);
-  assert.equal(r.domain, 'typography');
-  assert.equal(r.path, 'text/xs');
-});
-
-test('resolveClassString splits multi-class strings and returns per-token resolution', () => {
-  const r = resolveClassString('bg-red-100 text-red-700 flex items-center px-2', SAMPLE_GLOBALS_CSS);
-  // Returns an ARRAY of { token, resolved } entries
-  const byToken = Object.fromEntries(r.map(e => [e.token, e.resolved]));
-  assert.equal(byToken['bg-red-100'].domain, 'color');
-  assert.equal(byToken['text-red-700'].domain, 'color');
-  assert.equal(byToken['flex'], null);
-  assert.equal(byToken['items-center'], null);
-});
-
-test('preserves token order in resolveClassString output', () => {
-  const r = resolveClassString('px-2 py-1 bg-zinc-100', SAMPLE_GLOBALS_CSS);
-  assert.deepEqual(r.map(e => e.token), ['px-2', 'py-1', 'bg-zinc-100']);
-});
-
-test('arbitrary-value tokens (text-[10px], h-[80px]) return marker resolved: { domain: "arbitrary" }', () => {
-  const r = resolveClass('text-[10px]', SAMPLE_GLOBALS_CSS);
-  assert.equal(r && r.domain, 'arbitrary');
-});
-```
-
-- [ ] **Step 2: Verify tests fail**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/class-resolver.test.js`
-Expected: FAIL — module not found.
-
-- [ ] **Step 3: Implement class-resolver.js**
-
-`plugins/adhd/lib/pull-component/class-resolver.js`:
-
-```javascript
-'use strict';
-
-// Re-exports + wraps lint-engine's Tailwind-to-design-token resolution.
-// This is the symmetric-pipeline assertion — pull and lint share one resolver.
-
-const { parseGlobalsCss } = require('../lint-engine/theme-parser');
-const { categorizeVariable } = require('../lint-engine/variable-categorizer');
-
-// Layout-only token prefixes — never represent design tokens.
-const LAYOUT_PREFIXES = [
-  'flex', 'grid', 'block', 'inline', 'hidden', 'absolute', 'relative', 'fixed', 'sticky',
-  'items-', 'justify-', 'content-', 'self-', 'place-', 'order-', 'col-', 'row-',
-  'overflow-', 'whitespace-', 'truncate', 'select-', 'cursor-', 'pointer-events-',
-  'z-', 'opacity-', 'visible', 'invisible', 'isolate',
-  'ring-offset-', 'outline-none', 'appearance-',
-];
-
-function isLayoutOnly(token) {
-  return LAYOUT_PREFIXES.some(p => token === p.replace(/-$/, '') || token.startsWith(p));
-}
-
-// "bg-red-100" → { utility: "bg", value: "red-100" }
-// "text-xs"    → { utility: "text", value: "xs" }
-// "text-[10px]"→ { utility: "text", value: "[10px]" }
-function parseToken(token) {
-  const m = /^(bg|text|border|fill|stroke|h|w|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|rounded)-(.+)$/.exec(token);
-  if (!m) return null;
-  return { utility: m[1], value: m[2] };
-}
-
-// Map Tailwind utility prefix → design-token domain.
-const UTILITY_TO_DOMAIN = {
-  bg: 'color', text: 'typography-or-color', border: 'color', fill: 'color', stroke: 'color',
-  h: 'sizing', w: 'sizing',
-  p: 'spacing', px: 'spacing', py: 'spacing', pt: 'spacing', pb: 'spacing', pl: 'spacing', pr: 'spacing',
-  m: 'spacing', mx: 'spacing', my: 'spacing', mt: 'spacing', mb: 'spacing', ml: 'spacing', mr: 'spacing',
-  gap: 'spacing', rounded: 'radius',
-};
-
-function resolveClass(token, globalsCss) {
-  if (isLayoutOnly(token)) return null;
-  const parts = parseToken(token);
-  if (!parts) return null;
-  const { utility, value } = parts;
-
-  // Arbitrary value (e.g. text-[10px], h-[80px]) — flagged with domain: "arbitrary".
-  if (value.startsWith('[') && value.endsWith(']')) {
-    return { domain: 'arbitrary', token, raw: value.slice(1, -1) };
-  }
-
-  const theme = parseGlobalsCss(globalsCss);
-
-  if (utility === 'text') {
-    // text-xs / text-sm / text-base → typography variable
-    if (theme && theme.typography && theme.typography['text/' + value] !== undefined) {
-      return { domain: 'typography', path: 'text/' + value };
-    }
-    // text-red-700 → color variable
-    if (theme && theme.color && theme.color[value.replace(/-/g, '/')] !== undefined) {
-      return { domain: 'color', path: value.replace(/-/g, '/') };
-    }
-    return null;
-  }
-
-  if (utility === 'bg' || utility === 'border' || utility === 'fill' || utility === 'stroke') {
-    const path = value.replace(/-/g, '/');
-    if (theme && theme.color && theme.color[path] !== undefined) {
-      return { domain: 'color', path };
-    }
-    return null;
-  }
-
-  if (utility === 'rounded') {
-    if (theme && theme.radius && theme.radius[value] !== undefined) {
-      return { domain: 'radius', path: value };
-    }
-    return null;
-  }
-
-  // Sizing & spacing: Tailwind v4 uses a multiplier — `h-6` means 6 * --spacing.
-  // For the diff, we just record the utility token; categorizeVariable does the
-  // actual var-resolution. v1 records the resolved px value when possible.
-  if (UTILITY_TO_DOMAIN[utility] === 'spacing' || UTILITY_TO_DOMAIN[utility] === 'sizing') {
-    return { domain: UTILITY_TO_DOMAIN[utility], path: utility + '/' + value };
-  }
-
-  return null;
-}
-
-function resolveClassString(classString, globalsCss) {
-  const tokens = (classString || '').split(/\s+/).filter(Boolean);
-  return tokens.map(token => ({ token, resolved: resolveClass(token, globalsCss) }));
-}
-
-module.exports = { resolveClass, resolveClassString };
-```
-
-- [ ] **Step 4: Verify tests pass**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/class-resolver.test.js`
-Expected: 7 tests PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add plugins/adhd/lib/pull-component/class-resolver.js plugins/adhd/lib/pull-component/__tests__/class-resolver.test.js
-git commit -m "class-resolver: wrap lint-engine theme-parser for class-to-token resolution"
-```
-
----
-
-## Task 4: differ.js — pure function for local vs Figma diff
-
-**Files:**
-- Create: `plugins/adhd/lib/pull-component/differ.js`
-- Create: `plugins/adhd/lib/pull-component/__tests__/differ.test.js`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-figma-clean.json`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-figma-cell-change.json`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-figma-added-variant.json`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-figma-removed-variant.json`
-
-- [ ] **Step 1: Write the four Figma fixture files**
-
-The Figma extract shape mirrors what the SKILL produces by serializing a Component Set. Each variant has resolved design tokens per relevant property; pull does NOT need the full Figma tree, only the per-variant per-property bound values.
-
-`badge-figma-clean.json`:
-
-```json
-{
-  "componentSetId": "100:1",
-  "componentName": "Badge",
-  "variantAxes": {
-    "size": ["sm", "md", "lg"],
-    "tone": ["neutral", "danger"]
-  },
-  "variants": [
-    { "props": { "size": "sm", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "md", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-sm", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "lg", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "sm", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "md", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-sm", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "lg", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-red-100 text-red-700" } }
-  ]
-}
-```
-
-`badge-figma-cell-change.json`: same as clean except BADGE_TEXT.md is `text-base` (changed from `text-sm`):
-
-```json
-{
-  "componentSetId": "100:1",
-  "componentName": "Badge",
-  "variantAxes": {
-    "size": ["sm", "md", "lg"],
-    "tone": ["neutral", "danger"]
-  },
-  "variants": [
-    { "props": { "size": "sm", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "md", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "lg", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "sm", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "md", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "lg", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-red-100 text-red-700" } }
-  ]
-}
-```
-
-`badge-figma-added-variant.json`: clean plus a new size=xl variant:
-
-```json
-{
-  "componentSetId": "100:1",
-  "componentName": "Badge",
-  "variantAxes": {
-    "size": ["sm", "md", "lg", "xl"],
-    "tone": ["neutral", "danger"]
-  },
-  "variants": [
-    { "props": { "size": "sm", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "md", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-sm", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "lg", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "xl", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-5 py-3", "BADGE_TEXT": "text-lg", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "sm", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "md", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-sm", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "lg", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-red-100 text-red-700" } },
-    { "props": { "size": "xl", "tone": "danger" }, "tokens": { "BADGE_BOX": "px-5 py-3", "BADGE_TEXT": "text-lg", "BADGE_TONE": "bg-red-100 text-red-700" } }
-  ]
-}
-```
-
-`badge-figma-removed-variant.json`: clean minus all `tone=danger` variants:
-
-```json
-{
-  "componentSetId": "100:1",
-  "componentName": "Badge",
-  "variantAxes": {
-    "size": ["sm", "md", "lg"],
-    "tone": ["neutral"]
-  },
-  "variants": [
-    { "props": { "size": "sm", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-2 py-0.5", "BADGE_TEXT": "text-xs", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "md", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-3 py-1", "BADGE_TEXT": "text-sm", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } },
-    { "props": { "size": "lg", "tone": "neutral" }, "tokens": { "BADGE_BOX": "px-4 py-2", "BADGE_TEXT": "text-base", "BADGE_TONE": "bg-zinc-100 text-zinc-700" } }
-  ]
-}
-```
-
-- [ ] **Step 2: Write the failing tests**
-
-`plugins/adhd/lib/pull-component/__tests__/differ.test.js`:
-
-```javascript
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const { parseReactComponent } = require('../parse-react');
-const { diffLocalVsFigma } = require('../differ');
-
-const FX = (n) => path.resolve(__dirname, '..', '__fixtures__', n);
-const BADGE = fs.readFileSync(FX('badge-base.tsx'), 'utf8');
-
-function loadFigma(name) {
-  return JSON.parse(fs.readFileSync(FX(name), 'utf8'));
-}
-
-test('clean figma produces empty diff', () => {
-  const local = parseReactComponent(BADGE);
-  const figma = loadFigma('badge-figma-clean.json');
-  const diff = diffLocalVsFigma(local, figma);
-  assert.deepEqual(diff.unionDiff, []);
-  assert.deepEqual(diff.tableDiff, []);
-  assert.deepEqual(diff.unmapped, []);
-});
-
-test('one cell change shows up in tableDiff', () => {
-  const local = parseReactComponent(BADGE);
-  const figma = loadFigma('badge-figma-cell-change.json');
-  const diff = diffLocalVsFigma(local, figma);
-  assert.equal(diff.tableDiff.length, 1);
-  const t = diff.tableDiff[0];
-  assert.equal(t.table, 'BADGE_TEXT');
-  assert.equal(t.axis, 'size');
-  assert.equal(t.cells.length, 1);
-  assert.deepEqual(t.cells[0], { key: 'md', local: 'text-sm', figma: 'text-base' });
-});
-
-test('figma added a variant value → unionDiff has add entry', () => {
-  const local = parseReactComponent(BADGE);
-  const figma = loadFigma('badge-figma-added-variant.json');
-  const diff = diffLocalVsFigma(local, figma);
-  assert.equal(diff.unionDiff.length, 1);
-  assert.deepEqual(diff.unionDiff[0], {
-    union: 'BadgeSize', axis: 'size', add: ['xl'], remove: [],
-  });
-});
-
-test('figma removed a variant value → unionDiff has remove entry', () => {
-  const local = parseReactComponent(BADGE);
-  const figma = loadFigma('badge-figma-removed-variant.json');
-  const diff = diffLocalVsFigma(local, figma);
-  const tone = diff.unionDiff.find(d => d.axis === 'tone');
-  assert.ok(tone);
-  assert.deepEqual(tone.remove, ['danger']);
-});
-
-test('figma has axis with no matching Record<...> → unmapped entry', () => {
-  const local = parseReactComponent(BADGE);
-  const figma = loadFigma('badge-figma-clean.json');
-  // Synthesize an extra axis
-  figma.variantAxes.theme = ['light', 'dark'];
-  const diff = diffLocalVsFigma(local, figma);
-  const unmapped = diff.unmapped.find(u => u.figmaAxis === 'theme');
-  assert.ok(unmapped);
-  assert.deepEqual(unmapped.values, ['light', 'dark']);
-});
-```
-
-- [ ] **Step 3: Verify tests fail**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/differ.test.js`
-Expected: FAIL — module not found.
-
-- [ ] **Step 4: Implement differ.js**
-
-`plugins/adhd/lib/pull-component/differ.js`:
-
-```javascript
-'use strict';
-
-// Pure function: (parseReactComponent output, figma extract) → diff
-// Diff shape (see spec section "Build the diff"):
-//   { unionDiff: [...], tableDiff: [...], unmapped: [...] }
-
-function diffLocalVsFigma(local, figma) {
-  const unionDiff = [];
-  const tableDiff = [];
-  const unmapped = [];
-
-  // Build axis → union name lookup from props (e.g. props.size = { unionRef: "BadgeSize" })
-  const axisToUnion = {};
-  for (const [propName, propDef] of Object.entries(local.props || {})) {
-    if (propDef.unionRef) axisToUnion[propName] = propDef.unionRef;
-  }
-
-  // --- Union diff: per axis, compare local union members vs figma variantAxes.
-  for (const [axis, figmaMembers] of Object.entries(figma.variantAxes || {})) {
-    const unionName = axisToUnion[axis];
-    if (!unionName) {
-      // Figma has an axis but local has no matching prop/union → unmapped.
-      unmapped.push({ figmaAxis: axis, values: [...figmaMembers], reason: 'no matching prop/union' });
-      continue;
-    }
-    const localMembers = local.unions[unionName] || [];
-    const add = figmaMembers.filter(v => !localMembers.includes(v));
-    const remove = localMembers.filter(v => !figmaMembers.includes(v));
-    if (add.length || remove.length) {
-      unionDiff.push({ union: unionName, axis, add, remove });
-    }
-  }
-
-  // --- Table diff: for each local table, walk figma variants whose props match the table's axis keys.
-  for (const [tableName, table] of Object.entries(local.tables || {})) {
-    const axisName = Object.entries(axisToUnion).find(([, u]) => u === table.axis)?.[0];
-    if (!axisName) continue; // axis not in props → can't reverse-resolve
-
-    if (!table.nested) {
-      const cells = [];
-      // For each key in local table, find the figma value(s) for variants where props[axisName] === key.
-      // If figma values differ within the group, take the first (consistent across non-axis dims is the convention).
-      for (const key of Object.keys(table.entries)) {
-        const matching = (figma.variants || []).filter(v => v.props && v.props[axisName] === key);
-        if (matching.length === 0) continue; // figma doesn't have this variant (handled by unionDiff)
-        const figmaValue = matching[0].tokens && matching[0].tokens[tableName];
-        if (figmaValue === undefined) continue; // figma extract didn't include this token
-        const localValue = table.entries[key];
-        if (localValue !== figmaValue) {
-          cells.push({ key, local: localValue, figma: figmaValue });
-        }
-      }
-      if (cells.length) {
-        tableDiff.push({ table: tableName, axis: axisName, cells });
-      }
-    } else {
-      // 2-axis: outerKey + innerKey
-      const innerAxisName = Object.entries(axisToUnion).find(([, u]) => u === table.innerAxis)?.[0];
-      if (!innerAxisName) continue;
-      const cells = [];
-      for (const [outerKey, inner] of Object.entries(table.entries)) {
-        for (const [innerKey, localValue] of Object.entries(inner)) {
-          const matching = (figma.variants || []).filter(v =>
-            v.props && v.props[axisName] === outerKey && v.props[innerAxisName] === innerKey,
-          );
-          if (matching.length === 0) continue;
-          const figmaValue = matching[0].tokens && matching[0].tokens[tableName];
-          if (figmaValue === undefined) continue;
-          if (localValue !== figmaValue) {
-            cells.push({ key: `${outerKey}.${innerKey}`, outerKey, innerKey, local: localValue, figma: figmaValue });
-          }
-        }
-      }
-      if (cells.length) {
-        tableDiff.push({ table: tableName, axis: axisName, innerAxis: innerAxisName, cells });
-      }
-    }
-  }
-
-  return { unionDiff, tableDiff, unmapped };
-}
-
-module.exports = { diffLocalVsFigma };
-```
-
-- [ ] **Step 5: Verify tests pass**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/differ.test.js`
-Expected: 5 tests PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add plugins/adhd/lib/pull-component/differ.js plugins/adhd/lib/pull-component/__tests__/differ.test.js plugins/adhd/lib/pull-component/__fixtures__/badge-figma-*.json
-git commit -m "differ: pure function comparing local extract to figma variants"
-```
-
----
-
-## Task 5: apply.js — AST-aware source rewrite
-
-**Files:**
-- Create: `plugins/adhd/lib/pull-component/apply.js`
-- Create: `plugins/adhd/lib/pull-component/__tests__/apply.test.js`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-after-cell-change.tsx`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-after-added-variant.tsx`
-- Create: `plugins/adhd/lib/pull-component/__fixtures__/badge-after-removed-variant.tsx`
-
-- [ ] **Step 1: Write the golden output fixtures**
-
-`badge-after-cell-change.tsx` — same as `badge-base.tsx` except BADGE_TEXT.md changed from `"text-sm"` to `"text-base"`. Preserve all surrounding whitespace and comments.
-
-```tsx
-export type BadgeSize = "sm" | "md" | "lg";
-export type BadgeTone = "neutral" | "danger";
-
-export interface BadgeProps {
-  label: string;
-  size?: BadgeSize;
-  tone?: BadgeTone;
-}
-
-export const BADGE_BOX: Record<BadgeSize, string> = {
-  sm: "px-2 py-0.5",
-  md: "px-3 py-1",
-  lg: "px-4 py-2",
-};
-
-export const BADGE_TEXT: Record<BadgeSize, string> = {
-  sm: "text-xs",
-  md: "text-base",
-  lg: "text-base",
-};
-
-export const BADGE_TONE: Record<BadgeTone, string> = {
-  neutral: "bg-zinc-100 text-zinc-700",
-  danger: "bg-red-100 text-red-700",
-};
-
-export function Badge({ label, size = "md", tone = "neutral" }: BadgeProps) {
-  // Function body — pull never modifies this region.
-  const box = BADGE_BOX[size];
-  const text = BADGE_TEXT[size];
-  const tonecls = BADGE_TONE[tone];
-  return <span className={`${box} ${text} ${tonecls} rounded`}>{label}</span>;
-}
-```
-
-`badge-after-added-variant.tsx` — adds `xl` to BadgeSize union and a new `xl` entry in each `Record<BadgeSize, ...>` table:
-
-```tsx
-export type BadgeSize = "sm" | "md" | "lg" | "xl";
-export type BadgeTone = "neutral" | "danger";
-
-export interface BadgeProps {
-  label: string;
-  size?: BadgeSize;
-  tone?: BadgeTone;
-}
-
-export const BADGE_BOX: Record<BadgeSize, string> = {
-  sm: "px-2 py-0.5",
-  md: "px-3 py-1",
-  lg: "px-4 py-2",
-  xl: "px-5 py-3",
-};
-
-export const BADGE_TEXT: Record<BadgeSize, string> = {
-  sm: "text-xs",
-  md: "text-sm",
-  lg: "text-base",
-  xl: "text-lg",
-};
-
-export const BADGE_TONE: Record<BadgeTone, string> = {
-  neutral: "bg-zinc-100 text-zinc-700",
-  danger: "bg-red-100 text-red-700",
-};
-
-export function Badge({ label, size = "md", tone = "neutral" }: BadgeProps) {
-  // Function body — pull never modifies this region.
-  const box = BADGE_BOX[size];
-  const text = BADGE_TEXT[size];
-  const tonecls = BADGE_TONE[tone];
-  return <span className={`${box} ${text} ${tonecls} rounded`}>{label}</span>;
-}
-```
-
-`badge-after-removed-variant.tsx` — removes `danger` from BadgeTone and from BADGE_TONE:
-
-```tsx
-export type BadgeSize = "sm" | "md" | "lg";
-export type BadgeTone = "neutral";
-
-export interface BadgeProps {
-  label: string;
-  size?: BadgeSize;
-  tone?: BadgeTone;
-}
-
-export const BADGE_BOX: Record<BadgeSize, string> = {
-  sm: "px-2 py-0.5",
-  md: "px-3 py-1",
-  lg: "px-4 py-2",
-};
-
-export const BADGE_TEXT: Record<BadgeSize, string> = {
-  sm: "text-xs",
-  md: "text-sm",
-  lg: "text-base",
-};
-
-export const BADGE_TONE: Record<BadgeTone, string> = {
-  neutral: "bg-zinc-100 text-zinc-700",
-};
-
-export function Badge({ label, size = "md", tone = "neutral" }: BadgeProps) {
-  // Function body — pull never modifies this region.
-  const box = BADGE_BOX[size];
-  const text = BADGE_TEXT[size];
-  const tonecls = BADGE_TONE[tone];
-  return <span className={`${box} ${text} ${tonecls} rounded`}>{label}</span>;
-}
-```
-
-- [ ] **Step 2: Write the failing tests**
-
-`plugins/adhd/lib/pull-component/__tests__/apply.test.js`:
-
-```javascript
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const { applyResolutions } = require('../apply');
-
-const FX = (n) => path.resolve(__dirname, '..', '__fixtures__', n);
-const BADGE = fs.readFileSync(FX('badge-base.tsx'), 'utf8');
-
-test('empty resolutions returns byte-identical source', () => {
-  const out = applyResolutions(BADGE, { unions: {}, tables: {} });
-  assert.equal(out, BADGE);
-});
-
-test('single cell update preserves surrounding whitespace and other entries', () => {
-  const resolutions = { unions: {}, tables: { BADGE_TEXT: { md: 'text-base' } } };
-  const out = applyResolutions(BADGE, resolutions);
-  const expected = fs.readFileSync(FX('badge-after-cell-change.tsx'), 'utf8');
-  assert.equal(out, expected);
-});
-
-test('adding a union value appends to union and adds entry to every Record<That, ...> table', () => {
-  const resolutions = {
-    unions: { BadgeSize: { add: ['xl'], remove: [] } },
-    tables: {
-      BADGE_BOX: { xl: 'px-5 py-3' },
-      BADGE_TEXT: { xl: 'text-lg' },
-    },
-  };
-  const out = applyResolutions(BADGE, resolutions);
-  const expected = fs.readFileSync(FX('badge-after-added-variant.tsx'), 'utf8');
-  assert.equal(out, expected);
-});
-
-test('removing a union value strips it from union and from every Record<That, ...> table', () => {
-  const resolutions = {
-    unions: { BadgeTone: { add: [], remove: ['danger'] } },
-    tables: {},
-  };
-  const out = applyResolutions(BADGE, resolutions);
-  const expected = fs.readFileSync(FX('badge-after-removed-variant.tsx'), 'utf8');
-  assert.equal(out, expected);
-});
-
-test('preserves CRLF line endings if input has them', () => {
-  const crlfSource = BADGE.replace(/\n/g, '\r\n');
-  const out = applyResolutions(crlfSource, { unions: {}, tables: { BADGE_TEXT: { md: 'text-base' } } });
-  assert.ok(out.includes('\r\n'));
-  assert.ok(!out.match(/[^\r]\n/));
-});
-
-test('does not modify text inside the function body region', () => {
-  const sourceWithBodyHook = BADGE.replace(
-    'const box = BADGE_BOX[size];',
-    'const box = BADGE_BOX[size]; // hand-written',
-  );
-  const out = applyResolutions(sourceWithBodyHook, { unions: {}, tables: { BADGE_TEXT: { md: 'text-base' } } });
-  assert.match(out, /BADGE_BOX\[size\]; \/\/ hand-written/);
-});
-```
-
-- [ ] **Step 3: Verify tests fail**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/apply.test.js`
-Expected: FAIL — module not found.
-
-- [ ] **Step 4: Implement apply.js**
-
-`plugins/adhd/lib/pull-component/apply.js`:
-
-```javascript
-'use strict';
-
-const ts = require('typescript');
-const { parseReactComponent } = require('./parse-react');
-
-// Pure function: source text + resolutions → new source text.
-// Strategy:
-//   1. Re-parse the source to get AST node positions for: unions and tables.
-//   2. Compute edits as { start, end, newText }, ordered by descending start.
-//   3. Apply edits to a single mutable string, splicing in reverse order so
-//      earlier positions don't shift later ones.
-// Function body bounds from parseReactComponent are NEVER referenced — we only
-// touch the union type alias declarations and the lookup-table object literals.
-
-function applyResolutions(source, resolutions) {
-  const sourceFile = ts.createSourceFile('component.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const local = parseReactComponent(source);
-  const edits = [];
-
-  // 1. Union edits.
-  for (const [unionName, change] of Object.entries(resolutions.unions || {})) {
-    if (!change || ((!change.add || change.add.length === 0) && (!change.remove || change.remove.length === 0))) continue;
-    const unionStmt = sourceFile.statements.find(s =>
-      ts.isTypeAliasDeclaration(s) && s.name.text === unionName,
-    );
-    if (!unionStmt || !ts.isUnionTypeNode(unionStmt.type)) continue;
-    const currentMembers = local.unions[unionName] || [];
-    const removeSet = new Set(change.remove || []);
-    const updated = currentMembers.filter(m => !removeSet.has(m)).concat((change.add || []).filter(m => !currentMembers.includes(m)));
-    const newUnionText = updated.map(m => `"${m}"`).join(' | ');
-    edits.push({
-      start: unionStmt.type.getStart(sourceFile),
-      end: unionStmt.type.getEnd(),
-      newText: newUnionText,
-    });
-  }
-
-  // Build a map: unionName → list of (tableName, table, varStmt, init)
-  const tablesByUnion = {};
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const decl of stmt.declarationList.declarations) {
-      if (!decl.name || !ts.isIdentifier(decl.name)) continue;
-      const name = decl.name.text;
-      if (!local.tables[name]) continue;
-      if (!decl.initializer || !ts.isObjectLiteralExpression(decl.initializer)) continue;
-      const axis = local.tables[name].axis;
-      (tablesByUnion[axis] ||= []).push({ name, stmt, decl, init: decl.initializer });
-    }
-  }
-
-  // 2. Cascade union add/remove into every table whose axis matches the union.
-  for (const [unionName, change] of Object.entries(resolutions.unions || {})) {
-    const targets = tablesByUnion[unionName] || [];
-    for (const t of targets) {
-      // Removal: drop properties whose key is in `remove`.
-      if (change.remove && change.remove.length > 0) {
-        const removeSet = new Set(change.remove);
-        for (const prop of t.init.properties) {
-          if (!ts.isPropertyAssignment(prop)) continue;
-          const keyName = prop.name && (ts.isIdentifier(prop.name) ? prop.name.text : (ts.isStringLiteral(prop.name) ? prop.name.text : null));
-          if (keyName && removeSet.has(keyName)) {
-            // Edit deletes the entire property + its trailing comma + leading newline/whitespace.
-            const start = findLineStart(source, prop.getStart(sourceFile));
-            const end = findEndOfPropertyLine(source, prop.getEnd());
-            edits.push({ start, end, newText: '' });
-          }
-        }
-      }
-      // Addition: append a property at the end of the object literal.
-      if (change.add && change.add.length > 0 && resolutions.tables && resolutions.tables[t.name]) {
-        for (const newKey of change.add) {
-          const newValue = resolutions.tables[t.name][newKey];
-          if (newValue === undefined) continue;
-          // Insertion point: just before the closing brace of the object literal.
-          const closeBrace = t.init.getEnd() - 1; // the `}` itself
-          // Detect indentation from the first existing property (if any).
-          let indent = '  ';
-          if (t.init.properties.length > 0) {
-            const firstPropStart = t.init.properties[0].getStart(sourceFile);
-            const lineStart = findLineStart(source, firstPropStart);
-            indent = source.slice(lineStart, firstPropStart);
-          }
-          // If the off-system marker is needed, the resolutions.tables value should include it as a comment prefix.
-          // For simplicity here, resolutions.tables values are plain strings; the SKILL preprocesses unbound
-          // entries by setting resolutions.tables[name][key] to include the comment + newline.
-          const newProp = `${indent}${newKey}: "${newValue}",\n`;
-          edits.push({ start: closeBrace, end: closeBrace, newText: newProp });
-        }
-      }
-    }
-  }
-
-  // 3. Cell-only updates: change property values where resolutions.tables specifies a key NOT covered by union add.
-  for (const [tableName, cells] of Object.entries(resolutions.tables || {})) {
-    const t = (Object.values(tablesByUnion).flat()).find(x => x.name === tableName);
-    if (!t) continue;
-    const axisUnion = local.tables[tableName].axis;
-    const addedSet = new Set((resolutions.unions && resolutions.unions[axisUnion] && resolutions.unions[axisUnion].add) || []);
-    for (const [key, newValue] of Object.entries(cells)) {
-      if (addedSet.has(key)) continue; // already handled by addition path above
-      // 2-axis table: key has form "outerKey.innerKey"
-      if (local.tables[tableName].nested && key.includes('.')) {
-        const [outerKey, innerKey] = key.split('.');
-        const outerProp = t.init.properties.find(p =>
-          ts.isPropertyAssignment(p) && p.name && ((ts.isIdentifier(p.name) && p.name.text === outerKey) || (ts.isStringLiteral(p.name) && p.name.text === outerKey)),
-        );
-        if (!outerProp || !ts.isObjectLiteralExpression(outerProp.initializer)) continue;
-        const innerProp = outerProp.initializer.properties.find(p =>
-          ts.isPropertyAssignment(p) && p.name && ((ts.isIdentifier(p.name) && p.name.text === innerKey) || (ts.isStringLiteral(p.name) && p.name.text === innerKey)),
-        );
-        if (!innerProp || !ts.isStringLiteral(innerProp.initializer)) continue;
-        edits.push({
-          start: innerProp.initializer.getStart(sourceFile),
-          end: innerProp.initializer.getEnd(),
-          newText: `"${newValue}"`,
-        });
-        continue;
-      }
-      // 1-axis
-      const prop = t.init.properties.find(p =>
-        ts.isPropertyAssignment(p) && p.name && ((ts.isIdentifier(p.name) && p.name.text === key) || (ts.isStringLiteral(p.name) && p.name.text === key)),
-      );
-      if (!prop || !ts.isStringLiteral(prop.initializer)) continue;
-      edits.push({
-        start: prop.initializer.getStart(sourceFile),
-        end: prop.initializer.getEnd(),
-        newText: `"${newValue}"`,
-      });
-    }
-  }
-
-  // Apply edits in reverse position order.
-  edits.sort((a, b) => b.start - a.start);
-  let out = source;
-  for (const e of edits) {
-    out = out.slice(0, e.start) + e.newText + out.slice(e.end);
-  }
-  return out;
-}
-
-function findLineStart(source, position) {
-  let i = position;
-  while (i > 0 && source[i - 1] !== '\n') i--;
-  return i;
-}
-
-function findEndOfPropertyLine(source, position) {
-  // Move past trailing comma and any whitespace through the newline.
-  let i = position;
-  if (source[i] === ',') i++;
-  while (i < source.length && (source[i] === ' ' || source[i] === '\t')) i++;
-  if (source[i] === '\r') i++;
-  if (source[i] === '\n') i++;
-  return i;
-}
-
-module.exports = { applyResolutions };
-```
-
-- [ ] **Step 5: Verify tests pass**
-
-Run: `node --test plugins/adhd/lib/pull-component/__tests__/apply.test.js`
-Expected: 6 tests PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add plugins/adhd/lib/pull-component/apply.js plugins/adhd/lib/pull-component/__tests__/apply.test.js plugins/adhd/lib/pull-component/__fixtures__/badge-after-*.tsx
-git commit -m "apply: AST-aware source rewrite scoped to unions + lookup tables"
-```
-
----
-
-## Task 6: config-writer.js — read and write component mappings in adhd.config.ts
-
-**Files:**
-- Create: `plugins/adhd/lib/pull-component/config-writer.js`
-- Create: `plugins/adhd/lib/pull-component/__tests__/config-writer.test.js`
-
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write failing tests for `config-writer.js`**
 
 `plugins/adhd/lib/pull-component/__tests__/config-writer.test.js`:
 
@@ -1353,7 +55,7 @@ git commit -m "apply: AST-aware source rewrite scoped to unions + lookup tables"
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { readComponentMapping, addComponentMapping } = require('../config-writer');
+const { readComponentMapping, addComponentMapping, reverseLookupPath } = require('../config-writer');
 
 const MINIMAL_CONFIG = `const config = {
   figma: { url: "https://figma.com/design/ABC/" },
@@ -1375,13 +77,16 @@ export default config;
 `;
 
 test('readComponentMapping returns null when no components field exists', () => {
-  const result = readComponentMapping(MINIMAL_CONFIG, 'app/components/badge.tsx');
-  assert.equal(result, null);
+  assert.equal(readComponentMapping(MINIMAL_CONFIG, 'app/components/badge.tsx'), null);
 });
 
 test('readComponentMapping returns entry when path matches', () => {
-  const result = readComponentMapping(WITH_COMPONENTS, 'app/components/avatar/index.tsx');
-  assert.equal(result && result.figma.url, 'https://figma.com/design/ABC/?node-id=91-18');
+  const r = readComponentMapping(WITH_COMPONENTS, 'app/components/avatar/index.tsx');
+  assert.equal(r && r.figma.url, 'https://figma.com/design/ABC/?node-id=91-18');
+});
+
+test('readComponentMapping returns null for an absent path even if components exists', () => {
+  assert.equal(readComponentMapping(WITH_COMPONENTS, 'app/components/nope.tsx'), null);
 });
 
 test('addComponentMapping creates components field if missing', () => {
@@ -1410,18 +115,21 @@ test('addComponentMapping updates existing entry if URL differs', () => {
 });
 
 test('reverseLookupPath finds the path for a given figma URL', () => {
-  const { reverseLookupPath } = require('../config-writer');
   const path = reverseLookupPath(WITH_COMPONENTS, 'https://figma.com/design/ABC/?node-id=91-18');
   assert.equal(path, 'app/components/avatar/index.tsx');
+});
+
+test('reverseLookupPath returns null for unknown URL', () => {
+  assert.equal(reverseLookupPath(WITH_COMPONENTS, 'https://figma.com/design/ABC/?node-id=999-1'), null);
 });
 ```
 
 - [ ] **Step 2: Verify tests fail**
 
 Run: `node --test plugins/adhd/lib/pull-component/__tests__/config-writer.test.js`
-Expected: FAIL.
+Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement config-writer.js**
+- [ ] **Step 3: Implement `config-writer.js`**
 
 `plugins/adhd/lib/pull-component/config-writer.js`:
 
@@ -1434,7 +142,6 @@ function parse(source) {
   return ts.createSourceFile('adhd.config.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 }
 
-// Locate the object literal assigned to `const config = { ... }`.
 function findConfigObject(sourceFile) {
   for (const stmt of sourceFile.statements) {
     if (!ts.isVariableStatement(stmt)) continue;
@@ -1464,7 +171,6 @@ function readComponentMapping(source, relPath) {
     ts.isPropertyAssignment(p) && p.name && ts.isStringLiteral(p.name) && p.name.text === relPath,
   );
   if (!entry || !ts.isObjectLiteralExpression(entry.initializer)) return null;
-
   const figma = findProperty(entry.initializer, 'figma');
   if (!figma || !ts.isObjectLiteralExpression(figma.initializer)) return null;
   const url = findProperty(figma.initializer, 'url');
@@ -1505,7 +211,7 @@ function addComponentMapping(source, relPath, figmaUrl) {
   const cfg = findConfigObject(sf);
   if (!cfg) throw new Error('addComponentMapping: could not find `const config = { ... }`');
 
-  // Case 1: existing components.<relPath> with a different URL → replace its url inline.
+  // Case 1: existing components.<relPath> with a different URL → replace url inline.
   const components = findProperty(cfg, 'components');
   if (components && ts.isObjectLiteralExpression(components.initializer)) {
     const entry = components.initializer.properties.find(p =>
@@ -1522,7 +228,7 @@ function addComponentMapping(source, relPath, figmaUrl) {
         }
       }
     }
-    // Case 2: components exists but not this path → append a new entry before its closing brace.
+    // Case 2: components exists but not this path → append new entry before closing brace.
     const close = components.initializer.getEnd() - 1;
     const firstProp = components.initializer.properties[0];
     let indent = '  ';
@@ -1536,7 +242,6 @@ function addComponentMapping(source, relPath, figmaUrl) {
 
   // Case 3: no components field → insert one before the closing brace of `const config`.
   const close = cfg.getEnd() - 1;
-  // Detect the indentation used inside config (first existing property).
   const firstCfgProp = cfg.properties[0];
   let baseIndent = '  ';
   if (firstCfgProp) {
@@ -1550,33 +255,26 @@ function addComponentMapping(source, relPath, figmaUrl) {
 module.exports = { readComponentMapping, reverseLookupPath, addComponentMapping };
 ```
 
-- [ ] **Step 4: Verify tests pass**
+- [ ] **Step 4: Verify config-writer tests pass**
 
 Run: `node --test plugins/adhd/lib/pull-component/__tests__/config-writer.test.js`
-Expected: 7 tests PASS.
+Expected: 9 tests PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Write failing tests for `cli.js`**
 
-```bash
-git add plugins/adhd/lib/pull-component/config-writer.js plugins/adhd/lib/pull-component/__tests__/config-writer.test.js
-git commit -m "config-writer: idempotent add/read of components.<path>.figma.url"
-```
-
----
-
-## Task 7: cli.js — wire subcommands
-
-**Files:**
-- Modify: `plugins/adhd/lib/pull-component/cli.js`
-- Modify: `plugins/adhd/lib/pull-component/__tests__/cli.test.js`
-
-- [ ] **Step 1: Extend cli tests for each subcommand**
-
-Append to `plugins/adhd/lib/pull-component/__tests__/cli.test.js`:
+`plugins/adhd/lib/pull-component/__tests__/cli.test.js`:
 
 ```javascript
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+
+const CLI = path.resolve(__dirname, '..', 'cli.js');
 
 function tmp(filename, content) {
   const p = path.join(os.tmpdir(), 'adhd-pull-' + Date.now() + '-' + Math.random().toString(16).slice(2, 8) + '-' + filename);
@@ -1584,60 +282,66 @@ function tmp(filename, content) {
   return p;
 }
 
-const BADGE_PATH = path.resolve(__dirname, '..', '__fixtures__', 'badge-base.tsx');
-
-test('parse subcommand writes a local.json manifest', () => {
-  const out = tmp('local.json', '');
-  const r = spawnSync('node', [CLI, 'parse', BADGE_PATH, '--output', out], { encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const m = JSON.parse(fs.readFileSync(out, 'utf8'));
-  assert.equal(m.componentName, 'Badge');
-  assert.ok(m.unions.BadgeSize);
-  assert.ok(m.tables.BADGE_BOX);
+test('cli with --help prints subcommand usage and exits 0', () => {
+  const r = spawnSync('node', [CLI, '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /Usage:/);
+  assert.match(r.stdout, /config-write/);
+  assert.match(r.stdout, /config-read/);
+  assert.match(r.stdout, /config-reverse/);
 });
 
-test('diff subcommand writes a diff.json', () => {
-  // parse first
-  const local = tmp('local.json', '');
-  spawnSync('node', [CLI, 'parse', BADGE_PATH, '--output', local], { encoding: 'utf8' });
-  // figma fixture
-  const figma = path.resolve(__dirname, '..', '__fixtures__', 'badge-figma-cell-change.json');
-  const out = tmp('diff.json', '');
-  const r = spawnSync('node', [CLI, 'diff', '--local', local, '--figma', figma, '--output', out], { encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const d = JSON.parse(fs.readFileSync(out, 'utf8'));
-  assert.equal(d.tableDiff.length, 1);
+test('cli with no args exits 2', () => {
+  assert.equal(spawnSync('node', [CLI], { encoding: 'utf8' }).status, 2);
 });
 
-test('apply subcommand rewrites the source file via resolutions', () => {
-  const src = fs.readFileSync(BADGE_PATH, 'utf8');
-  const srcPath = tmp('Badge.tsx', src);
-  const resolutions = tmp('res.json', JSON.stringify({
-    unions: {},
-    tables: { BADGE_TEXT: { md: 'text-base' } },
-  }));
-  const out = tmp('out.tsx', '');
-  const r = spawnSync('node', [CLI, 'apply', '--source', srcPath, '--resolutions', resolutions, '--output', out], { encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const result = fs.readFileSync(out, 'utf8');
-  assert.match(result, /md: "text-base"/);
+test('cli with unknown subcommand exits 2', () => {
+  assert.equal(spawnSync('node', [CLI, 'unknown'], { encoding: 'utf8' }).status, 2);
 });
 
-test('config-write subcommand adds a components entry', () => {
+test('config-write subcommand adds a components entry to the config file', () => {
   const cfgPath = tmp('adhd.config.ts', `const config = {\n  figma: { url: "https://figma.com/design/ABC/" },\n};\n\nexport default config;\n`);
   const r = spawnSync('node', [CLI, 'config-write', '--config', cfgPath, '--path', 'app/components/x.tsx', '--figma-url', 'https://figma.com/design/ABC/?node-id=1-1'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const after = fs.readFileSync(cfgPath, 'utf8');
   assert.match(after, /"app\/components\/x\.tsx":/);
 });
+
+test('config-read subcommand prints the figma url to stdout', () => {
+  const cfgPath = tmp('adhd.config.ts', `const config = {\n  figma: { url: "https://figma.com/design/ABC/" },\n  components: {\n    "app/components/x.tsx": { figma: { url: "https://figma.com/design/ABC/?node-id=1-1" } },\n  },\n};\n\nexport default config;\n`);
+  const r = spawnSync('node', [CLI, 'config-read', '--config', cfgPath, '--path', 'app/components/x.tsx'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /node-id=1-1/);
+});
+
+test('config-read exits 1 with empty stdout when path is not mapped', () => {
+  const cfgPath = tmp('adhd.config.ts', `const config = {\n  figma: { url: "https://figma.com/design/ABC/" },\n};\n\nexport default config;\n`);
+  const r = spawnSync('node', [CLI, 'config-read', '--config', cfgPath, '--path', 'app/components/missing.tsx'], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, '');
+});
+
+test('config-reverse subcommand prints the path for a given URL', () => {
+  const cfgPath = tmp('adhd.config.ts', `const config = {\n  figma: { url: "https://figma.com/design/ABC/" },\n  components: {\n    "app/components/x.tsx": { figma: { url: "https://figma.com/design/ABC/?node-id=1-1" } },\n  },\n};\n\nexport default config;\n`);
+  const r = spawnSync('node', [CLI, 'config-reverse', '--config', cfgPath, '--figma-url', 'https://figma.com/design/ABC/?node-id=1-1'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /app\/components\/x\.tsx/);
+});
+
+test('config-reverse exits 1 with empty stdout when URL has no mapping', () => {
+  const cfgPath = tmp('adhd.config.ts', `const config = {\n  figma: { url: "https://figma.com/design/ABC/" },\n};\n\nexport default config;\n`);
+  const r = spawnSync('node', [CLI, 'config-reverse', '--config', cfgPath, '--figma-url', 'https://figma.com/design/ABC/?node-id=9-9'], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, '');
+});
 ```
 
-- [ ] **Step 2: Verify the new tests fail**
+- [ ] **Step 6: Verify cli tests fail**
 
 Run: `node --test plugins/adhd/lib/pull-component/__tests__/cli.test.js`
-Expected: 4 new subcommand tests FAIL; original 3 still pass.
+Expected: FAIL — cli.js does not exist.
 
-- [ ] **Step 3: Implement cli.js full surface**
+- [ ] **Step 7: Implement `cli.js`**
 
 `plugins/adhd/lib/pull-component/cli.js`:
 
@@ -1646,11 +350,7 @@ Expected: 4 new subcommand tests FAIL; original 3 still pass.
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
-const { parseReactComponent } = require('./parse-react');
-const { diffLocalVsFigma } = require('./differ');
-const { applyResolutions } = require('./apply');
-const { addComponentMapping } = require('./config-writer');
+const { readComponentMapping, addComponentMapping, reverseLookupPath } = require('./config-writer');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -1665,11 +365,9 @@ function parseArgs(argv) {
 
 function printUsage() {
   console.log(`Usage:
-  cli.js parse <component-path> --output <local.json>
-  cli.js extract <figma-state.json> --output <figma.json>
-  cli.js diff --local <local.json> --figma <figma.json> --output <diff.json>
-  cli.js apply --source <component.tsx> --resolutions <resolutions.json> --output <newsource.tsx>
-  cli.js config-write --config <adhd.config.ts> --path <relative-path> --figma-url <url>`);
+  cli.js config-write --config <adhd.config.ts> --path <relative-path> --figma-url <url>
+  cli.js config-read --config <adhd.config.ts> --path <relative-path>
+  cli.js config-reverse --config <adhd.config.ts> --figma-url <url>`);
 }
 
 function main() {
@@ -1678,49 +376,38 @@ function main() {
   if (args._.length === 0) { printUsage(); process.exit(2); }
   const cmd = args._[0];
 
-  if (cmd === 'parse') {
-    const componentPath = args._[1];
-    if (!componentPath || !args.output) { console.error('Usage: parse <path> --output <json>'); process.exit(2); }
-    const source = fs.readFileSync(componentPath, 'utf8');
-    const result = parseReactComponent(source);
-    fs.writeFileSync(args.output, JSON.stringify(result, null, 2));
-    process.exit(0);
-  }
-
-  if (cmd === 'extract') {
-    // Passthrough: SKILL builds the figma extract via use_figma and writes it to the path.
-    // This subcommand is a no-op (placeholder for symmetry); validates the file is JSON.
-    const figmaState = args._[1];
-    if (!figmaState || !args.output) { console.error('Usage: extract <figma-state.json> --output <figma.json>'); process.exit(2); }
-    const raw = fs.readFileSync(figmaState, 'utf8');
-    JSON.parse(raw); // validation
-    fs.writeFileSync(args.output, raw);
-    process.exit(0);
-  }
-
-  if (cmd === 'diff') {
-    if (!args.local || !args.figma || !args.output) { console.error('Usage: diff --local <json> --figma <json> --output <json>'); process.exit(2); }
-    const local = JSON.parse(fs.readFileSync(args.local, 'utf8'));
-    const figma = JSON.parse(fs.readFileSync(args.figma, 'utf8'));
-    const diff = diffLocalVsFigma(local, figma);
-    fs.writeFileSync(args.output, JSON.stringify(diff, null, 2));
-    process.exit(0);
-  }
-
-  if (cmd === 'apply') {
-    if (!args.source || !args.resolutions || !args.output) { console.error('Usage: apply --source <tsx> --resolutions <json> --output <tsx>'); process.exit(2); }
-    const source = fs.readFileSync(args.source, 'utf8');
-    const resolutions = JSON.parse(fs.readFileSync(args.resolutions, 'utf8'));
-    const out = applyResolutions(source, resolutions);
-    fs.writeFileSync(args.output, out);
-    process.exit(0);
-  }
-
   if (cmd === 'config-write') {
-    if (!args.config || !args.path || !args['figma-url']) { console.error('Usage: config-write --config <adhd.config.ts> --path <rel> --figma-url <url>'); process.exit(2); }
+    if (!args.config || !args.path || !args['figma-url']) {
+      console.error('Usage: config-write --config <path> --path <rel> --figma-url <url>');
+      process.exit(2);
+    }
     const source = fs.readFileSync(args.config, 'utf8');
     const out = addComponentMapping(source, args.path, args['figma-url']);
     fs.writeFileSync(args.config, out);
+    process.exit(0);
+  }
+
+  if (cmd === 'config-read') {
+    if (!args.config || !args.path) {
+      console.error('Usage: config-read --config <path> --path <rel>');
+      process.exit(2);
+    }
+    const source = fs.readFileSync(args.config, 'utf8');
+    const r = readComponentMapping(source, args.path);
+    if (!r) { process.exit(1); }
+    process.stdout.write(r.figma.url);
+    process.exit(0);
+  }
+
+  if (cmd === 'config-reverse') {
+    if (!args.config || !args['figma-url']) {
+      console.error('Usage: config-reverse --config <path> --figma-url <url>');
+      process.exit(2);
+    }
+    const source = fs.readFileSync(args.config, 'utf8');
+    const r = reverseLookupPath(source, args['figma-url']);
+    if (!r) { process.exit(1); }
+    process.stdout.write(r);
     process.exit(0);
   }
 
@@ -1731,32 +418,76 @@ function main() {
 main();
 ```
 
-- [ ] **Step 4: Verify tests pass**
+- [ ] **Step 8: Verify cli tests pass**
 
 Run: `node --test plugins/adhd/lib/pull-component/__tests__/cli.test.js`
-Expected: All 7 tests PASS.
+Expected: 8 tests PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 9: Add README**
+
+`plugins/adhd/lib/pull-component/README.md`:
+
+```markdown
+# lib/pull-component
+
+Deterministic config-writer for `/adhd:pull-component`. The skill itself
+(at `plugins/adhd/skills/pull-component/SKILL.md`) is the orchestrator
+and handles all the LLM-driven work — reading the React source,
+extracting the Figma Component Set, computing the diff, prompting the
+user, applying Edit-tool changes.
+
+This library is intentionally tiny: it only contains the schema-level
+mutation of `adhd.config.ts` (adding/reading component mappings under
+`components.<path>.figma.url`). Anything more intelligent lives in
+the SKILL prompt where the LLM can reason about it.
+
+See `docs/superpowers/specs/2026-05-10-adhd-pull-component.md` for the
+authoritative spec.
+```
+
+- [ ] **Step 10: Add CI step**
+
+Edit `.github/workflows/ci.yml`. In the `lib-tests` job, after the existing `push-component` test step:
+
+```yaml
+      - name: Run pull-component tests
+        run: node --test plugins/adhd/lib/pull-component/__tests__/
+```
+
+- [ ] **Step 11: Run all lib tests, verify green**
+
+Run: `node --test plugins/adhd/lib/lint-engine/__tests__/ plugins/adhd/lib/design-system/__tests__/ plugins/adhd/lib/push-component/__tests__/ plugins/adhd/lib/pull-component/__tests__/`
+Expected: all PASS, at least 17 new tests added.
+
+- [ ] **Step 12: Commit**
 
 ```bash
-git add plugins/adhd/lib/pull-component/cli.js plugins/adhd/lib/pull-component/__tests__/cli.test.js
-git commit -m "cli: wire parse/extract/diff/apply/config-write subcommands"
+git add plugins/adhd/lib/pull-component .github/workflows/ci.yml
+git commit -m "Add lib/pull-component config-writer + CLI
+
+Deterministic surface only: read/write components.<path>.figma.url
+in adhd.config.ts. Everything intelligent (parsing the React source,
+diffing against Figma, applying edits) lives in the SKILL prompt
+where the LLM handles it. Brittle AST/regex approaches don't apply
+when Claude Code is already in the orchestration loop."
 ```
 
 ---
 
-## Task 8: SKILL.md — orchestrate the 11-phase flow
+## Task 2: SKILL.md — the LLM-driven orchestrator
 
 **Files:**
 - Create: `plugins/adhd/skills/pull-component/SKILL.md`
 
-- [ ] **Step 1: Write the SKILL.md**
+This is the brain. The prompt must be detailed enough that any Claude Code agent executes it the same way. Every invariant explicit.
+
+- [ ] **Step 1: Write SKILL.md**
 
 `plugins/adhd/skills/pull-component/SKILL.md`:
 
-```markdown
+````markdown
 ---
-description: "Pull a Figma Component Set into a React component source file. Inverse of /adhd:push-component. Updates only design-token lookup tables and union types — function body, JSX, hooks, handlers, and imports are never modified. Reads adhd.config.ts and uses the mapping at components.<path>.figma.url. Pre-flight validates the Figma source using the same lint engine /adhd:lint uses; structural violations abort the pull."
+description: "Pull a Figma Component Set into a React component source file. Inverse of /adhd:push-component. Updates only design-token lookup tables and union type members — function body, JSX, hooks, handlers, and imports are never modified. Reads adhd.config.ts and uses the mapping at components.<path>.figma.url. Pre-flight validates the Figma source using the same lint engine /adhd:lint uses; structural violations abort the pull."
 disable-model-invocation: true
 argument-hint: "<react-path | figma-url> [--allow-unbound]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
@@ -1764,159 +495,359 @@ allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use
 
 # ADHD Pull Component
 
-Reconciles a Figma Component Set back into a React source file. Symmetric with /adhd:push-component: the same lint engine, the same Tailwind-to-design-token resolver. Updates are scoped to lookup tables (Record<Union, string>) and union type aliases — never the function body.
+Reconciles a Figma Component Set back into a React source file. The model (you) is the diff/apply engine: read both sides, compute the diff in working memory, prompt the user, apply edits via the Edit tool. Lookup tables and union types only — the function body is invariant.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-pull-component.md`
 
+---
+
+## Invariants (apply throughout)
+
+1. **Function body untouched.** You may modify exported type aliases, the props interface, and top-level `Record<Union, string>` (or 2-axis) lookup table object literals. You must NOT modify the exported function declaration, its body, its JSX return, hooks, event handlers, or imports.
+2. **Edit tool, not Write.** For updates, use `Edit` calls with `old_string` / `new_string`. Edit preserves whitespace, comments, and surrounding code by construction. Only use `Write` in scaffold mode (creating a new file).
+3. **One Component Set per invocation.** If `node-id` resolves to anything else, abort.
+4. **Read the spec when in doubt.** The spec at `docs/superpowers/specs/2026-05-10-adhd-pull-component.md` is the contract.
+
+---
+
 ## Phase 1: Validate config
 
-Read `adhd.config.ts`. Require `figma.url`. If missing: abort with "Run /adhd:config first to set up ADHD."
+Use `Read` on `adhd.config.ts` (in the current working directory). Confirm `figma.url` is set. If the file is missing or `figma.url` is absent, abort:
+
+> "Run /adhd:config first to set up ADHD."
+
+Save the resolved file-level Figma URL and file key for later validation.
 
 ## Phase 2: Resolve target
 
-Parse `$ARGUMENTS`. First positional is either a path (existing file) or a Figma URL (starts with `https://`).
+Parse `$ARGUMENTS`. First positional is either a path (existing file, relative or absolute) or a Figma URL (starts with `https://`).
 
-Use `Bash` to invoke a helper:
+Detect `--allow-unbound` flag if present.
+
+Use `Bash` to invoke the config-writer CLI for path/URL resolution:
 
 ```bash
-node -e "
-const fs = require('fs');
-const { readComponentMapping, reverseLookupPath } = require('./plugins/adhd/lib/pull-component/config-writer');
-const src = fs.readFileSync('adhd.config.ts', 'utf8');
-const arg = process.argv[1];
-if (arg.startsWith('https://')) {
-  const path = reverseLookupPath(src, arg);
-  console.log(JSON.stringify({ mode: path ? 'update' : 'scaffold', path, figmaUrl: arg }));
-} else {
-  const entry = readComponentMapping(src, arg);
-  if (!entry) { console.error('No mapping for ' + arg); process.exit(2); }
-  console.log(JSON.stringify({ mode: 'update', path: arg, figmaUrl: entry.figma.url }));
-}
-" "$ARG"
+# Path form:
+node plugins/adhd/lib/pull-component/cli.js config-read \
+  --config adhd.config.ts \
+  --path "<relative-path>"
+# Exit 0 with URL on stdout = update mode. Exit 1 = no mapping.
+
+# URL form:
+node plugins/adhd/lib/pull-component/cli.js config-reverse \
+  --config adhd.config.ts \
+  --figma-url "<url>"
+# Exit 0 with path on stdout = update mode. Exit 1 = scaffold mode.
 ```
 
-Validate the file key in the resolved URL matches `config.figma.url`'s file key. On mismatch abort: "URL points at file <X>, but adhd.config.ts is configured for file <Y>."
+Branch:
+- **Path form, mapping found:** `update` mode. Use the returned URL.
+- **Path form, no mapping (exit 1):** abort with "No Figma mapping for `<path>`. Push it first with /adhd:push-component, or pass a Figma URL to scaffold."
+- **URL form, mapping found:** `update` mode. Use the returned path.
+- **URL form, no mapping:** `scaffold` mode. Use `AskUserQuestion` to ask: "Where should this component be created? (relative path from adhd.config.ts directory)". Validate via `Bash` that the path doesn't exist (`test ! -e <path>`); if it exists, abort.
 
-If scaffold mode (URL form, no mapping): use `AskUserQuestion` to ask: "Where should this component be created? (relative path from adhd.config.ts directory)". Validate the path doesn't already exist.
+Validate that the resolved Figma URL's file key matches `config.figma.url`'s file key (the segment between `/design/` and the next `/`). If different, abort with: "URL points at file `<X>`, but adhd.config.ts is configured for file `<Y>`."
 
-Save the resolved `{ mode, path, figmaUrl }` to `/tmp/adhd-pull-component/target.json`.
+Save resolved `{ mode, path, figmaUrl }` to working memory.
 
 ## Phase 2.5: Pre-flight lint
 
-Extract the Component Set's structural data via `mcp__plugin_figma_figma__use_figma`, scoped to the resolved node-id. Save to `/tmp/adhd-pull-component/ctx.json` and `/tmp/adhd-pull-component/vars.json`.
+Extract the Figma node-id from the URL (`?node-id=A-B` → `A:B`). Use `mcp__plugin_figma_figma__use_figma` to:
+1. Resolve the node by id; if not a `COMPONENT_SET` or top-level `COMPONENT`, abort: "Target node `<id>` is a `<type>`. Pull requires a Component Set."
+2. Serialize the node's structural data (the same way /adhd:lint does for scoped mode — fields: `id, name, type, layoutMode, padding*, itemSpacing, cornerRadius, *Radius, fills, strokes, effects, boundVariables, componentPropertyDefinitions, variantProperties, textStyleId, effectStyleId, characters, fontSize, fontName`, recursing into children).
+3. Collect the variable defs (walk boundVariables, look each up via `figma.variables.getVariableByIdAsync`, emit a `{ vars: { 'collection/name': value } }` map).
 
-Run the same lint engine /adhd:lint uses:
+Save both via `Bash` heredoc to:
+- `/tmp/adhd-pull-component/ctx.json`
+- `/tmp/adhd-pull-component/vars.json`
+
+Run the lint engine:
 
 ```bash
+mkdir -p /tmp/adhd-pull-component
 node plugins/adhd/lib/lint-engine/cli.js \
   --variable-defs /tmp/adhd-pull-component/vars.json \
   --design-context /tmp/adhd-pull-component/ctx.json \
-  --globals-css <path-resolved-from-config> \
+  --globals-css example/app/globals.css \
   --config adhd.config.ts \
   --target "PullComponent Preflight" \
-  --target-url "$FIGMA_URL" \
+  --target-url "<figma-url>" \
   --output /tmp/adhd-pull-component/preflight.md
 ```
 
-Parse the report for STRUCT003/004/005 errors specifically (variable-binding violations). Other errors are reported in the final report but do not block.
+Use the globals.css path from `config.cssEntry` if set, otherwise auto-detect: `example/app/globals.css` → `app/globals.css` → `src/app/globals.css`.
 
-If variable-binding errors exist AND neither `--allow-unbound` (CLI) nor `components.<path>.allowUnboundFigma === true` (config): abort with the helpful error listing each offending layer with its variant path and property (see spec section "Pre-flight lint of the Figma Component Set").
+Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Scan for STRUCT003/004/005 (variable-binding errors). Other rules' violations are noted for the final report but don't block.
 
-If variable-binding errors exist AND the escape is active: render the confirm-prompt via `AskUserQuestion` ("Continue with arbitrary classes? (y/N)"). On `n` or no answer, abort. On `y`, mark offending entries for off-system handling in Phase 7.
+**If variable-binding errors exist:**
+
+Check whether the escape is active:
+- `--allow-unbound` CLI flag, OR
+- `components.<path>.allowUnboundFigma === true` in config (use `Bash` + a small `node -e` to inspect)
+
+**Without escape:** abort with the helpful error, listing each offending layer:
+
+```
+✗ Cannot pull — the Figma Component Set has <N> unbound values:
+
+  • <variant-path> > <layer-name> — raw <property> <value> (not a variable)
+  ...
+
+These need to be bound to design-system variables before we can pull. The designer can:
+  1. Bind them in Figma (right-click the layer → "Apply variable")
+  2. Or create new variables if these are new design tokens, then run
+     /adhd:pull-design-system first, then re-run /adhd:pull-component
+
+We don't generate arbitrary Tailwind classes like text-[20px] or h-[80px] in your
+code — those would leak the design system the moment they shipped.
+```
+
+**With escape:** show the same list, then use `AskUserQuestion`:
+
+```
+⚠ The Figma Component Set has <N> unbound values:
+  ...
+
+If you continue, these will land in your code as ARBITRARY Tailwind classes (text-[10px], h-[80px]).
+They will be marked with // adhd:off-system comments so they're greppable.
+They WILL drift over time and break /adhd:push-component on the round-trip.
+
+The right fix is to bind these in Figma. This escape is a pragmatic short-term path.
+
+Continue? [Y] yes / [N] no (abort)
+```
+
+On `no` or no answer, abort. On `yes`, note which entries will be off-system; you'll prefix their applied values with the `// adhd:off-system — <reason>` comment in Phase 7.
 
 ## Phase 3: Read both sides
 
-In scaffold mode, there is no local file to parse; create an empty `local.json` (no unions, no tables) and skip ahead — Phase 7 will materialize a fresh file using all of Figma's values.
+**React side (update mode only):** use `Read` on `<react-path>` (from Phase 2). Identify:
+- The exported function component name (look for `export function <Name>(`).
+- Exported `type X = "a" | "b" | ...` string-literal unions.
+- The component's props interface (`<Name>Props`) — note which prop name maps to which union (e.g. `size?: AvatarSize` → axis `size` corresponds to union `AvatarSize`).
+- Top-level `export const TABLE: Record<Union, string> = { ... }` and `Record<Outer, Record<Inner, string>>` lookup tables.
 
-In update mode:
+If the file lacks ALL of (exported function + props interface + at least one Record<Union, string> table), abort: "`<path>` doesn't follow the lookup-table convention. v1 requires it."
 
-```bash
-node plugins/adhd/lib/pull-component/cli.js parse <react-path> --output /tmp/adhd-pull-component/local.json
+Write a brief structured summary of what you found to `/tmp/adhd-pull-component/local-summary.md` (for forensics and so the final report can reference it).
+
+**Figma side:** use another `use_figma` call (separate from Phase 2.5's structural extract) that, for every variant in the Component Set, captures the resolved Tailwind class string for each design-token-bearing property on each named layer.
+
+For each `boundVariables.fills[].id`, you have the variable's `name` (from Phase 2.5's `vars.json`). The mapping from variable name → Tailwind class is direct:
+- `color/zinc/800` → `bg-zinc-800` (for a fill) or `text-zinc-800` (for a text color) — disambiguate by the layer/property context.
+- `typography/text/xs` → `text-xs`.
+- `radius/lg` → `rounded-lg`.
+- `spacing/2` → `p-2` / `px-2` / etc. — context-dependent.
+
+For unbound (raw) values, write the Tailwind arbitrary form: `bg-[#abcdef]`, `text-[10px]`, `rounded-[32px]`. These only appear if Phase 2.5's escape was used.
+
+Save the result to `/tmp/adhd-pull-component/figma.json` with this shape (write it via `Bash` heredoc with the JSON you compose):
+
+```json
+{
+  "componentSetId": "<id>",
+  "componentName": "<name>",
+  "variantAxes": { "size": ["xs","sm","md","lg","xl"], ... },
+  "variants": [
+    {
+      "props": { "size": "lg", "shape": "circle", "status": "away" },
+      "tokens": {
+        "avatar-body.fill": "bg-zinc-800",
+        "avatar-body.cornerRadius": "rounded-full",
+        "initials.fontSize": "text-base",
+        "initials.fill": "bg-zinc-100",
+        "status-dot.fill": "bg-amber-500"
+      }
+    }
+  ]
+}
 ```
 
-For Figma: use `mcp__plugin_figma_figma__use_figma` to walk the Component Set and serialize per-variant per-table tokens. The Figma extract script must produce the shape used in __fixtures__/badge-figma-clean.json — variants with `props` and `tokens` keys. Save to `/tmp/adhd-pull-component/figma.json`.
+The `tokens` key is `<layer-name>.<property>`. Layer names come from Figma; properties are one of `fill`, `stroke`, `fontSize`, `cornerRadius`, `padding{Top,Right,Bottom,Left}`, `itemSpacing`, `effectStyle`.
 
-## Phase 4: Build the diff
+Hash the JSON (for the Phase 6 drift check) and store the hash in working memory.
 
-```bash
-node plugins/adhd/lib/pull-component/cli.js diff \
-  --local /tmp/adhd-pull-component/local.json \
-  --figma /tmp/adhd-pull-component/figma.json \
-  --output /tmp/adhd-pull-component/diff.json
-```
+## Phase 4: Diff
 
-Read `diff.json`. If all three buckets are empty AND mode is update: print "No changes" and exit 0.
+In working memory, walk both sides and produce three buckets:
+
+1. **`unionDiff`** — for each Figma `variantAxes` entry, compare its values to the corresponding local union. Record adds (Figma has, local doesn't) and removes (local has, Figma doesn't). Skip if no matching local union (becomes `unmapped`).
+
+2. **`tableDiff`** — for each local lookup table:
+   - Determine its axis (the union the Record is keyed by, mapped to a prop name via the props interface).
+   - For each entry in the local table, find Figma variant(s) whose `props[axis]` matches the key.
+   - The relevant Figma token is the one whose layer/property maps to this table's "thing." This requires knowing what the table affects — use the convention: `SIZE_BOX` and similar h-/w- tables describe the root element; `SIZE_TEXT` describes text size; `STATUS_COLOR` describes a status indicator's fill.
+   - If the local class string differs from the Figma class string for the matched variant, record a cell diff entry.
+
+3. **`unmapped`** — Figma axes with no matching local prop/union; local tables whose axis isn't in Figma.
+
+Write a human-readable summary to `/tmp/adhd-pull-component/diff.md` so the final report can reference it. Keep the structured form in working memory for Phase 5/7.
+
+If all three buckets are empty AND mode is `update`: print "No changes — Avatar is in sync with Figma." Skip to Phase 11 cleanup. Exit 0.
 
 ## Phase 5: Resolve divergences
 
-Top-of-loop short-circuit via `AskUserQuestion`:
-- "Apply ALL Figma values"
-- "Keep ALL local values (no-op — exits here)"
-- "Review each"
+Top-of-loop short-circuit via `AskUserQuestion` with these options:
 
-If "Apply ALL", short-circuit by writing a resolutions.json that accepts everything Figma proposes (every unionDiff.add, every cell). Skip 5a and 5b.
+```
+Pull plan:
+  • <N> union change(s)
+  • <M> table(s) with cell changes
+  • <K> unmapped Figma properties
 
-If "Review each":
+How to proceed?
+  [1] Apply ALL Figma values
+  [2] Keep ALL local values (no-op — exits)
+  [3] Review each
+```
 
-**5a — Union changes.** For each entry in `diff.unionDiff`, prompt:
-- "Add `<x>` to <Union> + cascade to all Record<<Union>, ...> tables"
-- "Skip — leave union as-is (table cells for this axis also skipped)"
+If `Apply ALL`: short-circuit — every unionDiff add accepted, every cell diff accepted (Figma wins). Skip the per-axis/per-table prompts and proceed to Phase 6.
 
-If the user skips an axis, mark it skipped — Phase 5b's per-axis prompts for that axis are NOT shown.
+If `Keep ALL`: skip to Phase 10 final report (nothing applied).
 
-**5b — Table cells.** For each `tableDiff` entry, show the table + cells, prompt:
-- "Apply Figma's values to all N cells"
-- "Review each one"
-- "Keep all local values (skip this table)"
+If `Review each`:
 
-`Review each one` → per-cell binary choice.
+### 5a — Union changes (asked first)
 
-**5c — Unmapped.** Print informational notice for each `unmapped` entry (no prompts).
+For each `unionDiff` entry, ask via `AskUserQuestion`:
 
-Accumulate into `/tmp/adhd-pull-component/resolutions.json`. For off-system entries from Phase 2.5, prefix each table value with the `// adhd:off-system` comment (literal newline included), so apply.js emits the comment above the property.
+```
+Variant axis `<axis>` differs:
+  Local (<Union>):  <existing members>
+  Figma:            <Figma members>
+
+  [1] Add <new-value> to <Union> + cascade entries to all Record<<Union>, ...> tables
+  [2] Skip — leave union as-is (table cells for this axis also skipped)
+```
+
+For removals:
+
+```
+Variant axis `<axis>` is missing values in Figma:
+  Local:  ... | <removed-value>
+  Figma:  ...
+
+  [1] Remove `<removed-value>` from <Union> + all Record<<Union>, ...> entries
+  [2] Skip — keep `<removed-value>` (you may have logic that uses it)
+```
+
+If the user skips an axis, mark it so Phase 5b's prompts for that axis are also skipped.
+
+### 5b — Table cells
+
+For each table in `tableDiff` (whose axis is NOT skipped from 5a), show:
+
+```
+<TABLE_NAME> (Record<<Union>, string>):
+
+  <key>  local              figma
+  ─────────────────────────────────
+  ...
+  ⚠ <K> changes.
+
+  [1] Apply Figma's values to all <K> cells
+  [2] Review each one
+  [3] Keep all local values (skip this table)
+```
+
+`Review each one` → per-cell:
+
+```
+<TABLE_NAME>.<key>
+  Local: <local>
+  Figma: <figma>
+
+  [1] Use Figma (<figma>)
+  [2] Keep local (<local>)
+```
+
+### 5c — Unmapped (informational)
+
+Print, no prompts:
+
+```
+ℹ Figma has <K> variant axis/axes with no matching Record<...> table in your code:
+
+  • <axis> (Figma values: ...) — add `export type ...` and a Record table, then re-run.
+```
+
+Accumulate resolutions in working memory: which union members to add/remove, which cells to apply, which to keep.
 
 ## Phase 6: Drift check
 
-Re-fetch the Figma CS, hash the variant tree, compare to the hash from Phase 3 (saved in `/tmp/adhd-pull-component/figma.hash`). On mismatch abort: "Figma changed during pull. Re-run /adhd:pull-component."
+Re-fetch the Figma CS via `use_figma`, re-serialize the variants+tokens shape (same script as Phase 3). Hash the JSON, compare to the Phase 3 hash. If different, abort:
+
+> "Figma changed during pull. Re-run /adhd:pull-component."
 
 ## Phase 7: Apply
 
-In scaffold mode: generate the source file from the diff (treat all Figma values as additions). Use a small template — types from `figma.variantAxes`, tables from variants. Write to the target path. The function body is a minimal stub:
+**Update mode:** for each resolution, use `Edit` on `<react-path>`:
+
+- **Cell update** (`tableDiff` cell accepted): identify the property line in the relevant `Record<...>` table. `Edit` with `old_string` matching the line (including enough context to be unique — usually the key name itself suffices, but include the indent/value if needed), `new_string` with the new value. Preserve trailing comma.
+
+  ```
+  Edit:
+    old_string: "  md: \"text-sm\","
+    new_string: "  md: \"text-base\","
+  ```
+
+- **Union add** (`unionDiff` add accepted): two-step:
+  1. `Edit` the type alias to include the new member. Example:
+     ```
+     old_string: "export type AvatarSize = \"xs\" | \"sm\" | \"md\" | \"lg\" | \"xl\";"
+     new_string: "export type AvatarSize = \"xs\" | \"sm\" | \"md\" | \"lg\" | \"xl\" | \"xxl\";"
+     ```
+  2. For each `Record<<Union>, ...>` table in the file, `Edit` to insert a new entry. Find the closing brace and insert the new entry just before it, matching the existing indentation. For 2-axis tables, insert into each outer entry's inner Record.
+
+  If a new value is off-system (Phase 2.5 escape was active for this property), prepend a `// adhd:off-system — <reason>` comment on its own line above the new entry.
+
+- **Union remove** (`unionDiff` remove accepted):
+  1. `Edit` the type alias to drop the member.
+  2. For each `Record<<Union>, ...>` table, `Edit` to remove the corresponding entry (the property line including its trailing newline).
+
+**Scaffold mode:** compose the new file with `Write`. Template:
 
 ```tsx
-export function <ComponentName>(/* props */) {
+export type <Component>Size = "<v1>" | "<v2>" | ...;
+// ...other axes
+
+export interface <Component>Props {
+  // axes from Figma variantAxes, optional
+}
+
+export const <COMPONENT>_<TABLE>: Record<<Component>Size, string> = {
+  // entries from Figma tokens, one per variant value
+};
+// ...other tables
+
+export function <Component>(/* props */) {
   return <span />; // adhd: scaffold stub — replace with your implementation
 }
 ```
 
-In update mode:
-
-```bash
-node plugins/adhd/lib/pull-component/cli.js apply \
-  --source <react-path> \
-  --resolutions /tmp/adhd-pull-component/resolutions.json \
-  --output /tmp/adhd-pull-component/newsource.tsx
-```
-
-Then `Write` `/tmp/adhd-pull-component/newsource.tsx` content back to `<react-path>` (single Write call — atomic per file).
+The function body is intentionally minimal. The user fills it in.
 
 ## Phase 8: Write mapping if scaffold mode
+
+Only in `scaffold` mode:
 
 ```bash
 node plugins/adhd/lib/pull-component/cli.js config-write \
   --config adhd.config.ts \
-  --path <new-relative-path> \
-  --figma-url <figma-url>
+  --path "<new-relative-path>" \
+  --figma-url "<figma-url>"
 ```
 
 ## Phase 9: Per-axis commit
 
-Group applied resolutions by axis (from `diff.json`). For each axis with applied changes:
+Group applied resolutions by axis. For each axis with applied changes:
 
 ```bash
 git add <react-path> [adhd.config.ts]
 git commit -m "ADHD pull: <ComponentName>.<axis> (<N> changes)"
 ```
+
+Zero applied changes → no commit. Multiple axes → multiple commits.
 
 ## Phase 10: Final report
 
@@ -1926,6 +857,7 @@ git commit -m "ADHD pull: <ComponentName>.<axis> (<N> changes)"
   - <M> table cells updated
   - <K> cells kept local
   - <U> unmapped Figma properties
+  - <O> off-system entries (use `git grep "adhd:off-system"` to find them)
 
 Component file: <react-path>
 Figma URL: <figma-url>
@@ -1933,7 +865,13 @@ Figma URL: <figma-url>
 
 ## Phase 11: Cleanup
 
-Always runs. `rm -rf /tmp/adhd-pull-component`.
+Always runs (even on abort):
+
+```bash
+rm -rf /tmp/adhd-pull-component
+```
+
+---
 
 ## Common errors
 
@@ -1942,89 +880,119 @@ Always runs. `rm -rf /tmp/adhd-pull-component`.
 | `adhd.config.ts not found` | Run `/adhd:config`. |
 | `No mapping for <path>` | Push it first: `/adhd:push-component <path>`. |
 | `URL points at wrong file` | Open the configured file and copy a node URL from there. |
-| `Pre-flight: <N> unbound values` | See the error message — bind values in Figma, or pass `--allow-unbound`. |
-| `<react-path> has no Record<Union, string> tables` | This component doesn't follow the lookup-table convention. v1 requires it. |
+| `Pre-flight: <N> unbound values` | Bind values in Figma, or pass `--allow-unbound`. |
+| `<react-path> doesn't follow the lookup-table convention` | This component uses inline classes or a non-Record pattern. v1 requires `Record<Union, string>` tables. |
 | `Figma changed during pull` | Re-run `/adhd:pull-component`. |
-```
+| `Edit failed: text not found` | The expected text in the source didn't match. Re-read the file and adjust. |
+````
 
 - [ ] **Step 2: Validate SKILL frontmatter**
 
 Run: `node scripts/validate-skill-frontmatter.js`
-Expected: PASS (the validator checks the frontmatter shape; this SKILL has the same surface as push-component).
+Expected: PASS — the validator checks the YAML shape; all required fields present.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add plugins/adhd/skills/pull-component/
-git commit -m "Add /adhd:pull-component skill orchestrating 11-phase pull flow"
+git commit -m "Add /adhd:pull-component skill (LLM-driven orchestrator)
+
+The skill is the brain: reads the React source, extracts the Figma
+Component Set via use_figma, computes the diff in working memory,
+prompts via AskUserQuestion, applies edits via the Edit tool. Every
+invariant (function body untouched, off-system comment format,
+abort conditions) is stated explicitly in the prompt.
+
+Pre-flight reuses lint-engine via subprocess for STRUCT003/004/005
+enforcement. Config mapping read/written via config-writer CLI."
 ```
 
 ---
 
-## Task 9: push-component additive — write mapping on first push
+## Task 3: push-component additive — write mapping on first push
 
 **Files:**
 - Modify: `plugins/adhd/skills/push-component/SKILL.md`
 
-- [ ] **Step 1: Locate the insertion point in push-component SKILL.md**
+The push-component SKILL has phases 1-13. The mapping write goes between Phase 11 (Decide and finalize OR roll back) and Phase 12 (Final report). Only fires on the finalize path.
 
-The mapping write should appear between Phase 11 (finalize) and Phase 12 (final report). Only run on the finalize path (when preflight passes or user chose "keep").
+- [ ] **Step 1: Read push-component SKILL to confirm phase numbers**
 
-- [ ] **Step 2: Insert the new step**
+Use `Read` on `plugins/adhd/skills/push-component/SKILL.md` to locate Phase 11 and Phase 12 headings.
 
-Add to `plugins/adhd/skills/push-component/SKILL.md` between Phase 11 and Phase 12:
+- [ ] **Step 2: Insert new phase between 11 and 12**
+
+Use `Edit` to add a new section just before the `## Phase 12: Final report` heading:
 
 ```markdown
 ## Phase 11.5: Write component mapping to adhd.config.ts
 
-Only runs on the finalize path (skip on rollback).
+Only runs on the finalize path (skip on rollback — if the user chose roll back in Phase 11, the captured page is gone and there's no mapping to write).
+
+Determine the relative path of the component file from the directory containing `adhd.config.ts`:
 
 ```bash
-RELATIVE_PATH=$(realpath --relative-to=$(dirname adhd.config.ts) <component-path>)
-FIGMA_URL="<figma.url-from-config>?node-id=$(echo $PAGE_ID | tr ':' '-')"
+RELATIVE_PATH=$(node -e "
+const path = require('path');
+const cfgDir = path.dirname(path.resolve('adhd.config.ts'));
+const comp = path.resolve('<component-path>');
+process.stdout.write(path.relative(cfgDir, comp));
+")
+```
+
+Build the Figma URL with the new page's node-id:
+
+```bash
+FIGMA_URL_BASE=$(node -e "
+const { default: cfg } = require(require('path').resolve('adhd.config.ts'));
+process.stdout.write(cfg.figma.url.replace(/\/?$/, '/'));
+")
+NODE_ID_ENCODED=$(echo "$PAGE_ID" | tr ':' '-')
+FIGMA_URL="${FIGMA_URL_BASE}?node-id=${NODE_ID_ENCODED}"
+```
+
+Write the mapping (idempotent — re-pushing the same component does not duplicate the entry):
+
+```bash
 node plugins/adhd/lib/pull-component/cli.js config-write \
   --config adhd.config.ts \
   --path "$RELATIVE_PATH" \
   --figma-url "$FIGMA_URL"
 ```
 
-This records the mapping so subsequent `/adhd:pull-component <component-path>` and `/adhd:pull-component <figma-url>` invocations can find each other. Idempotent — re-pushing the same component does not duplicate the entry.
+This records the mapping so subsequent `/adhd:pull-component <path>` or `/adhd:pull-component <figma-url>` invocations can find each other. In v2, push will use this mapping to update the same Component Set instead of creating a new page each time.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add plugins/adhd/skills/push-component/SKILL.md
-git commit -m "push-component: write mapping to adhd.config.ts on finalize"
+git commit -m "push-component: write components mapping to adhd.config.ts on finalize"
 ```
 
 ---
 
-## Task 10: README and marketplace updates
+## Task 4: README + marketplace updates
 
 **Files:**
 - Modify: `README.md`
 - Modify: `.claude-plugin/marketplace.json`
 
-- [ ] **Step 1: Read current README command table**
+- [ ] **Step 1: Update README command table**
 
-Identify lines 19-28 (the command table). The fifth command `/adhd:push-component` is the last row.
+Use `Read` on `README.md`. Locate the command table (around lines 19-28) and the "five slash commands" phrase.
 
-- [ ] **Step 2: Add pull-component row to the command table**
+Use `Edit` to change `After install, five slash commands are available:` → `After install, six slash commands are available:`.
 
-Edit `README.md`:
-
-Replace `After install, five slash commands are available:` with `After install, six slash commands are available:`.
-
-Add a row to the command table after `/adhd:push-component`:
+Use `Edit` to add a row to the command table after the `/adhd:push-component` row (use enough context to make the Edit unique — match on a few lines around the insertion point):
 
 ```
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
 ```
 
-- [ ] **Step 3: Add a "Pull a component" subsection**
+- [ ] **Step 2: Add "Pull a component" subsection**
 
-After the existing "Push a component" subsection, add:
+Use `Edit` to add (after the existing "Push a component" subsection):
 
 ```markdown
 ### Pull a component
@@ -2044,11 +1012,11 @@ After the existing "Push a component" subsection, add:
 The skill reads the Figma Component Set, diffs it against the React file's `Record<Union, string>` lookup tables, prompts on each divergence, and rewrites only those tables (plus union type members). Function body, JSX, hooks, handlers, and imports are never modified.
 ```
 
-- [ ] **Step 4: Update marketplace.json description**
+- [ ] **Step 3: Update marketplace.json**
 
-`.claude-plugin/marketplace.json` — update the `description` field of the `adhd` plugin to reflect 6 commands. Use the `Read` tool first to see the current value, then `Edit` to update.
+Use `Read` on `.claude-plugin/marketplace.json` to see current description. Use `Edit` to update the `adhd` plugin's description string to reflect 6 commands (preserve the existing phrasing style).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add README.md .claude-plugin/marketplace.json
@@ -2057,15 +1025,18 @@ git commit -m "README + marketplace: document /adhd:pull-component"
 
 ---
 
-## Task 11: Final smoke + PR prep
+## Task 5: Final verification + PR
 
 - [ ] **Step 1: Run all lib tests**
 
 ```bash
-node --test plugins/adhd/lib/lint-engine/__tests__/ plugins/adhd/lib/design-system/__tests__/ plugins/adhd/lib/push-component/__tests__/ plugins/adhd/lib/pull-component/__tests__/
+node --test plugins/adhd/lib/lint-engine/__tests__/ \
+              plugins/adhd/lib/design-system/__tests__/ \
+              plugins/adhd/lib/push-component/__tests__/ \
+              plugins/adhd/lib/pull-component/__tests__/
 ```
 
-Expected: all tests PASS. Confirm count is at least 280 (current 251 + ~30 new).
+Expected: all PASS. Confirm count ≥ 268 (251 baseline + ~17 new from config-writer + cli tests).
 
 - [ ] **Step 2: Run the SKILL frontmatter validator**
 
@@ -2073,9 +1044,9 @@ Expected: all tests PASS. Confirm count is at least 280 (current 251 + ~30 new).
 node scripts/validate-skill-frontmatter.js
 ```
 
-Expected: PASS — all six SKILL.md files have valid frontmatter.
+Expected: PASS — all six SKILL.md files validated.
 
-- [ ] **Step 3: Build the example app to sanity-check no regressions**
+- [ ] **Step 3: Build the example app to sanity-check**
 
 ```bash
 cd example && npm run build && cd ..
@@ -2097,29 +1068,39 @@ gh pr create --title "Add /adhd:pull-component skill" --body "$(cat <<'EOF'
 
 Adds `/adhd:pull-component <react-path | figma-url>` — pulls a Figma Component Set back into a React source file. Inverse direction of `/adhd:push-component`. Updates only design-token lookup tables (`Record<Union, string>`) and union type aliases — function body, JSX, hooks, handlers, and imports are never touched.
 
-### Pipeline
+## Architecture: LLM as the diff/apply engine
+
+This skill runs inside Claude Code, so the LLM is already in the orchestration loop. It reads the React source, extracts the Figma Component Set via `use_figma`, computes the diff in working memory, prompts the user via `AskUserQuestion`, and applies changes via `Edit` tool calls. Traditional code is reserved for the deterministic, testable parts:
+
+- **`lib/pull-component/config-writer.js`** — reads & idempotently writes `components.<path>.figma.url` in `adhd.config.ts`. ~150 lines + 9 unit tests.
+- **`lint-engine`** (existing, reused) — pre-flight runs the same `checkStructure` that `/adhd:lint` uses.
+- **SKILL.md** — the 11-phase orchestrator that handles all the intelligent work via Read/use_figma/AskUserQuestion/Edit.
+
+The first draft of this plan had `parse-react.js` / `differ.js` / `apply.js` modules. User gut-checked: "Claude Code is the reason we're doing this code gen. I want the intelligence of Claude Code to know how to diff this stuff. I don't want to use rigid, brittle code to do it when we have a full beautiful LLM to do it." Brittle AST manipulation was the wrong abstraction. The revised design pushes intelligence into the SKILL prompt where it belongs.
+
+## Pipeline
 
 1. Validate config
 2. Resolve target (path / URL / scaffold mode)
 3. Pre-flight lint of the Figma Component Set (same lint-engine as /adhd:lint)
-4. Parse React file (TS compiler API) + extract Figma variants
-5. Build the diff (union changes / table cells / unmapped axes)
+4. Read React source + extract Figma variants
+5. Diff (in working memory)
 6. Prompt per-divergence
 7. Drift check
-8. Apply via AST surgery scoped to unions + tables
+8. Apply via Edit tool calls
 9. Write component mapping if scaffold mode
 10. Per-axis commit
 11. Cleanup
 
-### Key design
+## Key design
 
 - **The React file IS the snapshot** — no parallel state stored in the repo. Lookup tables already encode every design-token value Figma cares about.
-- **Bidirectional mapping** in `adhd.config.ts` under `components.<path>.figma.url`. Written by push on first push (this PR adds Phase 11.5 to push-component), by pull on first scaffold.
+- **Bidirectional mapping** in `adhd.config.ts` under `components.<path>.figma.url`. Written by push on first push (Phase 11.5 added to push-component), by pull on first scaffold.
 - **Symmetric pre-flight**: STRUCT003/004/005 violations on the Figma side block the pull. Designer-side variable discipline enforced in both directions.
 - **Escape hatch**: `--allow-unbound` (or `allowUnboundFigma: true` in config) converts the abort to a confirm-prompt. Off-system entries land in code with `// adhd:off-system` comments — greppable, self-healing on future pulls.
-- **Function body invariant**: AST walker visits only top-level TypeAliasDeclarations and VariableStatements with Record<Union, string> annotations. Function bodies are out-of-bounds.
+- **Function body invariant**: the SKILL prompt explicitly tells Claude not to touch function declarations, function bodies, JSX, hooks, handlers, or imports.
 
-### Out of scope (v1)
+## Out of scope (v1)
 
 - JSX / function body changes — manual only
 - Multi-component pulls in one command
@@ -2127,8 +1108,8 @@ Adds `/adhd:pull-component <react-path | figma-url>` — pulls a Figma Component
 
 ## Test plan
 
-- [x] All lib unit tests passing (parse-react, class-resolver, differ, apply, config-writer, cli)
-- [x] Integration tests against synthetic Badge fixture with 4 Figma scenarios (clean, cell-change, added-variant, removed-variant)
+- [x] config-writer unit tests (9): idempotent add, append-to-existing, update-url, reverse lookup, etc.
+- [x] cli surface tests (8): all subcommands, error paths
 - [x] SKILL frontmatter validated
 - [x] Example app builds clean
 - [ ] Manual smoke test: pull-component against the merged-main Avatar component → 0 changes (in sync); manual Figma edit → 1-cell diff → applied → committed
@@ -2142,7 +1123,10 @@ Expected: PR URL printed.
 
 - [ ] **Step 6: Verify CI is green**
 
-Run: `gh pr checks $(gh pr view --json number -q .number)`
+```bash
+sleep 30 && gh pr checks $(gh pr view --json number -q .number)
+```
+
 Expected: all checks pass.
 
 ---
@@ -2153,36 +1137,24 @@ Expected: all checks pass.
 
 | Spec section | Task |
 |---|---|
-| Final command surface | Task 8 (SKILL.md), Task 10 (README) |
-| Pipeline Phase 1 | Task 8 |
-| Pipeline Phase 2 | Task 8 (target resolution); Task 6 (config-writer reverseLookupPath, readComponentMapping) |
-| Pipeline Phase 2.5 (pre-flight) | Task 8 (SKILL invokes lint-engine subprocess) |
-| Pipeline Phase 3 | Task 8 (SKILL); Task 2 (parse-react) |
-| Pipeline Phase 4 | Task 4 (differ) |
-| Pipeline Phase 5 | Task 8 (prompt UX in SKILL) |
-| Pipeline Phase 6 | Task 8 (drift check) |
-| Pipeline Phase 7 | Task 5 (apply) |
-| Pipeline Phase 8 | Task 6 (config-writer addComponentMapping) |
-| Pipeline Phase 9 | Task 8 (commits) |
-| Pipeline Phase 10 | Task 8 (report) |
-| Pipeline Phase 11 | Task 8 (cleanup) |
-| Lookup-table convention | Task 2 (parse-react implements detection) |
-| Config schema additions | Task 6 (config-writer); Task 9 (push-component additive); Task 10 (README documents) |
-| Module layout | Tasks 1-7 each create one module |
-| Edge cases | Task 8 (SKILL "Common errors" table) |
-| Pre-flight escape hatch | Task 8 (SKILL Phase 2.5) |
-| Symmetric-pipeline assertions | Task 3 (class-resolver imports lint-engine) |
-| Testing strategy | Tasks 1, 2, 3, 4, 5, 6 (each module has __tests__) |
-| Acceptance criteria 1-18 | Covered across Tasks 2-11 |
+| Final command surface | Task 2 (SKILL.md), Task 4 (README) |
+| What lives in code vs. SKILL | Task 1 (lib), Task 2 (SKILL) |
+| Pipeline Phases 1-11 | Task 2 |
+| Pre-flight escape hatch | Task 2 |
+| Config schema additions | Task 1 (config-writer), Task 3 (push-component additive), Task 4 (README) |
+| Module layout | Task 1 |
+| Edge cases | Task 2 (Common errors table) |
+| Acceptance criteria 1-18 | Tasks 1-5 across the board |
 
 No gaps.
 
-**Type / signature consistency check:**
+**Type / signature consistency:**
 
-- `parseReactComponent(source)` → `{ componentName, propsInterfaceName, unions, props, tables, functionBody }` — same signature in Tasks 2, 4, 5, 7
-- `diffLocalVsFigma(local, figma)` → `{ unionDiff, tableDiff, unmapped }` — same in Tasks 4, 7
-- `applyResolutions(source, resolutions)` → `newSource` (string) — same in Tasks 5, 7
-- Resolutions shape `{ unions: { <name>: { add, remove } }, tables: { <name>: { <key>: <value> } } }` — same across Tasks 5, 7, 8
-- `addComponentMapping(source, relPath, figmaUrl)` → newSource — same in Tasks 6, 7, 9
-- `readComponentMapping(source, relPath)` → `{ figma: { url } } | null` — same in Tasks 6, 8
-- `reverseLookupPath(source, figmaUrl)` → `relPath | null` — same in Tasks 6, 8
+- `readComponentMapping(source, relPath)` → `{ figma: { url } } | null` — Tasks 1, 2
+- `reverseLookupPath(source, figmaUrl)` → `relPath | null` — Tasks 1, 2
+- `addComponentMapping(source, relPath, figmaUrl)` → newSource — Tasks 1, 2, 3
+- CLI exits: 0 on success, 1 on "not found" (config-read/reverse), 2 on usage error — consistent
+
+**Placeholder scan:**
+
+Searched for TODO/TBD/FIXME — only legitimate hits are inside markdown code blocks showing intentional placeholders for user customization (e.g. `// adhd: scaffold stub — replace with your implementation`). No actual plan placeholders.

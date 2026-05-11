@@ -2,7 +2,7 @@
 
 **Goal:** Inverse of `/adhd:push-component`. Given a target — either a path to an existing React component or a Figma URL — read the corresponding Figma Component Set and reconcile its variant properties, lookup-table values, and union members back into the React source file. Update only the design-token surface (lookup tables, union types); never touch the function body, JSX, handlers, or hooks. Symmetric pipeline: pull's pre-flight validates the Figma source using the same lint engine `/adhd:lint` and `/adhd:push-component`'s preflight use, so structural violations on the Figma side block the pull before any code is rewritten.
 
-**Architectural premise:** The React file is its own snapshot. Top-level `export const X: Record<UnionType, string> = { ... }` lookup tables (the convention established by the Avatar reference component) already encode every design-token value the Figma Component Set cares about. We never store a parallel snapshot in the repo — we parse the React file at pull time and diff it directly against Figma. The mapping between a React file and its Figma Component Set lives in `adhd.config.ts` under `components.<path>.figma.url`, populated automatically by `/adhd:push-component` on first push and by `/adhd:pull-component` on first scaffold.
+**Architectural premise:** This skill is invoked from inside Claude Code. The model is already present, can read both sides of the diff in working memory, prompt the user via `AskUserQuestion`, and apply edits via `Edit` tool calls. We use the LLM as the diff/apply engine rather than reinventing brittle TS-compiler-API parsing + golden-file-tested AST surgery in deterministic library code. Library code is reserved for the parts that must be deterministic and testable: the lint engine (already exists, reused) and `adhd.config.ts` mutation (`config-writer`). Everything else is SKILL instructions executed by the model.
 
 **Precondition:** the design system has been synced to Figma via `/adhd:push-design-system`; all variables the Component Set references exist locally. The target Component Set must pass the lint engine's variable-binding checks (no raw colors, raw fontSize, raw effects on its layers) — designer-side discipline enforced.
 
@@ -23,7 +23,23 @@
 - Pulling JSX structure changes. Pull does not regenerate the function body; renames, prop additions, or layout changes in code remain a manual task.
 - Bulk pulls. v1 is one component per invocation.
 - Components that don't follow the `Record<Union, string>` lookup-table convention. v1 reports and aborts; the convention is now documented as part of the plugin's expectations.
-- Pulling components whose variant axes correspond to props NOT yet declared in the component file. The asymmetric path ("Figma added an axis the developer hasn't reflected in code") is reported, not auto-resolved.
+
+---
+
+## What lives in code vs. what the SKILL does
+
+| Concern | Where it lives | Why |
+|---|---|---|
+| Pre-flight lint (variable-binding violations) | `plugins/adhd/lib/lint-engine/` (existing) | Already deterministic and tested. Reused via subprocess call. |
+| `adhd.config.ts` mutation (read & add component mappings) | `plugins/adhd/lib/pull-component/config-writer.js` | Schema-level config edits where determinism + idempotency + tests are valuable. Small surface. |
+| Parsing the React file's unions/lookup tables | SKILL (Claude reads the source directly) | The LLM handles variation in component shape gracefully. Brittle pattern-matching would over-constrain the convention. |
+| Extracting the Figma Component Set's variants + tokens | SKILL via `use_figma` (no lib helper) | One shot of Plugin API code; result lives in `/tmp/`. |
+| Computing the diff (which cells differ, which union members added/removed) | SKILL (Claude reads both `/tmp` files and reasons about them) | The diff is the kind of thing the model does intuitively. No brittle comparator needed. |
+| Prompting the user per-divergence | SKILL via `AskUserQuestion` | Standard pattern. |
+| Applying changes to the React file | SKILL via `Edit` tool calls | Edit preserves whitespace/comments by design. The model knows which lines to change. |
+| Writing the component mapping back to `adhd.config.ts` | `lib/pull-component/config-writer.js` via `Bash` from SKILL | Same determinism argument as config reads. |
+
+The lib code shrinks to one module: `config-writer.js`. Everything else is SKILL instructions.
 
 ---
 
@@ -33,12 +49,12 @@
 Phase 1   Validate config
 Phase 2   Resolve target (path | URL | scaffold mode)
 Phase 2.5 Pre-flight lint of the Figma Component Set
-Phase 3   Read both sides (AST parse React file; extract Figma CS)
-Phase 4   Build the diff (unions, table cells, unmapped axes)
-Phase 5   Resolve divergences (prompts; batch-confirm affordances)
+Phase 3   Read both sides (Claude reads React source; use_figma extracts CS)
+Phase 4   Diff (Claude computes inline)
+Phase 5   Resolve divergences (prompts via AskUserQuestion)
 Phase 6   Drift check (re-fetch Figma; abort if remote changed)
-Phase 7   Apply to the React file (AST surgery, single Write call)
-Phase 8   Write mapping if scaffold mode
+Phase 7   Apply to the React file (Edit tool calls)
+Phase 8   Write mapping if scaffold mode (config-writer)
 Phase 9   Per-axis commit
 Phase 10  Final report
 Phase 11  Cleanup
@@ -57,25 +73,34 @@ Branch on `$ARGUMENTS`:
 | `<path>` matching a `components` entry | **update** | Use the entry's `figma.url` |
 | `<path>` with no entry | abort | `"No Figma mapping for <path>. Push it first with /adhd:push-component, or pass a Figma URL to scaffold."` |
 | `<figma-url>` matching `components.*.figma.url` | **update** | Reverse-lookup the path |
-| `<figma-url>` with no mapping | **scaffold** | Ask via `AskUserQuestion`: "Where should this component live?" Validate target path doesn't already exist (else abort). |
+| `<figma-url>` with no mapping | **scaffold** | Ask via `AskUserQuestion`: "Where should this component live?" Validate target path doesn't already exist. |
 
-If the URL's file key doesn't match `config.figma.url`, abort: `"URL points at file <X>, but adhd.config.ts is configured for file <Y>."` (mirrors `/adhd:lint`'s scoped-mode check).
+Path lookup and reverse lookup are done by the `config-writer` subcommands (deterministic, testable).
+
+If the URL's file key doesn't match `config.figma.url`, abort: `"URL points at file <X>, but adhd.config.ts is configured for file <Y>."`
 
 If `node-id` resolves to a node that isn't a `COMPONENT_SET` or top-level `COMPONENT`, abort: `"Target node <id> is a <type>. Pull requires a Component Set."`
 
-### Phase 2.5 — Pre-flight lint of the Figma Component Set
+### Phase 2.5 — Pre-flight lint
 
-Run the same `lint-engine` modules `/adhd:push-component`'s preflight uses, scoped to the target Component Set:
+Extract the Component Set's structural data via `use_figma`, scoped to the resolved node-id. Save to `/tmp/adhd-pull-component/ctx.json` and `/tmp/adhd-pull-component/vars.json`.
 
-```js
-const designContext = await extractStructuralData(componentSetId);
-const variableDefs = await extractVariableDefs(componentSetId);
-const violations = checkStructure(designContext, { fileKey, namingConvention: config.naming });
+Run the same lint engine `/adhd:lint` uses:
+
+```bash
+node plugins/adhd/lib/lint-engine/cli.js \
+  --variable-defs /tmp/adhd-pull-component/vars.json \
+  --design-context /tmp/adhd-pull-component/ctx.json \
+  --globals-css <path> \
+  --config adhd.config.ts \
+  --target "PullComponent Preflight" \
+  --target-url "$FIGMA_URL" \
+  --output /tmp/adhd-pull-component/preflight.md
 ```
 
-Filter violations to *variable-binding errors* (STRUCT003, STRUCT004, STRUCT005). Naming and structural-organization warnings (STRUCT008, STRUCT009) appear in the final report but do not block.
+Read the report; locate variable-binding errors (STRUCT003/004/005). Naming and structural-organization warnings (STRUCT008, STRUCT009) appear in the final report but do not block.
 
-**Default behavior (strict):** if any variable-binding errors exist, abort with:
+**Default behavior (strict):** if any variable-binding errors exist, abort with the helpful error listing each offending layer with its variant path and property:
 
 ```
 ✗ Cannot pull — the Figma Component Set has N unbound values:
@@ -118,52 +143,51 @@ On confirm, off-system entries land in the React file with `// adhd:off-system` 
 
 ### Phase 3 — Read both sides
 
-**React side:** read the file with `Read`. AST-parse via the TypeScript compiler API (already a transitive dep through Next.js). Extract:
+**React side:** in update mode, Claude reads the file directly with `Read` and identifies:
+- The exported function component name (declared via `export function <Name>(...)`).
+- Exported `type X = "a" | "b" | ...` string-literal unions.
+- The component's props interface (`<Name>Props`) — used to map prop names to union references (e.g. `size?: AvatarSize` → axis `size` maps to union `AvatarSize`).
+- Top-level `export const TABLE: Record<Union, string> = { ... }` or `Record<Outer, Record<Inner, string>>` lookup tables.
 
-| AST node | Output |
-|---|---|
-| `TypeAliasDeclaration` of `UnionTypeNode<LiteralTypeNode<StringLiteral>>` | `{ <unionName>: [<members...>] }` |
-| `InterfaceDeclaration` or `TypeAliasDeclaration` named `<Component>Props` | Props mapping (prop name → union type referenced) |
-| `VariableStatement` with `VariableDeclaration` typed `Record<Union, string>` | `{ <tableName>: { <key>: <classString>, ... }, axis: <unionName> }` |
-| Nested `Record<Outer, Record<Inner, string>>` | Two-level table with outer/inner axes |
-| Exported function declaration | Component name (sniff only; not modified) |
+In scaffold mode, there is no local file. Phase 7 will materialize a fresh file using all of Figma's values plus a stub function body.
 
-What we deliberately ignore: tables typed `Record<Union, T>` where T is not `string`; inline object literals without a `Record<Union, ...>` type annotation; tables defined inside the function body; non-Record arrays (e.g. `PALETTE`).
-
-Save normalized representation to `/tmp/adhd-pull-component/local.json`.
-
-**Figma side:** `use_figma` scoped to the Component Set, walking each variant and extracting per-layer bound variables. Save to `/tmp/adhd-pull-component/figma.json`.
-
-### Phase 4 — Build the diff
-
-Run a comparator producing `/tmp/adhd-pull-component/diff.json` with three buckets:
+**Figma side:** the SKILL runs a `use_figma` script that walks the Component Set and, for every variant, captures the resolved Tailwind-equivalent class strings per design-token-bearing property (fill colors, fontSize, padding, radius, etc.). Output shape (saved to `/tmp/adhd-pull-component/figma.json`):
 
 ```json
 {
-  "unionDiff": [
-    { "union": "AvatarSize", "axis": "size", "add": ["xxl"], "remove": [] }
-  ],
-  "tableDiff": [
+  "componentSetId": "<id>",
+  "componentName": "Avatar",
+  "variantAxes": { "size": ["xs","sm","md","lg","xl"], "shape": ["circle","square"], "status": ["online","away","offline"] },
+  "variants": [
     {
-      "table": "SIZE_TEXT",
-      "axis": "size",
-      "cells": [
-        { "key": "md", "local": "text-sm", "figma": "text-base" },
-        { "key": "xl", "local": "text-lg", "figma": "text-xl" }
-      ]
+      "props": { "size": "lg", "shape": "circle", "status": "away" },
+      "tokens": {
+        "avatar-body.fill": "bg-zinc-800",
+        "initials.fontSize": "text-base",
+        "status-dot.fill": "bg-amber-500"
+      }
     }
-  ],
-  "unmapped": [
-    { "figmaAxis": "theme", "values": ["light", "dark"], "reason": "no Record<AvatarTheme, ...> table found in source" }
   ]
 }
 ```
 
-The Tailwind-class → design-token resolution reuses `plugins/adhd/lib/lint-engine/variable-categorizer.js` + `theme-parser.js`. Layout-only tokens (`flex`, `items-center`) are ignored when resolving. Size, spacing, color, radius, typography tokens map 1:1 to design system variables.
+The mapping from Figma layer/property → Tailwind class is done by reversing the design-system push pipeline (variable id → variable name → Tailwind class via theme-parser, which `lint-engine` already provides).
+
+The SKILL doesn't need a separate library function for "extract from Figma" — it's one `use_figma` block, encoded in Phase 3 of the SKILL.
+
+### Phase 4 — Diff
+
+Claude reads both `/tmp/adhd-pull-component/local-context.md` (a brief summary written by Claude after reading the React file in Phase 3) and `/tmp/adhd-pull-component/figma.json`, then computes the diff in three buckets:
+
+- **`unionDiff`** — for each Figma `variantAxes` entry whose values don't match the corresponding local union members: which to add, which to remove.
+- **`tableDiff`** — for each local lookup table, walk Figma variants; for variants whose props match the table's key axis, compare the Figma resolved token against the local table cell. Record divergences.
+- **`unmapped`** — Figma variant axes with no matching local prop/union, OR local tables with an axis that doesn't appear in Figma.
+
+The diff is held in working memory (and optionally written to `/tmp/adhd-pull-component/diff.md` for the user-facing summary in Phase 5).
 
 ### Phase 5 — Resolve divergences
 
-Top-of-loop short-circuit:
+Top-of-loop short-circuit via `AskUserQuestion`:
 
 ```
 Pull plan:
@@ -178,110 +202,62 @@ Pull plan:
 
 If `Review each`:
 
-**5a — Union changes first.** Per axis:
+**5a — Union changes first.** Per axis, prompt to add the new value (and cascade entries to all `Record<ThatUnion, ...>` tables) or skip. If the user skips an axis, all subsequent table-cell prompts for that axis are also skipped.
 
-```
-Variant axis `size` differs:
-  Local (AvatarSize):  xs | sm | md | lg | xl
-  Figma:               xs | sm | md | lg | xl | xxl
+**5b — Table cells next.** Per table with changes, show the table + cells with a 3-way prompt (`Apply Figma's values to all N cells` / `Review each one` / `Keep all local values`).
 
-  [1] Add `xxl` to AvatarSize + new entries in all Record<AvatarSize, ...> tables
-  [2] Skip — leave union as-is (table cells for this axis also skipped)
-```
+**5c — Unmapped, informational only.** Print a notice; no prompts.
 
-Removed-from-Figma case is symmetric:
-
-```
-  Local (AvatarSize):  xs | sm | md | lg | xl | xxl
-  Figma:               xs | sm | md | lg | xl
-
-  [1] Remove `xxl` from AvatarSize + all Record<AvatarSize, ...> entries
-  [2] Skip — keep `xxl` in code (you may have logic that uses it)
-```
-
-If the user skips an axis, all subsequent table-cell prompts for that axis are skipped automatically.
-
-**5b — Table cells next.** Per table with changes:
-
-```
-SIZE_TEXT (Record<AvatarSize, string>):
-
-  size   local           figma
-  ──────────────────────────────────
-  xs     text-2xs        text-2xs    ✓
-  sm     text-xs         text-xs     ✓
-  md     text-sm         text-base   ⚠
-  lg     text-base       text-base   ✓
-  xl     text-lg         text-xl     ⚠
-
-2 changes.
-  [1] Apply Figma's values to all 2 cells
-  [2] Review each one
-  [3] Keep all local values (skip this table)
-```
-
-`Review each` prompts per cell with a binary `[1] Use Figma | [2] Keep local`.
-
-**5c — Unmapped, informational only:**
-
-```
-ℹ Figma has 1 variant axis with no matching Record<...> table:
-
-  • theme (Figma values: "light" | "dark")
-
-Pull cannot auto-update unmapped axes. Add `export type AvatarTheme = "light" | "dark"`
-and a Record<AvatarTheme, ...> table, then re-run /adhd:pull-component.
-```
-
-All resolutions accumulate into `/tmp/adhd-pull-component/resolutions.json`:
-
-```json
-{
-  "unions": { "AvatarSize": { "add": ["xxl"], "remove": [] } },
-  "tables": {
-    "SIZE_TEXT": { "md": "text-base", "xl": "text-xl" },
-    "STATUS_COLOR": { "away": "bg-amber-600" }
-  }
-}
-```
+The resolutions live in Claude's working memory; they don't need a `/tmp/resolutions.json` file because the apply step (Phase 7) is also Claude.
 
 ### Phase 6 — Drift check
 
-Re-fetch the Figma CS, hash the relevant subtree, compare to the hash captured in Phase 3. If different, abort: `"Figma changed during pull. Re-run /adhd:pull-component."`
+Re-fetch the Figma CS via `use_figma`, hash the variant subtree, compare to the hash captured at Phase 3. If different, abort: `"Figma changed during pull. Re-run /adhd:pull-component."`
 
-### Phase 7 — Apply to the React file
+### Phase 7 — Apply
 
-AST-surgery using the TypeScript compiler API's text-replacement APIs. Single `Write` tool call writes the fully transformed source — pull is atomic per file.
+**Update mode:** for each resolved change, Claude uses the `Edit` tool to update the React source. Specifically:
 
-**Touched:**
-- Property values in `Record<Union, string>` table literals — replaced in place, preserving surrounding whitespace, indentation, and comments.
-- Union member lists on `TypeAliasDeclaration` of `UnionTypeNode<LiteralTypeNode>` — appended or removed.
-- When a union member is added, every `Record<ThatUnion, ...>` table in the file receives a new key:
-  - If Figma's bound class resolves cleanly: `xxl: "h-20 w-20"`
-  - In `--allow-unbound` mode for unbindable values: `// adhd:off-system — figma has no radius variable for 32px` followed by `xxl: "h-[80px] w-[80px] rounded-[32px]"`
-- When a union member is removed, the corresponding key is removed from every table.
+- **Cell update:** `Edit` the property value in the relevant `Record<...>` table. The model identifies the exact line and replaces only the value string.
+- **Union member add:** `Edit` the `type X = ...` declaration to append the new member, then for each `Record<X, ...>` table in the file, `Edit` to insert the new key with its Figma-resolved value. If the value is off-system (escape hatch active), prepend a `// adhd:off-system — <reason>` comment line above the new entry.
+- **Union member remove:** `Edit` the `type X = ...` to remove the member, then `Edit` each `Record<X, ...>` table to drop the corresponding key.
 
-**Never touched:**
-- Function declarations, function bodies, JSX, hook calls, event handlers, imports (other than no imports are added or removed).
-- Lookup tables typed with non-`string` value types.
-- Tables defined inside function bodies.
+The model knows not to touch the function body, JSX, hooks, handlers, or imports — these are explicit invariants in the SKILL prompt.
 
-**Formatting preservation:**
-- Detect indentation from the first indented line of the file (2-space / 4-space / tab); mirror it for any inserted lines.
-- Preserve CRLF / LF line endings.
-- Preserve existing comment positions; new `// adhd:off-system` comments are inserted above their associated table entry.
+**Scaffold mode:** Claude composes a fresh component file matching the lookup-table convention:
+
+```tsx
+import React from "react";
+
+export type <Component>Size = "<v1>" | "<v2>" | ...;
+// ...other axes
+
+export interface <Component>Props {
+  // axes from Figma variantAxes, optional
+}
+
+export const <COMPONENT>_<TABLE>: Record<<Component>Size, string> = {
+  // entries from Figma
+};
+// ...other tables
+
+export function <Component>(/* props */) {
+  return <span />; // adhd: scaffold stub — replace with your implementation
+}
+```
+
+Written via `Write` to the user-provided target path.
 
 ### Phase 8 — Write mapping if scaffold mode
 
-Only runs in scaffold mode. Add `components.<new-path>.figma.url` to `adhd.config.ts` using the same `Edit` tool flow `/adhd:push-component` uses on first push. The added entry matches the parent schema:
-
-```ts
-"app/components/avatar/index.tsx": {
-  figma: {
-    url: "https://www.figma.com/design/<KEY>/?node-id=91-18",
-  },
-}
+```bash
+node plugins/adhd/lib/pull-component/cli.js config-write \
+  --config adhd.config.ts \
+  --path <new-relative-path> \
+  --figma-url <figma-url>
 ```
+
+In update mode the mapping was used as input but doesn't change, so this step is a no-op.
 
 ### Phase 9 — Per-axis commit
 
@@ -291,7 +267,7 @@ Group applied resolutions by variant axis. For each axis touched, one commit:
 git commit -m "ADHD pull: <component>.<axis> (<N> changes)"
 ```
 
-Multiple axes → multiple commits. Zero applied changes (user picked "Keep all local") → no commit.
+Multiple axes → multiple commits. Zero applied changes → no commit.
 
 ### Phase 10 — Final report
 
@@ -314,7 +290,7 @@ Always runs (even on abort). `rm -rf /tmp/adhd-pull-component`.
 
 ## The lookup-table convention
 
-The convention is now part of the plugin's documented expectations. Components designed to work with ADHD's push/pull cycle structure their design tokens as:
+Components designed to work with ADHD's push/pull cycle structure their design tokens as:
 
 ```tsx
 export type AvatarSize = "xs" | "sm" | "md" | "lg" | "xl";
@@ -347,12 +323,12 @@ export function Avatar({ name, size = "md", shape = "circle" }: AvatarProps) {
 }
 ```
 
-Pull recognizes:
-- `AvatarSize`, `AvatarShape` as variant-axis unions. The mapping to Figma's `size`, `shape` variant properties is via the props interface — pull walks `AvatarProps`, finds `size: AvatarSize` and `shape: AvatarShape`, and links each prop name to its union.
+Pull recognizes (via Claude reading the source):
+- `AvatarSize`, `AvatarShape` as variant-axis unions. The mapping to Figma's `size`, `shape` variant properties is via the props interface — `size: AvatarSize` and `shape: AvatarShape`.
 - `SIZE_BOX`, `SHAPE` as lookup tables keyed by those unions. Tables get linked to a Figma axis through their key type — `Record<AvatarSize, ...>` maps to the `size` axis because `AvatarSize` is referenced from the `size` prop.
 - The component function as a sniff-only target — its existence confirms this is a component file, but its body is invariant.
 
-Tables that don't fit the pattern are reported and ignored. The plugin does not attempt to infer design tokens from arbitrary code shapes — that's a recipe for false positives and silent rewrites.
+The convention is documented in the README and in the SKILL prompt. Files that don't follow it are reported and the pull is aborted — the SKILL prompt tells Claude exactly what to look for so that "doesn't follow the convention" is a clear, reproducible determination.
 
 ---
 
@@ -390,7 +366,7 @@ Schema rules:
 - Per-component non-Figma settings live at the same level as `figma` (not inside it).
 
 **Writers of `components.*`:**
-- `/adhd:push-component`: writes on first successful push (NEW additive Phase 12.5 added to push-component as part of this PR).
+- `/adhd:push-component`: writes on first successful push (NEW additive step inserted into push-component's SKILL.md between Phase 11 "Decide and finalize" and Phase 12 "Final report" — only writes on the finalize path, never on rollback).
 - `/adhd:pull-component`: writes on first successful scaffold-mode pull.
 
 **Readers:**
@@ -402,18 +378,19 @@ Schema rules:
 
 ## Module layout
 
-New library at `plugins/adhd/lib/pull-component/`:
+Library at `plugins/adhd/lib/pull-component/`:
 
-| Module | Responsibility |
+| File | Responsibility |
 |---|---|
-| `parse-react.js` | TypeScript compiler API walker; extracts unions, props interface, lookup tables, function-body bounds (for invariant assertion). |
-| `class-resolver.js` | Re-exports + wraps `lint-engine/variable-categorizer.js` + `theme-parser.js`. Tokenizes multi-class strings, resolves each to `{domain, path, value}` or marks as "layout-only" (ignored). |
-| `differ.js` | Pure function: `(localExtract, figmaExtract) → diff.json`. |
-| `apply.js` | Pure function: `(sourceText, resolutions) → newSourceText`. Preserves whitespace, comments, line endings. |
-| `config-writer.js` | Add/read `components.<path>.figma.url` in `adhd.config.ts`. Idempotent. |
-| `cli.js` | Subcommand surface: `parse`, `extract`, `diff`, `apply`, `config-write`. Same shape as `push-component/cli.js`. |
+| `config-writer.js` | Read & idempotently add `components.<path>.figma.url` in `adhd.config.ts`. Also `reverseLookupPath(source, figmaUrl)`. |
+| `cli.js` | Single subcommand: `config-write --config <path> --path <rel> --figma-url <url>` plus `config-read --config <path> --path <rel>` and `config-reverse --config <path> --figma-url <url>`. |
+| `__tests__/config-writer.test.js` | Unit tests for the three functions (idempotent add, append-to-existing, reverse lookup). |
+| `__tests__/cli.test.js` | CLI surface tests. |
+| `README.md` | One-paragraph module readme. |
 
-Skill: `plugins/adhd/skills/pull-component/SKILL.md` — orchestrator with `disable-model-invocation: true`, mirroring `push-component`'s phase-by-phase structure.
+Skill: `plugins/adhd/skills/pull-component/SKILL.md` — orchestrator with `disable-model-invocation: true`. Contains all the LLM-driven phases (read React, extract Figma, diff, prompt, apply via Edit). The SKILL prompt is detailed enough that Claude can execute it deterministically — every behavior the user can rely on is explicitly described, not left to the model's intuition.
+
+There is no `parse-react.js`, `differ.js`, or `apply.js`. The model handles those phases.
 
 ---
 
@@ -427,19 +404,17 @@ Skill: `plugins/adhd/skills/pull-component/SKILL.md` — orchestrator with `disa
 | URL points at different file than `config.figma.url` | Abort with file-mismatch error |
 | `node-id` resolves to non-Component-Set | Abort with type-mismatch error |
 | Pre-flight finds unbound values, no escape flag | Abort with the "you need variables" error |
-| Pre-flight passes, local file has zero recognizable tables | Abort: `"<path> has no Record<Union, string> tables to pull into. v1 requires the lookup-table convention."` |
-| Local file references a union we couldn't find in the same file | Warn + skip that axis; report at end as unmapped |
-| Local has `Record<Union, string>` but Figma has no matching variant axis | Report as "local-only table"; skip. Common during partial-progress. |
-| Multiple tables typed `Record<SameUnion, string>` (legit — SIZE_BOX + SIZE_TEXT + SHAPE) | Prompted independently in Phase 5b |
-| Tailwind class the resolver can't parse | Treat as "unknown local value"; show verbatim in diff |
+| Pre-flight passes, local file has no recognizable convention (no exported function + props + at least one `Record<Union, string>` table) | Abort: `"<path> doesn't follow the lookup-table convention. v1 requires it."` |
+| Local file references a union that's not defined in the same file | Warn + skip that axis; report at end as unmapped |
+| Local table indexed by a union not present as a prop type | Report as "local-only table"; skip. Common during partial-progress. |
+| Multiple tables typed `Record<SameUnion, string>` (legit — e.g. SIZE_BOX + SIZE_TEXT) | Diff/prompt independently per table |
 | Figma references a variable that doesn't exist locally | Abort: `"Figma references variables not in your design system. Run /adhd:pull-design-system first."` |
 | Drift check (Phase 6) detects remote change | Abort: `"Figma changed during pull. Re-run /adhd:pull-component."` |
-| AST write fails | Abort with the write error. Atomic per file (no partial state). |
+| `Edit` tool call fails (e.g. expected text not found) | Surface the underlying error; the SKILL aborts the pull. No partial state because Edit failures don't write. |
 | User aborts mid-prompt (Ctrl-C) | Apply nothing; print `"Aborted. No changes."`; cleanup runs |
 | Scaffold mode: target path already exists | Abort: `"<target> already exists. Pass a different path or delete it first."` |
 | `--allow-unbound` with clean Figma | Flag has no effect; proceeds normally |
 | Component name in file ≠ Figma CS name | Warn but proceed |
-| Source uses CRLF / tabs / 2-space / 4-space indentation | Detected from existing file; preserved through apply |
 
 ---
 
@@ -450,13 +425,13 @@ When `--allow-unbound` (CLI) OR `components.<path>.allowUnboundFigma === true` (
 1. Show the unbound-values list with what they'll become in code (e.g. `text-[20px]`).
 2. Confirm prompt: continue with arbitrary classes? (default: No).
 3. On confirm:
-   - Apply proceeds, off-system entries get the `// adhd:off-system — <reason>` comment in the file.
+   - Apply proceeds; off-system entries get the `// adhd:off-system — <reason>` comment in the file (via the same Edit-tool path Claude uses for in-system entries).
    - Final report includes a line: `⚠ N entries are off-system. Bind in Figma to bring them back in-system.`
 
 The `// adhd:off-system` comment is:
 - **Greppable:** `git grep "adhd:off-system"` lists all drift sources.
-- **Self-healing:** when the value is bound in Figma, the next pull replaces the arbitrary class with the proper one AND removes the comment.
-- **Future-aware:** v2 can ship an `OFFSYSTEM_USAGE` lint rule that surfaces these in `/adhd:lint` output as drift hotspots.
+- **Self-healing:** when the value is bound in Figma, the next pull replaces the arbitrary class with the proper one and removes the comment (the model is explicitly told to do this in the SKILL prompt).
+- **Future-aware:** v2 can ship an `OFFSYSTEM_USAGE` lint rule that surfaces these in `/adhd:lint` output.
 
 **Round-trip consequence (intentional):** off-system code in React fails `/adhd:push-component`'s preflight on the way back. This forces a discussion: bind it in Figma, or define new variables and `/adhd:pull-design-system` them. The escape hatch is not a permanent crutch.
 
@@ -466,65 +441,58 @@ The `// adhd:off-system` comment is:
 
 | Assertion | Mechanism |
 |---|---|
-| `class-resolver.js` imports — never duplicates — `lint-engine` Tailwind-resolution logic | Module re-exports from `lint-engine/variable-categorizer.js` + `lint-engine/theme-parser.js`; tested in `__tests__/class-resolver.test.js` |
-| Pre-flight uses the same `checkStructure` that `/adhd:lint` and `/adhd:push-component`'s preflight use | Phase 2.5 invokes `lint-engine`'s structure-checker directly; tested by running a known-violation fixture |
-| Round-trip stability: push-then-pull produces a no-op diff | Smoke-test acceptance criterion + integration fixture |
+| Pre-flight uses the same `checkStructure` that `/adhd:lint` and `/adhd:push-component` preflight use | Phase 2.5 invokes `lint-engine`'s CLI as a subprocess; same code path |
+| `adhd.config.ts` mapping is read & written by both push and pull through the same `config-writer.js` module | Push-component's new mapping-write step invokes the same CLI subcommand pull uses |
+| Round-trip stability: push-then-pull produces a no-op diff for clean components | Verified via the manual smoke test acceptance criterion (the model can't be unit-tested for byte-identity, but the round-trip property is testable end-to-end) |
 
 ---
 
 ## Testing strategy
 
-**Layer 1 — Unit tests on each module.** `plugins/adhd/lib/pull-component/__tests__/`:
+The model-driven nature of Phases 3–7 changes the test pyramid. We test the deterministic bits with traditional unit tests; we test the LLM bits via reproducible end-to-end fixtures and manual smoke tests, not golden-byte diffs.
+
+**Layer 1 — Unit tests on deterministic lib code:**
 
 | Module | Coverage |
 |---|---|
-| `parse-react.js` | Extract Avatar's unions, props, 5 lookup tables; verify multi-axis tables; assert function-body bounds recorded and never visited |
-| `class-resolver.js` | Multi-token strings split; layout tokens ignored; size/color/radius/typography map cleanly; reuses lint-engine code |
-| `differ.js` | Pure function: clean (no diff), single cell, added union, removed union, unmapped Figma axis, unmapped local table |
-| `apply.js` | Pure function: cell update preserves comments, union append, union remove cascades, no-op resolutions return byte-identical |
-| `config-writer.js` | Idempotent on re-add; preserves key order |
-| `cli.js` | Each subcommand surface (same pattern as push-component CLI tests) |
+| `config-writer.js` `addComponentMapping` | Adds entry when missing; idempotent on re-add; appends to existing components; updates URL if different |
+| `config-writer.js` `readComponentMapping` | Returns `{ figma: { url } }` or `null` |
+| `config-writer.js` `reverseLookupPath` | Returns the relative path or `null` |
+| `cli.js` config subcommands | Each surface returns exit 0 on success; exit 2 on usage error |
 
-**Layer 2 — Integration with real-figma fixtures.** `plugins/adhd/lib/pull-component/__fixtures__/`:
+**Layer 2 — SKILL-driven behavior (verified by reading the SKILL prompt itself):**
 
-| Fixture | Asserts |
-|---|---|
-| `avatar-clean.json` | Diff is empty; apply is byte-identical no-op |
-| `avatar-cell-change.json` | 1 cell diff; apply rewrites just that line |
-| `avatar-added-variant.json` | Union member appended; new key cascades to all SIZE_* tables |
-| `avatar-removed-variant.json` | Inverse |
-| `avatar-unbound-fill.json` | Pre-flight aborts; error lists the layer path |
-| `avatar-unbound-with-flag.json` | With `--allow-unbound`: off-system comment lands in output |
+The SKILL.md is the contract for what the model does. The plan includes a **SKILL prompt review** task — a fresh subagent reads the spec + the SKILL.md and asks: "Is every phase described concretely enough that any Claude Code agent would execute it the same way? Are the invariants (function body untouched, off-system comment format, abort conditions) stated explicitly?" Findings are addressed before merge.
 
-Golden source-text files (`avatar-base.tsx`, `avatar-after-<scenario>.tsx`) committed alongside; tests assert byte-for-byte match after apply.
+**Layer 3 — End-to-end smoke test (manual):**
 
-**Layer 3 — End-to-end smoke test.** Manual, run against the merged-main Avatar source + Figma CS `91:18` in file `PBCAkpPnvGXWrz6H7qfH3V`:
+1. Start from a clean local Avatar source. `/adhd:pull-component app/components/avatar/index.tsx` → "No changes" and exits 0.
+2. Make a small Figma edit (rebind one variant's color in the Avatar CS, `91:18`).
+3. Re-run pull → 1-cell diff, prompted, applied, committed. Verify the function body is untouched and the change lands in the correct lookup table.
+4. Revert the Figma edit, re-run → detects drift the other way, prompts to revert local.
+5. Test the escape hatch: deliberately unbind one Figma value, run `/adhd:pull-component --allow-unbound`, verify off-system comment lands and the rest of the file is preserved.
 
-1. Start from merged-main Avatar.
-2. `/adhd:pull-component app/components/avatar/index.tsx` → "No changes" (in sync).
-3. Make a single Figma edit (rebind one variant's color).
-4. Re-run pull → 1-cell diff, prompted, applied, committed.
-5. Revert Figma edit, re-run → detects drift in the opposite direction, prompts to revert local.
+Documented in the spec as a manual acceptance check, not automated CI.
 
 ---
 
 ## Acceptance criteria
 
 1. `/adhd:pull-component app/components/avatar/index.tsx` against in-sync Figma produces "No changes" and exits 0.
-2. With one cell changed in Figma, pull surfaces the diff, prompts, applies, and commits.
+2. With one cell changed in Figma, pull surfaces the diff, prompts, applies (via Edit tool), and commits.
 3. With a new variant value in Figma (`size=xxl`), pull prompts to extend the union and cascades the new key through all `Record<AvatarSize, ...>` tables.
 4. With a removed variant value in Figma, pull prompts and removes from the union + all tables.
-5. URL form: `/adhd:pull-component <figma-url>` reverse-resolves to the path from `components.*.figma.url`.
-6. URL form with no matching mapping enters scaffold mode, prompts for target path, writes the new file + the mapping.
+5. URL form: `/adhd:pull-component <figma-url>` reverse-resolves to the path from `components.*.figma.url` via `config-writer`.
+6. URL form with no matching mapping enters scaffold mode, prompts for target path, writes the new file via `Write`, and adds the mapping via `config-writer`.
 7. Pre-flight blocks the pull when Figma has unbound values; the error lists each offending layer with its variant path and property.
 8. `--allow-unbound` (or `allowUnboundFigma: true` in config) converts the abort to a confirm-prompt; on confirm, hardcoded arbitrary classes land in the file with `// adhd:off-system` comments.
 9. URL points at a different Figma file than `config.figma.url` → abort with the file-mismatch error.
-10. Function body, JSX, hooks, handlers, and imports are never modified — verified by golden diff in Layer 2 tests.
-11. CRLF line endings, tabs vs spaces, and existing comment positions are preserved through apply.
+10. Function body, JSX, hooks, handlers, and imports are never modified — the SKILL prompt explicitly states this invariant and Claude is responsible for honoring it.
+11. The SKILL prompt names the lookup-table convention precisely enough that Claude can detect "doesn't follow the convention" reproducibly.
 12. Drift check runs between extract and apply; if Figma changed during the user's deliberation, abort with "Re-run pull-component".
 13. Per-axis commit: `git commit -m "ADHD pull: avatar.size (3 changes)"` lands per axis touched; multiple axes → multiple commits; zero changes → zero commits.
-14. The `class-resolver` module imports from `lint-engine` — no duplicate Tailwind-to-design-token resolution logic.
-15. Re-running `/adhd:pull-component` after `/adhd:push-component` on the same component produces a no-op diff (round-trip stability assertion).
+14. Pre-flight invokes `lint-engine/cli.js` as a subprocess — no duplicate structural-lint logic. (`class-resolver.js` and similar bridges are NOT introduced; the SKILL handles class-to-token resolution by reading globals.css and resolving as needed.)
+15. Re-running `/adhd:pull-component` after `/adhd:push-component` on the same component produces a no-op diff (round-trip stability assertion via manual smoke test).
 16. Pull adds `components.<path>` to `adhd.config.ts` automatically in scaffold mode, in the `{ figma: { url } }` shape matching the parent config schema.
 17. README's command table includes the `/adhd:pull-component` row (enforced by the AGENTS.md "keep README in sync" convention).
-18. `/adhd:push-component` writes the same `components.<path>.figma.url` mapping on first push (additive step inserted into push-component's SKILL.md, between Phase 11 "Decide and finalize" and Phase 12 "Final report" — only writes the mapping on the finalize path, never on rollback).
+18. `/adhd:push-component` writes the same `components.<path>.figma.url` mapping on first push (additive step inserted into push-component's SKILL.md between Phase 11 and Phase 12 — only writes on the finalize path, never on rollback).
