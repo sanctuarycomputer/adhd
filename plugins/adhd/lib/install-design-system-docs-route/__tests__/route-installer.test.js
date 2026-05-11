@@ -21,11 +21,12 @@ test('installRoute writes page/layout files with .design-system.tsx suffix when 
     prodExcluded: true,
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
-  // Route files (page/layout) get the suffix so pageExtensions filters them in prod.
+  // Route files (page/layout/error) get the suffix so pageExtensions filters them in prod.
   assert.ok(fs.existsSync(path.join(docsDir, 'layout.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'page.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'tokens', '[domain]', 'page.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'page.design-system.tsx')));
+  assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.design-system.tsx')));
   // PropToggle is a module imported by the component page; it doesn't need the
   // suffix for prod-exclusion (the page that imports it IS suffix-excluded).
   assert.ok(fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
@@ -44,6 +45,7 @@ test('installRoute writes plain .tsx files when not prodExcluded', () => {
   assert.ok(fs.existsSync(path.join(docsDir, 'page.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'tokens', '[domain]', 'page.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'page.tsx')));
+  assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
 });
 
@@ -56,6 +58,7 @@ test('all written files start with the marker comment', () => {
     'page.design-system.tsx',
     'tokens/[domain]/page.design-system.tsx',
     'components/[component]/page.design-system.tsx',
+    'components/[component]/error.design-system.tsx',
     'PropToggle.tsx',
   ]) {
     const content = fs.readFileSync(path.join(docsDir, f), 'utf8');
@@ -143,7 +146,7 @@ test('detectExistingInstall scans for the marker and returns matching files', ()
   const root = makeTempProject();
   installRoute(root, { groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true });
   const found = detectExistingInstall(root);
-  assert.ok(found.length >= 5);
+  assert.ok(found.length >= 6);
   assert.ok(found.every(p => p.includes('-docs')));
 });
 

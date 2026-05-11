@@ -7,6 +7,7 @@ const {
   INDEX_PAGE_TSX,
   TOKENS_PAGE_TSX,
   COMPONENT_PAGE_TSX,
+  COMPONENT_ERROR_TSX,
   PROP_TOGGLE_TSX,
 } = require('./templates');
 
@@ -49,6 +50,10 @@ function installRoute(projectRoot, opts) {
     { abs: path.join(docsDir, `page${pageExt}`), body: INDEX_PAGE_TSX },
     { abs: path.join(tokensDir, `page${pageExt}`), body: TOKENS_PAGE_TSX },
     { abs: path.join(componentsDir, `page${pageExt}`), body: COMPONENT_PAGE_TSX },
+    // error.tsx must be a client component, and Next.js handles it like any
+    // route file — it goes through pageExtensions. The plain `.tsx` variant
+    // is used when prod-exclusion is off (mirrors layout/page).
+    { abs: path.join(componentsDir, `error${pageExt}`), body: COMPONENT_ERROR_TSX },
     { abs: path.join(docsDir, `PropToggle${moduleExt}`), body: PROP_TOGGLE_TSX },
   ];
 

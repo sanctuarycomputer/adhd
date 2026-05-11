@@ -138,8 +138,67 @@ function slugFor(p: string) {
   return p.replace(/\\.tsx?$/, "").replace(/\\/index$/, "").split("/").pop()?.toLowerCase() ?? p;
 }`;
 
+// Shared globals.css reader. Returns the file contents or null if missing.
+const READ_CSS_SRC = `async function readCss(cssEntry: string) {
+  try { return await fs.readFile(path.resolve(process.cwd(), cssEntry), "utf8"); }
+  catch { return null; }
+}`;
+
+// Diagnostic banner detection: scans the consumer's @theme block for token-name
+// shibboleths that indicate a shadcn-style v3-to-v4 migration, and flags common
+// tokens that are missing. The dynamic-import pattern used by the component page
+// pulls in more files than the consumer's normal routes do, which surfaces stale
+// `@apply` directives in transitively-bundled CSS — these missing tokens are the
+// usual cause.
+const DETECT_ISSUES_SRC = `type DetectedIssue = {
+  token: string;
+  why: string;
+  themeLine: string;
+  rootLine?: string;
+};
+
+function detectIssues(css: string | null): DetectedIssue[] {
+  const issues: DetectedIssue[] = [];
+  if (!css) return issues;
+  // Extract bodies of every @theme block (supports \`@theme inline\` modifier).
+  const bodies: string[] = [];
+  let i = 0;
+  while (i < css.length) {
+    const idx = css.indexOf("@theme", i);
+    if (idx === -1) break;
+    let j = idx + "@theme".length;
+    while (j < css.length && css[j] !== "{" && css[j] !== ";") j++;
+    if (css[j] !== "{") { i = j + 1; continue; }
+    let depth = 1, k = j + 1;
+    while (k < css.length && depth > 0) {
+      if (css[k] === "{") depth++;
+      else if (css[k] === "}") depth--;
+      if (depth > 0) k++;
+    }
+    bodies.push(css.slice(j + 1, k));
+    i = k + 1;
+  }
+  const themeText = bodies.join("\\n");
+  const has = (token: string) => new RegExp("(?:^|\\\\s)" + token.replace(/[-]/g, "\\\\-") + "\\\\s*:").test(themeText);
+
+  // Shadcn shibboleth: foreground+background plus at least one *-foreground pair.
+  const looksShadcn = has("--color-foreground") && has("--color-background") &&
+    (has("--color-card-foreground") || has("--color-popover-foreground"));
+
+  if (looksShadcn && !has("--color-ring-offset-background")) {
+    issues.push({
+      token: "--color-ring-offset-background",
+      why: "Shadcn components use \`ring-offset-background\` for focus styles. Without this in @theme, any \`@apply ring-offset-background\` in transitively-bundled CSS (from a UI library or stale components in your project) will fail with \\"Cannot apply unknown utility class ring-offset-background\\" during route compilation, and the component page will 500 with an ENOENT on the build manifest.",
+      themeLine: "--color-ring-offset-background: hsl(var(--ring-offset-background));",
+      rootLine: "--ring-offset-background: 0 0% 100%;",
+    });
+  }
+
+  return issues;
+}`;
+
 // Layout: sidebar lists token domains + components; main area renders children.
-// The layout is async so it can read adhd.config.ts to populate the components list.
+// The layout is async so it can read adhd.config.ts and globals.css for diagnostics.
 const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -154,8 +213,37 @@ ${TOKEN_DOMAINS_SRC}
 
 ${READ_CONFIG_SRC}
 
+${READ_CSS_SRC}
+
+${DETECT_ISSUES_SRC}
+
+function DiagnosticBanner({ issues }: { issues: DetectedIssue[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <aside className="mb-6 rounded-md border border-amber-400 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-4">
+      <h3 className="text-sm font-medium text-amber-900 dark:text-amber-200">
+        Heads up — likely globals.css gaps
+      </h3>
+      <p className="mt-1 text-xs text-amber-800 dark:text-amber-300 max-w-prose">
+        Component pages use a broad dynamic import which causes Tailwind v4 to scan more of your codebase than your other routes do. Your <code>@theme</code> block looks like a shadcn migration but is missing tokens that often appear in transitively-bundled CSS. If you see <code>ENOENT</code> on <code>app-build-manifest.json</code> when navigating to a component, add these:
+      </p>
+      <ul className="mt-3 flex flex-col gap-3 text-xs">
+        {issues.map(i => (
+          <li key={i.token} className="rounded bg-amber-100 dark:bg-amber-950/50 p-3">
+            <code className="font-medium text-amber-900 dark:text-amber-200">{i.token}</code>
+            <p className="mt-1 text-amber-800 dark:text-amber-300">{i.why}</p>
+            <pre className="mt-2 overflow-x-auto rounded bg-amber-200/60 dark:bg-amber-900/40 p-2 text-[11px] text-amber-900 dark:text-amber-100">{\`/* in @theme */\\n\${i.themeLine}\${i.rootLine ? \`\\n\\n/* in :root */\\n\${i.rootLine}\` : ""}\`}</pre>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
 export default async function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
   const cfg = await readConfig();
+  const css = await readCss(cfg.cssEntry);
+  const issues = detectIssues(css);
   const components = cfg.components.map(p => ({ raw: p, slug: slugFor(p) }));
 
   return (
@@ -200,25 +288,70 @@ export default async function DesignSystemDocsLayout({ children }: { children: R
       </aside>
 
       <main className="flex-1 p-8 overflow-x-auto">
-        <div className="max-w-5xl">{children}</div>
+        <div className="max-w-5xl">
+          <DiagnosticBanner issues={issues} />
+          {children}
+        </div>
       </main>
     </div>
   );
 }
 `;
 
-// Landing page — minimal welcome message; the sidebar already shows everything.
+// Landing page — welcome + troubleshooting. The sidebar already shows tokens/components,
+// so the body focuses on what the layout's diagnostic banner can't pre-emptively flag.
 const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemIndex() {
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-2xl font-medium">Design System</h2>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-prose">
-        Pick a token domain or a component from the sidebar. Tokens are read from your
-        <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
-        <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks.
-        Components are loaded from
-        <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code>.
-      </p>
+    <div className="flex flex-col gap-8">
+      <header>
+        <h2 className="text-2xl font-medium">Design System</h2>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400 max-w-prose">
+          Pick a token domain or a component from the sidebar. Tokens are read from your
+          <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
+          <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks.
+          Components are loaded from
+          <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code>.
+        </p>
+      </header>
+
+      <section className="flex flex-col gap-3">
+        <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">Troubleshooting</h3>
+        <div className="flex flex-col gap-4 text-sm text-zinc-700 dark:text-zinc-300 max-w-prose">
+          <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
+            <summary className="cursor-pointer font-medium">Component page 500s with <code>ENOENT: ... app-build-manifest.json</code></summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <p>
+                The component page uses a broad dynamic import keyed off <code>adhd.config.ts</code>, so adding components is just a config edit. The trade-off: Webpack/Turbopack can&apos;t statically resolve the path, so it creates a context module that pulls every file under <code>@/</code> into this route&apos;s bundle, and Tailwind v4 then scans all of them for classes.
+              </p>
+              <p>
+                Your other routes only bundle what they statically import, so latent issues never surface there. On <em>this</em> route, Tailwind hits classes referenced in transitively-bundled CSS (often a UI lib like shadcn or <code>@reactor-team/ui</code>) that your <code>@theme</code> doesn&apos;t define yet. Tailwind throws, the CSS chunk never emits, and the manifest write fails — hence ENOENT.
+              </p>
+              <p className="font-medium">Fix:</p>
+              <ol className="list-decimal pl-5 flex flex-col gap-1">
+                <li>Run <code>npm run dev</code> in a terminal and watch the output when you navigate to <code>/components/&lt;X&gt;</code>.</li>
+                <li>Look for <code>Cannot apply unknown utility class &lt;name&gt;</code> or <code>Cannot use @variant with unknown variant: &lt;name&gt;</code>.</li>
+                <li>For utility class names, add <code>--color-&lt;name&gt;</code> (or appropriate prefix) to your <code>@theme</code> block.</li>
+                <li>For variant names, add <code>--breakpoint-&lt;name&gt;</code> to your <code>@theme</code> block.</li>
+              </ol>
+              <p className="text-xs text-zinc-500">If the layout&apos;s diagnostic banner is showing above this content, it has detected a likely candidate already.</p>
+            </div>
+          </details>
+
+          <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
+            <summary className="cursor-pointer font-medium">Sidebar shows the component but the page fails to load it</summary>
+            <p className="mt-3">
+              Check the path in <code>adhd.config.ts</code> resolves from your project root, and that the file exports a function (default export or a named function). If the dynamic import fails at runtime (not at compile), the error boundary at <code>components/[component]/error.tsx</code> will catch it and show the message.
+            </p>
+          </details>
+
+          <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
+            <summary className="cursor-pointer font-medium">Token domain shows &ldquo;no custom tokens&rdquo; but you have some</summary>
+            <p className="mt-3">
+              The parser supports <code>@theme {"{ ... }"}</code> and <code>@theme inline {"{ ... }"}</code>. If your tokens are in a different syntax (e.g. <code>:root</code>), they won&apos;t be picked up — Tailwind v4 only treats <code>@theme</code> declarations as design tokens.
+            </p>
+          </details>
+        </div>
+      </section>
     </div>
   );
 }
@@ -235,10 +368,7 @@ ${TOKEN_DOMAINS_SRC}
 
 ${READ_CONFIG_SRC}
 
-async function readCss(cssEntry: string) {
-  try { return await fs.readFile(path.resolve(process.cwd(), cssEntry), "utf8"); }
-  catch { return null; }
-}
+${READ_CSS_SRC}
 
 ${PARSE_TOKENS_SRC}
 
@@ -578,6 +708,47 @@ export default async function ComponentPage({
 }
 `;
 
+// Error boundary for the component route. Catches RUNTIME errors thrown during
+// rendering — broken dynamic imports, components that throw on mount, prop-parse
+// failures. Does NOT catch bundler-level Tailwind/PostCSS failures (those happen
+// before React runs); the layout's diagnostic banner handles that case.
+const COMPONENT_ERROR_TSX = `${MARKER_COMMENT}"use client";
+
+export default function ComponentPageError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  const isBuildManifestError = /app-build-manifest\\.json/.test(error.message ?? "");
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-6">
+        <h2 className="text-lg font-medium text-red-900 dark:text-red-200">Couldn't render this component</h2>
+        <p className="mt-2 text-sm text-red-800 dark:text-red-300">
+          {isBuildManifestError
+            ? "Next.js failed to load this route's build manifest. This usually means Tailwind v4 couldn't compile CSS for the route — see the diagnostic banner above (or the Troubleshooting section on the docs landing page) for the likely cause."
+            : "Something went wrong while loading or rendering this component. Common causes:"}
+        </p>
+        {!isBuildManifestError && (
+          <ul className="mt-3 list-disc pl-6 text-sm text-red-800 dark:text-red-300">
+            <li>The path in <code>adhd.config.ts</code> doesn't resolve from the project root.</li>
+            <li>The component throws on mount when no props are provided.</li>
+            <li>The component's prop interface uses types the docs route can't introspect.</li>
+          </ul>
+        )}
+        <details className="mt-4 text-xs">
+          <summary className="cursor-pointer text-red-700 dark:text-red-300">Show error details</summary>
+          <pre className="mt-2 overflow-x-auto rounded bg-red-100 dark:bg-red-950/50 p-2 text-red-900 dark:text-red-200">{error.message}{error.digest ? \`\\n\\nDigest: \${error.digest}\` : ""}</pre>
+        </details>
+        <button
+          type="button"
+          onClick={() => reset()}
+          className="mt-4 rounded border border-red-300 dark:border-red-700 px-3 py-1 text-sm text-red-900 dark:text-red-200 hover:bg-red-100 dark:hover:bg-red-900/30"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+`;
+
 const PROP_TOGGLE_TSX = `${MARKER_COMMENT}"use client";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
@@ -622,5 +793,6 @@ module.exports = {
   INDEX_PAGE_TSX,
   TOKENS_PAGE_TSX,
   COMPONENT_PAGE_TSX,
+  COMPONENT_ERROR_TSX,
   PROP_TOGGLE_TSX,
 };

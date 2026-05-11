@@ -145,6 +145,24 @@ Re-run the installer over time to pick up improved templates. Files you've
 customized — by removing the `// design-system-docs-route` marker comment —
 are left alone.
 
+#### Caveat: broad dynamic import + Tailwind v4
+
+The component page resolves its target via `import("@/" + componentPath)` so
+adding to `adhd.config.ts` is enough — no re-install per component. The
+trade-off: Webpack/Turbopack can't statically resolve the path, so it
+creates a context module that pulls every `.ts`/`.tsx` under your project
+root into this route's bundle. Tailwind v4 then scans all of them for
+classes — a much wider surface than your other routes touch.
+
+If your codebase has shadcn-v3-era classes that you never migrated (most
+commonly `ring-offset-background`, used by Button/Input focus styles),
+they'll surface as `Cannot apply unknown utility class …` errors during
+route compilation, and the page will 500 with an ENOENT on
+`app-build-manifest.json`. The layout pre-scans your `globals.css` for the
+shadcn shibboleth and shows a diagnostic banner with the exact `@theme`
+addition you need to make. There's also an `error.tsx` at the route boundary
+for any runtime failures, and a Troubleshooting section on the landing page.
+
 You can also trigger the install at the end of `/adhd:config` if you're
 setting up ADHD for the first time.
 
