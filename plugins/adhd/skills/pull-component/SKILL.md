@@ -155,6 +155,18 @@ The mapping from variable name → Tailwind class is direct:
 
 For unbound (raw) values, write the Tailwind arbitrary form: `bg-[#abcdef]`, `text-[10px]`, `rounded-[32px]`. These only appear if Phase 2.5's escape was used.
 
+**Choose the Tailwind utility prefix based on the layer's TYPE, not the Figma property name.** A Figma `fill` on a `VECTOR` layer is an SVG path color (use `fill-*` or `text-*` with `currentColor`). A Figma `fill` on a `FRAME` layer is a CSS background-color (use `bg-*`). Mapping every Figma `fill` to `bg-*` produces classes that don't drive SVG paint — a common mistake.
+
+| Layer type + Figma property | Tailwind prefix in the lookup |
+|---|---|
+| `VECTOR / BOOLEAN_OPERATION / ELLIPSE / RECTANGLE / STAR / POLYGON / LINE` + `fill` | `text-*` (recommended, used with `fill="currentColor"`) or `fill-*` |
+| `VECTOR /...` + `stroke` | `stroke-*` |
+| `FRAME / COMPONENT / INSTANCE` + `fill` | `bg-*` |
+| `TEXT` + `fill` | `text-*` |
+| Any + `cornerRadius` / `*Radius` | `rounded-*` |
+| Any + `fontSize` | `text-*` (size scale, not color) |
+| Any + `padding*` / `itemSpacing` | `p*-*` / `gap-*` (with auto-layout direction) |
+
 Save the result to `/tmp/adhd-pull-component/figma.json` with this shape (write it via `Bash` heredoc with the JSON you compose):
 
 ```json
@@ -169,15 +181,43 @@ Save the result to `/tmp/adhd-pull-component/figma.json` with this shape (write 
         "avatar-body.fill": "bg-zinc-800",
         "avatar-body.cornerRadius": "rounded-full",
         "initials.fontSize": "text-base",
-        "initials.fill": "bg-zinc-100",
-        "status-dot.fill": "bg-amber-500"
+        "initials.fill": "text-zinc-100",
+        "status-dot.fill": "bg-amber-500",
+        "Vector.fill": "text-foreground"
+      },
+      "layerTypes": {
+        "avatar-body": "FRAME",
+        "initials": "TEXT",
+        "status-dot": "FRAME",
+        "Vector": "VECTOR"
       }
     }
   ]
 }
 ```
 
-The `tokens` key is `<layer-name>.<property>`. Layer names come from Figma; properties are one of `fill`, `stroke`, `fontSize`, `cornerRadius`, `padding{Top,Right,Bottom,Left}`, `itemSpacing`, `effectStyle`.
+The `tokens` key is `<layer-name>.<property>`. Layer names come from Figma; properties are one of `fill`, `stroke`, `fontSize`, `cornerRadius`, `padding{Top,Right,Bottom,Left}`, `itemSpacing`, `effectStyle`. The `layerTypes` map carries each named layer's Figma node type so downstream phases can pick the right Tailwind prefix without re-querying Figma.
+
+### SVG export for vector-driven variants
+
+If a variant's leaf content is predominantly vector geometry (its tree's leaves are mostly `VECTOR` / `BOOLEAN_OPERATION` / `ELLIPSE` / `RECTANGLE` / `STAR` / `POLYGON` / `LINE`, with no TEXT or nested layout FRAMEs), also export the variant's SVG string in the same `use_figma` call:
+
+```js
+const svg = await variantNode.exportAsync({ format: 'SVG_STRING' });
+```
+
+Include the export in the variant's payload as a `svg` field:
+
+```json
+{
+  "props": { "colour": "dark" },
+  "tokens": { "Vector.fill": "text-foreground" },
+  "layerTypes": { "Vector": "VECTOR" },
+  "svg": "<svg width=\"180\" height=\"127\" viewBox=\"0 0 180 127\" fill=\"none\" ...><path d=\"...\" fill=\"#1C1917\"/></svg>"
+}
+```
+
+Phase 7's scaffold mode reads these and inlines the SVG into the generated function body (see Phase 7). For non-vector variants, omit the `svg` field — Phase 7 will fall back to a `<span />` stub.
 
 Hash the JSON (for the Phase 6 drift check) and store the hash in working memory.
 
@@ -319,27 +359,105 @@ Re-fetch the Figma CS via `use_figma`, re-serialize the variants+tokens shape (s
   1. `Edit` the type alias to drop the member.
   2. For each `Record<<Union>, ...>` table, `Edit` to remove the corresponding entry (the property line including its trailing newline).
 
-**Scaffold mode:** compose the new file with `Write`. Template:
+**Scaffold mode:** compose the new file with `Write`. The shape is always:
+
+1. One exported `type X = "..." | "..."` union per Figma variant axis.
+2. An exported `<Component>Props` interface that maps each variant axis to an optional prop of its union type. Always include a `className?: string` prop so the component is composable.
+3. One exported `Record<<Union>, string>` lookup table per design-token surface of the component (fill, stroke, etc.). The function reads from these tables; future pulls update them.
+4. An exported function component that destructures the props and renders.
+
+**Lookup table values — pick the right Tailwind utility prefix for what the class is going to drive in the JSX. Do NOT default to `bg-*`.**
+
+| If the class will drive… | Use | Pattern in JSX |
+|---|---|---|
+| An SVG fill via `currentColor` (recommended for icons/logos) | `text-*` | `<svg className={LOOKUP[v]}>...<path fill="currentColor" /></svg>` |
+| An SVG fill directly | `fill-*` | `<path className={LOOKUP[v]} />` |
+| A background on a layout element | `bg-*` | `<div className={LOOKUP[v]} />` |
+| A text color on a layout element | `text-*` | `<span className={LOOKUP[v]}>...</span>` |
+| Sizing | `h-*` / `w-*` / `size-*` | `<div className={LOOKUP[v]} />` |
+
+The `text-*` + `currentColor` pattern is the most flexible for vector-art components — it lets callers override the color via a parent's text-color class. Use it by default when the Figma source is a single SVG path that just needs colour-driven fill.
+
+### Function body — branch on what the Figma source is
+
+**For vector-driven components** (icons, logos, decorative shapes — when the Figma variants are primarily vector geometry rather than nested layout):
+
+The Figma source already contains everything needed to render a real implementation. Inline the SVG rather than writing a stub. Specifically:
+
+1. Call `node.exportAsync({ format: 'SVG_STRING' })` on each variant during Phase 3's Figma extract. Save the SVGs alongside the variant tokens.
+2. Compare the variant SVGs:
+   - **Identical geometry, different fill colours**: inline the SVG once with `fill="currentColor"` on the colored path(s), drive the colour via a `text-*` lookup on the SVG's `className`.
+   - **Different geometry per variant**: inline both paths and render based on the variant prop (`{colour === "dark" ? <path d="..." /> : <path d="..." />}`).
+3. Convert SVG attributes to JSX casing — `fill-rule` → `fillRule`, `clip-rule` → `clipRule`, `stroke-linecap` → `strokeLinecap`, etc.
+4. Preserve the original `width`, `height`, `viewBox` from the SVG export.
+5. Combine the lookup-table class with the passed-in `className` prop using a template literal.
+
+Concrete example (identical-geometry case, for a logo):
+
+```tsx
+export type LogoColour = "dark" | "light";
+
+export interface LogoProps {
+  colour?: LogoColour;
+  className?: string;
+}
+
+export const LOGO_VECTOR_FILL: Record<LogoColour, string> = {
+  dark: "text-foreground",
+  light: "text-background",
+};
+
+export function Logo({ colour = "dark", className = "" }: LogoProps) {
+  return (
+    <svg
+      width="180"
+      height="127"
+      viewBox="0 0 180 127"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={`${LOGO_VECTOR_FILL[colour]} ${className}`}
+      role="img"
+      aria-label="Logo"
+    >
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="<the actual path from exportAsync>"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+```
+
+This is first-pass code, not a stub. The developer can iterate from a working component.
+
+**For layout-driven components** (cards, buttons, forms — when the Figma variants contain multiple children, text, or nested frames):
+
+Reconstructing JSX from a flattened Figma capture is unreliable, so keep the stub:
 
 ```tsx
 export type <Component>Size = "<v1>" | "<v2>" | ...;
-// ...other axes
 
 export interface <Component>Props {
   // axes from Figma variantAxes, optional
+  className?: string;
 }
 
 export const <COMPONENT>_<TABLE>: Record<<Component>Size, string> = {
   // entries from Figma tokens, one per variant value
 };
-// ...other tables
 
-export function <Component>(/* props */) {
+export function <Component>({ /* props from interface */ }: <Component>Props) {
   return <span />; // adhd: scaffold stub — replace with your implementation
 }
 ```
 
-The function body is intentionally minimal. The user fills it in.
+In this case the function body really is the developer's responsibility. The lookup tables remain the round-trippable surface; future pulls update them safely without touching whatever JSX the developer writes.
+
+### How to decide which branch
+
+Look at the variant subtrees you captured in Phase 3. A component is vector-driven when, across all variants, the leaf nodes are predominantly `VECTOR` / `BOOLEAN_OPERATION` / `ELLIPSE` / `RECTANGLE` / `STAR` / `POLYGON` / `LINE`, and there are no TEXT nodes or nested FRAMEs with multiple children. If you're unsure, treat it as layout-driven and keep the stub — the user can re-run pull-component once the file exists if they want to iterate.
 
 ## Phase 8: Write mapping if scaffold mode
 
