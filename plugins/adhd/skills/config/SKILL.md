@@ -1,7 +1,7 @@
 ---
-description: "Run the ADHD config wizard. Walks through producing or repairing adhd.config.ts: leader (code or figma), Figma URL (with reachability test), domains (multi-select), and optional Figma PAT setup when leader is code (detects FIGMA_PAT in shell or .env*; validates against Figma REST API; writes to .env.local if needed)."
+description: "Run the ADHD config wizard. Walks through producing or repairing adhd.config.ts: Figma URL (with reachability test), naming convention, and CSS entry path auto-detect. ADHD always syncs every domain we support — the wizard no longer asks the user to pick."
 disable-model-invocation: true
-allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata WebFetch
+allowed-tools: Read Edit Write Bash AskUserQuestion mcp__plugin_figma_figma__whoami mcp__plugin_figma_figma__get_metadata WebFetch
 ---
 
 # ADHD Config
@@ -47,49 +47,47 @@ Do not proceed to Phase 1.
 
 For Branch A, extract these fields with targeted regex (the file is a plain TypeScript literal, no imports):
 - `figma.url:` → string
-- `domains:` (optional) → array of strings
 - `naming:` (optional) → string (`"kebab-case"`, `"PascalCase"`, `"camelCase"`) or boolean `false`
 - `cssEntry:` (optional) → string path
 
-Pass these forward as defaults for Phases 1, 2, 3, and 4.
+Pass these forward as defaults for Phases 1, 2, and 3.
 
-## Phase 1: Domains
+## Phase 0.5: Verify the official Figma plugin is installed and authenticated
 
-> **Tool note:** `AskUserQuestion` accepts 2–4 options and does not support multi-select with 5+ items or free-text input. ADHD has five supported domains, so this phase uses a two-step prompt: a binary `AskUserQuestion` first, then a chat-based subset list when needed.
+ADHD requires the `figma@claude-plugins-official` Claude Code plugin — every other skill (`/adhd:lint`, `/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:push-component`, `/adhd:pull-component`) drives Figma exclusively through it via `mcp__plugin_figma_figma__*`. This phase verifies it's installed and authenticated up front, so users hit setup errors here (when they can act on them) rather than mid-pipeline.
 
-**Step 1 — All-or-subset choice.** Use `AskUserQuestion`:
+Call `mcp__plugin_figma_figma__whoami`. It's read-only and returns the authenticated Figma user's identity.
 
-```
-Question: "Sync all five domains (colors, spacing, typography, radius, shadow), or pick a subset?"
-Header: "Domains"
-Options:
-  - label: "All five (default)", description: "Recommended. The wizard omits the `domains` field so future additions are picked up automatically."
-  - label: "Pick a subset", description: "Restrict ADHD to specific domains. You'll be prompted in chat to type the subset as a comma-separated list."
-```
+Three outcomes:
 
-Default selection: if the existing `domains` array from Phase 0 is present and is a strict subset, default to "Pick a subset"; otherwise default to "All five".
+- **Success** (returns user info): print `✓ Figma plugin connected as <user-handle>.` and continue to Phase 1.
 
-**Step 2 — Subset entry (only if user picked "Pick a subset").** Drop to a chat prompt:
+- **Tool unavailable / plugin not installed** (the tool errors out with "not registered", "no MCP server", or similar): abort with this exact message:
 
-```
-Type the comma-separated subset of domains you want (from: colors, spacing, typography, radius, shadow).
+  ```
+  ✗ The official Figma plugin isn't installed. ADHD uses it for every Figma operation.
 
-Examples: `colors,spacing` — `colors,spacing,typography` — `radius,shadow`.
+  Install it with:
 
-Or say "all" to keep the default; "abort" to exit the wizard.
-```
+    claude plugin install figma@claude-plugins-official
 
-Wait for the user's next chat message. Parse it:
+  Then re-run /adhd:config.
+  ```
 
-- Trim whitespace, lowercase, split on commas.
-- If the result is `["all"]`, treat as if the user picked "All five" in Step 1 — proceed accordingly.
-- If the input is `"abort"`, exit the wizard.
-- Validate each token against the supported set (`colors`, `spacing`, `typography`, `radius`, `shadow`). If ANY token is unrecognized, print which token failed and re-prompt with the same chat message.
-- If the parsed subset has length 5, treat as "All five".
+- **Authentication error** (tool exists but reports not authenticated): abort with this exact message:
 
-**Storage rule:** if the final selection is all five, **do not write a `domains` field** to `adhd.config.ts` — its absence means "all". Only write the array if a strict subset (length 1–4) is selected. Save the selection in memory as `domainsSelection` (an array of 1–5 strings); Phase 4 decides whether to write it.
+  ```
+  ✗ The Figma plugin is installed but not authenticated.
 
-## Phase 2: Figma URL + reachability
+  Follow Figma's auth flow per the plugin's documentation
+  (typically: open the plugin in Claude Code and complete the OAuth prompt).
+
+  Then re-run /adhd:config.
+  ```
+
+Do NOT continue to Phase 1 unless `whoami` succeeded. Authentication failures and missing-plugin failures are both setup-blocking conditions; the wizard cannot validate the Figma URL (Phase 1) without the plugin.
+
+## Phase 1: Figma URL + reachability
 
 > **Tool note:** `AskUserQuestion` does not support free-text input. The URL itself must be pasted into chat. When an existing URL is available from Phase 0, this phase uses `AskUserQuestion` first (keep / replace / abort), and only drops to chat if the user picks "replace".
 
@@ -131,9 +129,9 @@ That doesn't look like a Figma file URL. Expected format:
 
 Then re-issue the chat prompt from Step 2 and wait for the user's next message.
 
-**Validation step 2 — reachability.** Extract the file key — it's the path segment immediately after `/design/`. Call `mcp__figma__get_metadata` with that file key. Three failure cases:
+**Validation step 2 — reachability.** Extract the file key — it's the path segment immediately after `/design/`. Call `mcp__plugin_figma_figma__get_metadata` with that file key. Three failure cases:
 
-- **Authentication error** (the MCP returns "not authenticated" or similar): abort with `Figma MCP is not authenticated. Run the Figma MCP auth flow per Figma's docs, then re-run /adhd:config.` Do NOT save the URL.
+- **Authentication error** (the MCP returns "not authenticated" or similar): this should have been caught in Phase 0.5; if it happens here, the plugin lost its auth mid-wizard. Abort with `Figma plugin lost authentication. Re-authenticate via the plugin, then re-run /adhd:config.` Do NOT save the URL.
 - **404 / not found:** print `Cannot reach the Figma file at that URL. Verify the URL is correct and that you have access.` Then re-issue the chat prompt from Step 2.
 - **Other error** (network, timeout): print the error and re-issue the chat prompt from Step 2.
 
@@ -141,7 +139,7 @@ On success (200 with metadata), save the URL.
 
 This phase **does not** validate that the Figma file has the mandated structure (Primitives / Semantic collections, Light/Dark modes, kebab-case naming). That validation is `/adhd:sync`'s job — running it here would slow the wizard and duplicate logic.
 
-## Phase 3: Naming convention
+## Phase 2: Naming convention
 
 ADHD's `/adhd:lint` skill validates that components, variant properties, and variant values in the Figma file follow a single naming convention. This phase asks the user which one their file uses (or lets them disable the check). The selection is written to `adhd.config.ts` as the `naming` field.
 
@@ -168,9 +166,9 @@ Map the user's answer to a config value and save it in memory as `namingSelectio
 | camelCase | `"camelCase"` |
 | Disable check (false) | `false` |
 
-**Storage rule:** if the final selection is `"kebab-case"` (the default), **do not write a `naming` field** to `adhd.config.ts` — its absence means kebab-case. Otherwise (PascalCase, camelCase, or `false`), Phase 5 writes it explicitly.
+**Storage rule:** if the final selection is `"kebab-case"` (the default), **do not write a `naming` field** to `adhd.config.ts` — its absence means kebab-case. Otherwise (PascalCase, camelCase, or `false`), Phase 4 writes it explicitly.
 
-## Phase 4: cssEntry auto-detect
+## Phase 3: cssEntry auto-detect
 
 Try the two conventional Next.js paths, in order. Use `Bash` with `[ -f <path> ] && echo present || echo absent` per path.
 
@@ -190,13 +188,12 @@ Four cases:
   ```
   Wait for the user's next chat message. If it's `"abort"`, exit the wizard. Otherwise validate the path exists via `Bash` with `[ -f <path> ]`. Re-issue the chat prompt on miss. On hit, save the path; if it equals `app/globals.css`, do NOT write a `cssEntry` field.
 
-## Phase 5: Write adhd.config.ts
+## Phase 4: Write adhd.config.ts
 
 Compose the config object from in-memory state. Always include `figma.url`. Conditionally include the rest:
 
 | Field | Include if |
 |---|---|
-| `domains` | `domainsSelection` is a strict subset (length 1–4) |
 | `naming` | `namingSelection` is anything other than `"kebab-case"` (i.e., `"PascalCase"`, `"camelCase"`, or `false`) |
 | `cssEntry` | resolved path is NOT `app/globals.css` |
 
@@ -210,8 +207,6 @@ const config = {
   figma: {
     url: "<URL>",
   },
-
-  // optional: domains: [<COMMA_QUOTED_LIST>],
 
   // optional: naming: <NAMING_VALUE>,
 
@@ -241,7 +236,7 @@ On "No", abort. On "Yes", `Write` the file.
 
 An earlier phase may have already written `.env.local` and updated `.gitignore`. Don't re-do those writes here; this phase touches only `adhd.config.ts`.
 
-## Phase 6: Report
+## Phase 5: Report
 
 Print a summary of what was done. Tailor to the actual operations:
 
@@ -249,7 +244,6 @@ Print a summary of what was done. Tailor to the actual operations:
 Config saved to adhd.config.ts.
 
 Figma:   <URL>
-Domains: <"all" or comma-separated list>
 Naming:  <"kebab-case (default)", "PascalCase", "camelCase", or "disabled">
 CSS:     <"app/globals.css (default)" or the explicit path>
 
@@ -271,11 +265,14 @@ If running on a healthy config that didn't change, print `Config unchanged.` ins
 ### "Looks like a Figma PAT is committed to adhd.config.ts"
 The preflight scan found a string that looks like a Figma personal access token in your config. Tokens never go in `adhd.config.ts` (it's tracked in git). Move the token to `.env.local` (gitignored) or your shell rc, then re-run.
 
-### "Figma MCP is not authenticated"
-The Figma MCP needs to be authenticated for the wizard to test reachability. Run the Figma MCP auth flow per Figma MCP documentation, then retry.
+### "The official Figma plugin isn't installed"
+ADHD drives Figma exclusively through the `figma@claude-plugins-official` Claude Code plugin. Install it with `claude plugin install figma@claude-plugins-official`, then re-run `/adhd:config`.
+
+### "The Figma plugin is installed but not authenticated"
+The plugin is registered but `whoami` returned an auth error. Complete the plugin's OAuth flow (open it in Claude Code; follow the prompt), then re-run `/adhd:config`.
 
 ### "Cannot reach the Figma file"
-The URL is well-formed but Figma returned 404 or no metadata. Confirm the URL is correct (copy from your browser's address bar), and that your authenticated MCP user has access to the file.
+The URL is well-formed but Figma returned 404 or no metadata. Confirm the URL is correct (copy from your browser's address bar), and that your authenticated plugin user has access to the file.
 
 ## Reference: adhd.config.ts schema
 
@@ -284,11 +281,10 @@ const config = {
   figma: {
     url: "https://www.figma.com/design/<key>/<name>",   // required
   },
-  domains?: ["colors", "spacing", "typography", "radius", "shadow"],   // optional; omit = all
   naming?: "kebab-case" | "PascalCase" | "camelCase" | false,           // optional; omit = "kebab-case"
   cssEntry?: "src/app/globals.css",                                     // optional; omit = "app/globals.css"
 };
 export default config;
 ```
 
-The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:lint`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file.
+The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:lint`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file. ADHD always syncs every supported token domain (color, spacing, typography, radius, shadow, plus any others added in the future); there's no per-domain opt-out.
