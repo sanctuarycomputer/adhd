@@ -17,6 +17,31 @@
 
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --inset-shadow-sm: inset 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --drop-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
 
   --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --font-weight-normal: 400;
+  --font-weight-bold: 700;
+
+  --tracking-tight: -0.025em;
+  --tracking-wide: 0.025em;
+
+  --leading-tight: 1.25;
+  --leading-loose: 2;
+
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --animate-spin: spin 1s linear infinite;
+
+  --some-mystery-var: 42;
+}
+
+@theme inline {
+  --color-alias-bg: var(--color-zinc-50);
 }

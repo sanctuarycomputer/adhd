@@ -43,13 +43,29 @@ const DECL_RE = /--([a-zA-Z0-9_-]+)\s*:\s*([^;]+);/g;
 // We split on the suffix so callers see one row per family name.
 const LINE_HEIGHT_SUFFIX = '--line-height';
 
+// Prefix-to-domain mapping. Order is significant: longer/more-specific prefixes
+// must precede shorter ones (e.g. `font-weight-` before `font-`, `inset-shadow-`
+// before `shadow-`). Each entry maps to a flat array of `{ name, value }` rows.
+const PREFIX_MAP = [
+  ['color-', 'colors'],
+  ['font-weight-', 'fontWeights'],
+  ['font-', 'fonts'],
+  ['inset-shadow-', 'shadows'],
+  ['drop-shadow-', 'shadows'],
+  ['shadow-', 'shadows'],
+  ['radius-', 'radius'],
+  ['tracking-', 'tracking'],
+  ['leading-', 'leading'],
+  ['breakpoint-', 'breakpoints'],
+  ['ease-', 'easings'],
+  ['animate-', 'animations'],
+];
+
 function classify(name) {
-  if (name.startsWith('color-')) {
-    return { domain: 'colors', leaf: name.slice('color-'.length) };
-  }
   if (name === 'spacing') {
     return { domain: 'spacing', leaf: null };
   }
+  // Typography (`text-*`) is special because of the `--line-height` suffix pairing.
   if (name.startsWith('text-')) {
     const rest = name.slice('text-'.length);
     if (rest.endsWith(LINE_HEIGHT_SUFFIX)) {
@@ -61,11 +77,10 @@ function classify(name) {
     }
     return { domain: 'typography', leaf: rest, kind: 'size' };
   }
-  if (name.startsWith('radius-')) {
-    return { domain: 'radius', leaf: name.slice('radius-'.length) };
-  }
-  if (name.startsWith('shadow-')) {
-    return { domain: 'shadows', leaf: name.slice('shadow-'.length) };
+  for (const [prefix, domain] of PREFIX_MAP) {
+    if (name.startsWith(prefix)) {
+      return { domain, leaf: name.slice(prefix.length) };
+    }
   }
   return { domain: 'unknown' };
 }
@@ -75,8 +90,15 @@ function parseTokens(globalsCss) {
     colors: [],
     spacing: { multiplier: null },
     typography: [], // [{ name, size, lineHeight }]
+    fonts: [],
+    fontWeights: [],
     radius: [],
     shadows: [],
+    tracking: [],
+    leading: [],
+    breakpoints: [],
+    easings: [],
+    animations: [],
     unknown: [],
   };
   // Tracks typography rows by family name so size + line-height (which arrive
@@ -103,23 +125,23 @@ function parseTokens(globalsCss) {
       const value = m[2].trim();
       const cls = classify(name);
       switch (cls.domain) {
-        case 'colors':
-          out.colors.push({ name: cls.leaf, value });
-          break;
         case 'spacing':
           out.spacing.multiplier = value;
           break;
         case 'typography':
           upsertTypography(cls.leaf, cls.kind, value);
           break;
-        case 'radius':
-          out.radius.push({ name: cls.leaf, value });
-          break;
-        case 'shadows':
-          out.shadows.push({ name: cls.leaf, value });
+        case 'unknown':
+          out.unknown.push({ name: '--' + name, value });
           break;
         default:
-          out.unknown.push({ name: '--' + name, value });
+          // All other domains share the same flat `{ name, value }` row shape
+          // and a 1:1 mapping from PREFIX_MAP's domain key to an `out` bucket.
+          if (Array.isArray(out[cls.domain])) {
+            out[cls.domain].push({ name: cls.leaf, value });
+          } else {
+            out.unknown.push({ name: '--' + name, value });
+          }
       }
     }
   }

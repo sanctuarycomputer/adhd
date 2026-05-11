@@ -56,9 +56,59 @@ test('extracts shadow tokens', () => {
   );
 });
 
+test('extracts font family tokens', () => {
+  const t = parseTokens(CSS);
+  assert.deepEqual(
+    t.fonts.find(f => f.name === 'sans'),
+    { name: 'sans', value: '"Inter", system-ui, sans-serif' },
+  );
+  assert.deepEqual(
+    t.fonts.find(f => f.name === 'mono'),
+    { name: 'mono', value: '"JetBrains Mono", monospace' },
+  );
+});
+
+test('extracts font-weight tokens (longest prefix wins over `font-`)', () => {
+  const t = parseTokens(CSS);
+  assert.deepEqual(
+    t.fontWeights.find(w => w.name === 'normal'),
+    { name: 'normal', value: '400' },
+  );
+  // `--font-weight-bold` MUST classify as fontWeights, not fonts — the
+  // prefix-map's order guarantees the longer prefix (`font-weight-`) wins.
+  assert.ok(!t.fonts.find(f => f.name === 'weight-bold'));
+});
+
+test('merges inset-shadow-* and drop-shadow-* into the shadows bucket', () => {
+  const t = parseTokens(CSS);
+  // Both `--inset-shadow-sm` and `--drop-shadow-sm` land in `shadows` alongside `--shadow-sm`.
+  const names = t.shadows.map(s => s.name);
+  assert.ok(names.includes('sm'));
+  assert.ok(names.includes('sm') && t.shadows.filter(s => s.name === 'sm').length >= 1);
+  // Distinguish by the leaf — `inset-shadow-sm` becomes leaf `sm`, but we keep
+  // the original prefix off so installers can render them grouped.
+  // For now, accept multiple entries with the same leaf name.
+  assert.ok(t.shadows.length >= 3);
+});
+
+test('extracts tracking, leading, breakpoints, easings, animations', () => {
+  const t = parseTokens(CSS);
+  assert.deepEqual(t.tracking.find(x => x.name === 'tight'), { name: 'tight', value: '-0.025em' });
+  assert.deepEqual(t.leading.find(x => x.name === 'tight'), { name: 'tight', value: '1.25' });
+  assert.deepEqual(t.breakpoints.find(x => x.name === 'sm'), { name: 'sm', value: '40rem' });
+  assert.deepEqual(t.easings.find(x => x.name === 'in-out'), { name: 'in-out', value: 'cubic-bezier(0.4, 0, 0.2, 1)' });
+  assert.deepEqual(t.animations.find(x => x.name === 'spin'), { name: 'spin', value: 'spin 1s linear infinite' });
+});
+
 test('puts unrecognized @theme vars in `unknown`', () => {
   const t = parseTokens(CSS);
-  assert.ok(t.unknown.find(u => u.name === '--font-sans'));
+  assert.ok(t.unknown.find(u => u.name === '--some-mystery-var'));
+});
+
+test('handles `@theme inline { ... }` modifier syntax', () => {
+  const t = parseTokens(CSS);
+  // The aliased color from the `@theme inline { ... }` block must be picked up.
+  assert.ok(t.colors.find(c => c.name === 'alias-bg' && c.value === 'var(--color-zinc-50)'));
 });
 
 test('returns empty domains when no @theme block exists', () => {
@@ -67,6 +117,13 @@ test('returns empty domains when no @theme block exists', () => {
   assert.deepEqual(t.typography, []);
   assert.deepEqual(t.radius, []);
   assert.deepEqual(t.shadows, []);
+  assert.deepEqual(t.fonts, []);
+  assert.deepEqual(t.fontWeights, []);
+  assert.deepEqual(t.tracking, []);
+  assert.deepEqual(t.leading, []);
+  assert.deepEqual(t.breakpoints, []);
+  assert.deepEqual(t.easings, []);
+  assert.deepEqual(t.animations, []);
   assert.equal(t.spacing.multiplier, null);
 });
 

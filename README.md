@@ -122,12 +122,18 @@ Run once in your consumer repo:
 This installs a live, self-generating documentation page that reads your
 `adhd.config.ts` and `globals.css` at request time. The default URL is
 `/-docs` (the hyphen prefix telegraphs "internal"), and files live under a
-Next.js route group at `app/(design-system)/-docs/`. The page shows:
+Next.js route group at `app/(design-system)/-docs/`. The page is a
+sidebar-and-viewer layout:
 
-- Token catalog: every color / spacing / typography / radius / shadow in your
-  Tailwind v4 `@theme` block, rendered as visual samples.
-- Component pages: each component from `adhd.config.ts`'s `components.*` map
-  gets its own route with URL-driven prop toggles.
+- Sidebar: lists every Tailwind v4 token domain (colors, spacing, typography,
+  font families, font weights, tracking, leading, radius, shadows,
+  breakpoints, easing, animation), plus every component tracked in
+  `adhd.config.ts`. Click a row to load that route in the main pane.
+- Token pages: render whatever your `@theme` (or `@theme inline`) block
+  declares for that domain. Empty domains link to Tailwind v4's docs for the
+  defaults you're inheriting.
+- Component pages: each component gets its own route with URL-driven prop
+  toggles, derived from the component's TypeScript prop interface.
 
 By default the route is excluded from production builds via Next.js's
 `pageExtensions` trick — files use the `.design-system.tsx` extension and

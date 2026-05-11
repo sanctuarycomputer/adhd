@@ -1,5 +1,5 @@
 ---
-description: "Install a self-generating design-system documentation route into a Next.js consumer app. The route reads adhd.config.ts and globals.css at request time, renders a token catalog (colors / spacing / typography / radius / shadows) plus per-component pages with URL-driven prop toggles. Optionally excluded from production builds via Next.js pageExtensions trick. Re-runnable: marker-comment detection drives updates."
+description: "Install a self-generating design-system documentation route into a Next.js consumer app. Sidebar + viewer layout: the sidebar lists every Tailwind v4 token domain (colors, spacing, typography, font, font-weight, tracking, leading, radius, shadows, breakpoints, easing, animation) plus every component tracked in adhd.config.ts; the main pane renders the selected route. All token domains and components are read from globals.css and adhd.config.ts at request time. Component pages introspect props for URL-driven toggles. Optionally excluded from production builds via Next.js pageExtensions trick. Re-runnable: marker-comment detection drives updates, and stale marker-bearing files from older template layouts are cleaned up."
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools: Read Write Edit Bash AskUserQuestion

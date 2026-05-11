@@ -4,192 +4,118 @@ const MARKER_COMMENT = `// design-system-docs-route — auto-generated installer
 // Remove this comment to disable future overwrites from re-running the installer.
 `;
 
-const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
+// The list of token domains is shared verbatim between the sidebar (layout) and
+// the token page (so the page can look up the right renderer by slug). Both
+// copies use the same source string here, embedded into the templates below.
+// The `tailwindDocs` field is the URL to Tailwind v4's relevant theme section,
+// used in empty-state messaging.
+const TOKEN_DOMAINS_SRC = `const TOKEN_DOMAINS = [
+  { slug: "colors", label: "Colors", varPrefix: "--color-", tailwindDocs: "https://tailwindcss.com/docs/colors" },
+  { slug: "spacing", label: "Spacing", varPrefix: "--spacing", tailwindDocs: "https://tailwindcss.com/docs/theme#spacing" },
+  { slug: "typography", label: "Typography", varPrefix: "--text-", tailwindDocs: "https://tailwindcss.com/docs/font-size" },
+  { slug: "font", label: "Font Families", varPrefix: "--font-", tailwindDocs: "https://tailwindcss.com/docs/font-family" },
+  { slug: "font-weight", label: "Font Weights", varPrefix: "--font-weight-", tailwindDocs: "https://tailwindcss.com/docs/font-weight" },
+  { slug: "tracking", label: "Tracking", varPrefix: "--tracking-", tailwindDocs: "https://tailwindcss.com/docs/letter-spacing" },
+  { slug: "leading", label: "Leading", varPrefix: "--leading-", tailwindDocs: "https://tailwindcss.com/docs/line-height" },
+  { slug: "radius", label: "Radius", varPrefix: "--radius-", tailwindDocs: "https://tailwindcss.com/docs/border-radius" },
+  { slug: "shadows", label: "Shadows", varPrefix: "--shadow-", tailwindDocs: "https://tailwindcss.com/docs/box-shadow" },
+  { slug: "breakpoint", label: "Breakpoints", varPrefix: "--breakpoint-", tailwindDocs: "https://tailwindcss.com/docs/responsive-design" },
+  { slug: "ease", label: "Easing", varPrefix: "--ease-", tailwindDocs: "https://tailwindcss.com/docs/transition-timing-function" },
+  { slug: "animate", label: "Animation", varPrefix: "--animate-", tailwindDocs: "https://tailwindcss.com/docs/animation" },
+];`;
 
-export const metadata: Metadata = {
-  title: "Design System Docs",
-  robots: { index: false, follow: false },
-};
-
-export default function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 p-4">
-        <div className="mx-auto max-w-5xl flex items-baseline gap-3">
-          <h1 className="text-sm font-medium">Design System Docs</h1>
-          <span className="text-xs text-zinc-500">Internal — not indexed</span>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl p-8">{children}</main>
-    </div>
-  );
-}
-`;
-
-const INDEX_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
-import path from "node:path";
-import Link from "next/link";
-
-async function readConfig() {
-  try {
-    const src = await fs.readFile(path.resolve(process.cwd(), "adhd.config.ts"), "utf8");
-    const components: Record<string, unknown> = {};
-    const compMatch = /components:\\s*\\{([\\s\\S]*?)\\}\\s*[,;]?/.exec(src);
-    if (compMatch) {
-      const inner = compMatch[1];
-      const re = /"([^"]+)"\\s*:\\s*\\{/g;
-      let m;
-      while ((m = re.exec(inner)) !== null) {
-        components[m[1]] = true;
-      }
+// The CSS @theme parser shared between landing/tokens pages. Kept inline (not
+// imported from the lib) because these are runtime server components in the
+// consumer's app, with no access to ADHD's node_modules. Mirrors token-parser.js
+// but flattened for inline use.
+//   - Brace-counted scan supports `@theme { ... }` AND `@theme inline { ... }`
+//   - Prefix order matters: longer prefixes (`font-weight-`) before shorter (`font-`).
+const PARSE_TOKENS_SRC = `function extractThemeBodies(css: string): string[] {
+  const bodies: string[] = [];
+  let i = 0;
+  while (i < css.length) {
+    const idx = css.indexOf("@theme", i);
+    if (idx === -1) break;
+    let j = idx + "@theme".length;
+    while (j < css.length && css[j] !== "{" && css[j] !== ";") j++;
+    if (css[j] !== "{") { i = j + 1; continue; }
+    let depth = 1;
+    let k = j + 1;
+    while (k < css.length && depth > 0) {
+      if (css[k] === "{") depth++;
+      else if (css[k] === "}") depth--;
+      if (depth > 0) k++;
     }
-    const cssEntryMatch = /cssEntry\\s*:\\s*"([^"]+)"/.exec(src);
-    const cssEntry = cssEntryMatch ? cssEntryMatch[1] : "app/globals.css";
-    return { components: Object.keys(components), cssEntry };
-  } catch {
-    return { components: [], cssEntry: "app/globals.css" };
+    bodies.push(css.slice(j + 1, k));
+    i = k + 1;
   }
+  return bodies;
 }
 
-async function readCss(cssEntry: string) {
-  try {
-    return await fs.readFile(path.resolve(process.cwd(), cssEntry), "utf8");
-  } catch {
-    return null;
-  }
-}
+type Row = { name: string; value: string };
+type TypoRow = { name: string; size: string | null; lineHeight: string | null };
 
-function extractTokens(css: string | null) {
-  const empty = { colors: [], spacing: { multiplier: null }, typography: [], radius: [], shadows: [] };
-  if (!css) return empty;
-  const out = { colors: [] as Array<{ name: string; value: string }>,
-                spacing: { multiplier: null as string | null },
-                typography: [] as Array<{ name: string; size: string | null; lineHeight: string | null }>,
-                radius: [] as Array<{ name: string; value: string }>,
-                shadows: [] as Array<{ name: string; value: string }> };
-  const themeRe = /@theme\\s*\\{([\\s\\S]*?)\\}/g;
-  let body;
-  while ((body = themeRe.exec(css)) !== null) {
+function parseTokens(css: string | null) {
+  const out = {
+    colors: [] as Row[],
+    spacing: { multiplier: null as string | null },
+    typography: [] as TypoRow[],
+    fonts: [] as Row[],
+    fontWeights: [] as Row[],
+    radius: [] as Row[],
+    shadows: [] as Row[],
+    tracking: [] as Row[],
+    leading: [] as Row[],
+    breakpoints: [] as Row[],
+    easings: [] as Row[],
+    animations: [] as Row[],
+  };
+  if (!css) return out;
+  const typoByName = new Map<string, TypoRow>();
+  const LINE_HEIGHT_SUFFIX = "--line-height";
+  // Order matters: longer prefixes first.
+  const PREFIX_MAP: Array<[string, keyof typeof out]> = [
+    ["color-", "colors"],
+    ["font-weight-", "fontWeights"],
+    ["font-", "fonts"],
+    ["inset-shadow-", "shadows"],
+    ["drop-shadow-", "shadows"],
+    ["shadow-", "shadows"],
+    ["radius-", "radius"],
+    ["tracking-", "tracking"],
+    ["leading-", "leading"],
+    ["breakpoint-", "breakpoints"],
+    ["ease-", "easings"],
+    ["animate-", "animations"],
+  ];
+  for (const body of extractThemeBodies(css)) {
     const declRe = /--([a-zA-Z0-9_-]+)\\s*:\\s*([^;]+);/g;
     let d;
-    while ((d = declRe.exec(body[1])) !== null) {
+    while ((d = declRe.exec(body)) !== null) {
       const name = d[1];
       const value = d[2].trim();
-      if (name.startsWith("color-")) out.colors.push({ name: name.slice(6), value });
-      else if (name === "spacing") out.spacing.multiplier = value;
-      else if (name.startsWith("text-")) {
-        const rest = name.slice(5);
-        const lhIdx = rest.indexOf("--line-height");
-        const leaf = lhIdx >= 0 ? rest.slice(0, lhIdx) : rest;
-        let row = out.typography.find(t => t.name === leaf);
-        if (!row) { row = { name: leaf, size: null, lineHeight: null }; out.typography.push(row); }
-        if (lhIdx >= 0) row.lineHeight = value; else row.size = value;
-      } else if (name.startsWith("radius-")) out.radius.push({ name: name.slice(7), value });
-      else if (name.startsWith("shadow-")) out.shadows.push({ name: name.slice(7), value });
+      if (name === "spacing") { out.spacing.multiplier = value; continue; }
+      if (name.startsWith("text-")) {
+        const rest = name.slice("text-".length);
+        const isLh = rest.endsWith(LINE_HEIGHT_SUFFIX);
+        const leaf = isLh ? rest.slice(0, -LINE_HEIGHT_SUFFIX.length) : rest;
+        let row = typoByName.get(leaf);
+        if (!row) { row = { name: leaf, size: null, lineHeight: null }; typoByName.set(leaf, row); out.typography.push(row); }
+        if (isLh) row.lineHeight = value; else row.size = value;
+        continue;
+      }
+      for (const [prefix, domain] of PREFIX_MAP) {
+        if (name.startsWith(prefix)) {
+          (out[domain] as Row[]).push({ name: name.slice(prefix.length), value });
+          break;
+        }
+      }
     }
   }
   return out;
-}
+}`;
 
-export default async function DesignSystemIndex() {
-  const cfg = await readConfig();
-  const css = await readCss(cfg.cssEntry);
-  const tokens = extractTokens(css);
-
-  return (
-    <div className="flex flex-col gap-12">
-      <section>
-        <h2 className="mb-4 text-xs font-medium uppercase text-zinc-500">Colors</h2>
-        {tokens.colors.length === 0 ? <p className="text-sm text-zinc-500">No colors detected.</p> : (
-          <div className="grid grid-cols-6 gap-3">
-            {tokens.colors.map(c => (
-              <div key={c.name} className="flex flex-col gap-1">
-                <div className="h-12 w-full rounded border border-zinc-200 dark:border-zinc-800" style={{ backgroundColor: c.value }} />
-                <span className="text-xs">{c.name}</span>
-                <span className="text-[10px] text-zinc-500">{c.value}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-xs font-medium uppercase text-zinc-500">Spacing</h2>
-        {tokens.spacing.multiplier ? <p className="text-sm">Multiplier: <code>{tokens.spacing.multiplier}</code></p> : <p className="text-sm text-zinc-500">No spacing variable detected.</p>}
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-xs font-medium uppercase text-zinc-500">Typography</h2>
-        {tokens.typography.length === 0 ? <p className="text-sm text-zinc-500">No typography tokens detected.</p> : (
-          <div className="flex flex-col gap-4">
-            {tokens.typography.map(t => (
-              <div key={t.name} className="flex items-baseline gap-4">
-                <span className="text-xs text-zinc-500 w-20">text-{t.name}</span>
-                <span style={{ fontSize: t.size ?? undefined, lineHeight: t.lineHeight ?? undefined }}>
-                  The quick brown fox jumps over the lazy dog
-                </span>
-                <span className="text-[10px] text-zinc-500">{t.size}{t.lineHeight ? \` / \${t.lineHeight}\` : ""}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-xs font-medium uppercase text-zinc-500">Radius</h2>
-        {tokens.radius.length === 0 ? <p className="text-sm text-zinc-500">No radius tokens detected.</p> : (
-          <div className="flex gap-4">
-            {tokens.radius.map(r => (
-              <div key={r.name} className="flex flex-col gap-1">
-                <div className="h-16 w-16 bg-zinc-200 dark:bg-zinc-800" style={{ borderRadius: r.value }} />
-                <span className="text-xs">rounded-{r.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-xs font-medium uppercase text-zinc-500">Shadows</h2>
-        {tokens.shadows.length === 0 ? <p className="text-sm text-zinc-500">No shadow tokens detected.</p> : (
-          <div className="flex gap-6">
-            {tokens.shadows.map(s => (
-              <div key={s.name} className="flex flex-col gap-1">
-                <div className="h-16 w-16 bg-white" style={{ boxShadow: s.value }} />
-                <span className="text-xs">shadow-{s.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-xs font-medium uppercase text-zinc-500">Components</h2>
-        {cfg.components.length === 0 ? <p className="text-sm text-zinc-500">No components tracked yet.</p> : (
-          <div className="grid grid-cols-3 gap-4">
-            {cfg.components.map(p => {
-              const slug = p.replace(/\\.tsx?$/, "").replace(/\\/index$/, "").split("/").pop()?.toLowerCase() ?? p;
-              return (
-                <Link key={p} href={\`__ROUTE_PATH__/\${slug}\`} className="rounded border border-zinc-200 dark:border-zinc-800 p-4 hover:bg-zinc-100 dark:hover:bg-zinc-900">
-                  <div className="text-sm font-medium">{slug}</div>
-                  <div className="text-xs text-zinc-500 truncate">{p}</div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-`;
-
-const COMPONENT_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
-import path from "node:path";
-import { notFound } from "next/navigation";
-import { PropToggle } from "../PropToggle";
-
-async function readConfig() {
+const READ_CONFIG_SRC = `async function readConfig() {
   try {
     const src = await fs.readFile(path.resolve(process.cwd(), "adhd.config.ts"), "utf8");
     const components: string[] = [];
@@ -200,15 +126,322 @@ async function readConfig() {
       let m;
       while ((m = re.exec(inner)) !== null) components.push(m[1]);
     }
-    return components;
+    const cssEntryMatch = /cssEntry\\s*:\\s*"([^"]+)"/.exec(src);
+    const cssEntry = cssEntryMatch ? cssEntryMatch[1] : "app/globals.css";
+    return { components, cssEntry };
   } catch {
-    return [];
+    return { components: [] as string[], cssEntry: "app/globals.css" };
   }
 }
 
 function slugFor(p: string) {
   return p.replace(/\\.tsx?$/, "").replace(/\\/index$/, "").split("/").pop()?.toLowerCase() ?? p;
+}`;
+
+// Layout: sidebar lists token domains + components; main area renders children.
+// The layout is async so it can read adhd.config.ts to populate the components list.
+const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
+import fs from "node:fs/promises";
+import path from "node:path";
+import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Design System Docs",
+  robots: { index: false, follow: false },
+};
+
+${TOKEN_DOMAINS_SRC}
+
+${READ_CONFIG_SRC}
+
+export default async function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
+  const cfg = await readConfig();
+  const components = cfg.components.map(p => ({ raw: p, slug: slugFor(p) }));
+
+  return (
+    <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+      <aside className="w-56 shrink-0 border-r border-zinc-200 dark:border-zinc-800 p-4 sticky top-0 h-screen overflow-y-auto">
+        <Link href={\`__ROUTE_PATH__\`} className="block mb-6">
+          <h1 className="text-sm font-medium">Design System</h1>
+          <p className="text-[10px] text-zinc-500">Internal — not indexed</p>
+        </Link>
+
+        <nav className="flex flex-col gap-4 text-sm">
+          <section>
+            <h2 className="mb-2 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Tokens</h2>
+            <ul className="flex flex-col gap-1">
+              {TOKEN_DOMAINS.map(d => (
+                <li key={d.slug}>
+                  <Link href={\`__ROUTE_PATH__/tokens/\${d.slug}\`} className="block rounded px-2 py-1 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+                    {d.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="mb-2 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Components</h2>
+            {components.length === 0 ? (
+              <p className="text-xs text-zinc-500 px-2">None tracked yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {components.map(c => (
+                  <li key={c.raw}>
+                    <Link href={\`__ROUTE_PATH__/components/\${c.slug}\`} className="block rounded px-2 py-1 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+                      {c.slug}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </nav>
+      </aside>
+
+      <main className="flex-1 p-8 overflow-x-auto">
+        <div className="max-w-5xl">{children}</div>
+      </main>
+    </div>
+  );
 }
+`;
+
+// Landing page — minimal welcome message; the sidebar already shows everything.
+const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemIndex() {
+  return (
+    <div className="flex flex-col gap-4">
+      <h2 className="text-2xl font-medium">Design System</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-prose">
+        Pick a token domain or a component from the sidebar. Tokens are read from your
+        <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
+        <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks.
+        Components are loaded from
+        <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code>.
+      </p>
+    </div>
+  );
+}
+`;
+
+// Tokens domain page — one route, one renderer per domain. Reads the consumer's
+// globals.css at request time and renders whatever's declared. Empty states
+// reference Tailwind v4's defaults rather than implying the system is broken.
+const TOKENS_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
+import path from "node:path";
+import { notFound } from "next/navigation";
+
+${TOKEN_DOMAINS_SRC}
+
+${READ_CONFIG_SRC}
+
+async function readCss(cssEntry: string) {
+  try { return await fs.readFile(path.resolve(process.cwd(), cssEntry), "utf8"); }
+  catch { return null; }
+}
+
+${PARSE_TOKENS_SRC}
+
+function EmptyState({ domain }: { domain: typeof TOKEN_DOMAINS[number] }) {
+  return (
+    <div className="rounded border border-dashed border-zinc-300 dark:border-zinc-700 p-6 text-sm text-zinc-600 dark:text-zinc-400">
+      No custom <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">{domain.varPrefix}*</code> tokens declared in your <code>@theme</code>.
+      Tailwind v4 ships sensible defaults — see the <a className="underline" href={domain.tailwindDocs} target="_blank" rel="noopener noreferrer">{domain.label} docs</a>.
+    </div>
+  );
+}
+
+export default async function TokensDomainPage({ params }: { params: Promise<{ domain: string }> }) {
+  const { domain: slug } = await params;
+  const domain = TOKEN_DOMAINS.find(d => d.slug === slug);
+  if (!domain) notFound();
+
+  const cfg = await readConfig();
+  const css = await readCss(cfg.cssEntry);
+  const tokens = parseTokens(css);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <header>
+        <h2 className="text-2xl font-medium">{domain.label}</h2>
+        <p className="text-xs text-zinc-500 mt-1">Variables prefixed with <code>{domain.varPrefix}</code></p>
+      </header>
+
+      {slug === "colors" && (
+        tokens.colors.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="grid grid-cols-4 md:grid-cols-6 gap-3">
+            {tokens.colors.map(c => (
+              <div key={c.name} className="flex flex-col gap-1">
+                <div className="h-16 w-full rounded border border-zinc-200 dark:border-zinc-800" style={{ backgroundColor: c.value }} />
+                <span className="text-xs">{c.name}</span>
+                <span className="text-[10px] text-zinc-500 truncate" title={c.value}>{c.value}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "spacing" && (
+        tokens.spacing.multiplier == null ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm">Multiplier: <code>{tokens.spacing.multiplier}</code></p>
+            <p className="text-xs text-zinc-500">Tailwind v4 derives all spacing utilities from this single variable.</p>
+          </div>
+        )
+      )}
+
+      {slug === "typography" && (
+        tokens.typography.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-4">
+            {tokens.typography.map(t => (
+              <div key={t.name} className="flex items-baseline gap-4 border-b border-zinc-100 dark:border-zinc-900 pb-2">
+                <span className="text-xs text-zinc-500 w-20 shrink-0">text-{t.name}</span>
+                <span style={{ fontSize: t.size ?? undefined, lineHeight: t.lineHeight ?? undefined }}>
+                  The quick brown fox jumps over the lazy dog
+                </span>
+                <span className="ml-auto text-[10px] text-zinc-500">{t.size}{t.lineHeight ? \` / \${t.lineHeight}\` : ""}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "font" && (
+        tokens.fonts.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-3">
+            {tokens.fonts.map(f => (
+              <div key={f.name} className="flex flex-col gap-1 border-b border-zinc-100 dark:border-zinc-900 pb-3">
+                <span className="text-xs text-zinc-500">font-{f.name}</span>
+                <span style={{ fontFamily: f.value }} className="text-xl">The quick brown fox</span>
+                <span className="text-[10px] text-zinc-500 truncate" title={f.value}>{f.value}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "font-weight" && (
+        tokens.fontWeights.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-2">
+            {tokens.fontWeights.map(w => (
+              <div key={w.name} className="flex items-baseline gap-4">
+                <span className="text-xs text-zinc-500 w-32 shrink-0">font-{w.name}</span>
+                <span style={{ fontWeight: w.value }} className="text-lg">The quick brown fox</span>
+                <span className="ml-auto text-[10px] text-zinc-500">{w.value}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "tracking" && (
+        tokens.tracking.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-2">
+            {tokens.tracking.map(t => (
+              <div key={t.name} className="flex items-baseline gap-4">
+                <span className="text-xs text-zinc-500 w-32 shrink-0">tracking-{t.name}</span>
+                <span style={{ letterSpacing: t.value }} className="text-lg">The quick brown fox</span>
+                <span className="ml-auto text-[10px] text-zinc-500">{t.value}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "leading" && (
+        tokens.leading.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-3">
+            {tokens.leading.map(l => (
+              <div key={l.name} className="flex flex-col gap-1 border-b border-zinc-100 dark:border-zinc-900 pb-3">
+                <span className="text-xs text-zinc-500">leading-{l.name} <span className="text-zinc-400">— {l.value}</span></span>
+                <p style={{ lineHeight: l.value }} className="text-sm max-w-md">
+                  The quick brown fox jumps over the lazy dog. The five boxing wizards jump quickly. Pack my box with five dozen liquor jugs.
+                </p>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "radius" && (
+        tokens.radius.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-wrap gap-4">
+            {tokens.radius.map(r => (
+              <div key={r.name} className="flex flex-col gap-1">
+                <div className="h-16 w-16 bg-zinc-200 dark:bg-zinc-800" style={{ borderRadius: r.value }} />
+                <span className="text-xs">rounded-{r.name}</span>
+                <span className="text-[10px] text-zinc-500">{r.value}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "shadows" && (
+        tokens.shadows.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-wrap gap-8">
+            {tokens.shadows.map((s, i) => (
+              <div key={\`\${s.name}-\${i}\`} className="flex flex-col gap-1">
+                <div className="h-20 w-20 bg-white" style={{ boxShadow: s.value }} />
+                <span className="text-xs">shadow-{s.name}</span>
+                <span className="text-[10px] text-zinc-500 truncate w-20" title={s.value}>{s.value}</span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "breakpoint" && (
+        tokens.breakpoints.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-1">
+            {tokens.breakpoints.map(b => (
+              <div key={b.name} className="flex items-baseline gap-4 text-sm">
+                <span className="text-xs text-zinc-500 w-32 shrink-0">{b.name}</span>
+                <code>{b.value}</code>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "ease" && (
+        tokens.easings.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-1">
+            {tokens.easings.map(e => (
+              <div key={e.name} className="flex items-baseline gap-4 text-sm">
+                <span className="text-xs text-zinc-500 w-32 shrink-0">ease-{e.name}</span>
+                <code className="text-xs">{e.value}</code>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {slug === "animate" && (
+        tokens.animations.length === 0 ? <EmptyState domain={domain} /> : (
+          <div className="flex flex-col gap-1">
+            {tokens.animations.map(a => (
+              <div key={a.name} className="flex items-baseline gap-4 text-sm">
+                <span className="text-xs text-zinc-500 w-32 shrink-0">animate-{a.name}</span>
+                <code className="text-xs">{a.value}</code>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+`;
+
+// Component page — moved to /components/[component]. Two levels deep, so the
+// PropToggle import is now `../../PropToggle`.
+const COMPONENT_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
+import path from "node:path";
+import { notFound } from "next/navigation";
+import { PropToggle } from "../../PropToggle";
+
+${READ_CONFIG_SRC}
 
 async function parseProps(componentPath: string) {
   try {
@@ -258,8 +491,8 @@ export default async function ComponentPage({
 }) {
   const { component: slug } = await params;
   const sp = await searchParams;
-  const paths = await readConfig();
-  const componentPath = paths.find(p => slugFor(p) === slug);
+  const cfg = await readConfig();
+  const componentPath = cfg.components.find(p => slugFor(p) === slug);
   if (!componentPath) notFound();
 
   const { props } = await parseProps(componentPath);
@@ -294,7 +527,7 @@ export default async function ComponentPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-lg font-medium">{slug}</h2>
+      <h2 className="text-2xl font-medium">{slug}</h2>
 
       <section className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
         <h3 className="mb-3 text-xs font-medium uppercase text-zinc-500">Props</h3>
@@ -383,4 +616,11 @@ export function PropToggle(p: Props) {
 }
 `;
 
-module.exports = { MARKER_COMMENT, LAYOUT_TSX, INDEX_PAGE_TSX, COMPONENT_PAGE_TSX, PROP_TOGGLE_TSX };
+module.exports = {
+  MARKER_COMMENT,
+  LAYOUT_TSX,
+  INDEX_PAGE_TSX,
+  TOKENS_PAGE_TSX,
+  COMPONENT_PAGE_TSX,
+  PROP_TOGGLE_TSX,
+};
