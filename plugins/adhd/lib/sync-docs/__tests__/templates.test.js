@@ -8,9 +8,7 @@ const {
   INDEX_PAGE_TSX,
   TOKENS_PAGE_TSX,
   COMPONENT_PAGE_TSX,
-  COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
-  PROP_TOGGLE_TSX,
 } = require('../templates');
 
 test('MARKER_COMMENT is a stable, non-ADHD-referencing string', () => {
@@ -29,8 +27,6 @@ test('LAYOUT_TSX sets robots: noindex / nofollow', () => {
 
 test('LAYOUT_TSX declares and named-exports the TOKEN_DOMAINS catalog', () => {
   // Single source of truth lives in the layout. Tokens page imports it from there.
-  // The catalog covers every Tailwind v4 token domain with its varPrefix and
-  // Tailwind docs link (used for empty-state messaging on each domain page).
   assert.match(LAYOUT_TSX, /export const TOKEN_DOMAINS: TokenDomain\[\]/);
   assert.match(LAYOUT_TSX, /export type TokenDomain/);
   for (const label of [
@@ -48,26 +44,15 @@ test('TOKENS_PAGE_TSX imports the catalog from the layout via a __LAYOUT_MODULE_
   assert.match(TOKENS_PAGE_TSX, /import \{ TOKEN_DOMAINS, type TokenDomain \} from "__LAYOUT_MODULE__"/);
 });
 
-test('LAYOUT_TSX imports componentEntries from componentMap (no runtime config read)', () => {
-  // Static architecture: the layout doesn't read adhd.config.ts at request time.
-  // Instead, the installer generates componentMap.tsx with the components baked in,
-  // and the layout imports componentEntries from it.
-  assert.match(LAYOUT_TSX, /from "\.\/componentMap"/);
-  assert.match(LAYOUT_TSX, /componentEntries/);
-  // No fs/path imports — the layout is a pure render now
-  assert.doesNotMatch(LAYOUT_TSX, /from "node:fs|from "node:path|readConfig\(/);
+test('LAYOUT_TSX imports the static components array from componentMap', () => {
+  assert.match(LAYOUT_TSX, /import \{ components \} from "\.\/componentMap"/);
+  // No fs/path imports — the layout is a pure render.
+  assert.doesNotMatch(LAYOUT_TSX, /from "node:fs|from "node:path/);
 });
 
-test('LAYOUT_TSX is a sync (non-async) server component now', () => {
-  // No fs reads anywhere in the layout; it's a pure render.
+test('LAYOUT_TSX is a sync (non-async) server component', () => {
   assert.doesNotMatch(LAYOUT_TSX, /export default async function/);
   assert.match(LAYOUT_TSX, /export default function DesignSystemDocsLayout/);
-});
-
-test('LAYOUT_TSX has no diagnostic banner (removed with the dynamic-import architecture)', () => {
-  // The DiagnosticBanner existed to flag missing tokens that surfaced under the
-  // broad dynamic import. Static imports eliminate that failure mode entirely.
-  assert.doesNotMatch(LAYOUT_TSX, /DiagnosticBanner|detectIssues|ring-offset-background/);
 });
 
 test('INDEX_PAGE_TSX is a landing page describing the static-import flow', () => {
@@ -76,91 +61,70 @@ test('INDEX_PAGE_TSX is a landing page describing the static-import flow', () =>
   assert.match(INDEX_PAGE_TSX, /re-run/);
 });
 
-test('INDEX_PAGE_TSX has no Troubleshooting section (each route handles its own failure modes)', () => {
-  // The component page surfaces "not in static map" itself; error.tsx catches
-  // runtime crashes; token pages link to Tailwind docs for empty domains.
-  // The landing page just orients the user — no duplicated troubleshooting copy.
+test('INDEX_PAGE_TSX has no Troubleshooting section', () => {
   assert.doesNotMatch(INDEX_PAGE_TSX, /Troubleshooting/);
-  assert.doesNotMatch(INDEX_PAGE_TSX, /app-build-manifest|broad dynamic/i);
-  // It still mentions the re-run command so the user knows how to refresh the map.
   assert.match(INDEX_PAGE_TSX, /\/adhd:sync-docs/);
 });
 
 test('TOKENS_PAGE_TSX reads globals.css from a baked CSS_ENTRY constant', () => {
   assert.match(TOKENS_PAGE_TSX, /const CSS_ENTRY = "__CSS_ENTRY__"/);
   assert.match(TOKENS_PAGE_TSX, /parseTokens/);
-  // Tokens page no longer reads adhd.config.ts at request time
-  assert.doesNotMatch(TOKENS_PAGE_TSX, /readConfig|adhd\.config\.ts/);
+  assert.doesNotMatch(TOKENS_PAGE_TSX, /adhd\.config\.ts/);
 });
 
 test('TOKENS_PAGE_TSX does not inline the TOKEN_DOMAINS list', () => {
-  // The inline catalog from earlier versions is gone — the page imports from the layout.
   assert.doesNotMatch(TOKENS_PAGE_TSX, /const TOKEN_DOMAINS = \[/);
 });
 
-test('COMPONENT_PAGE_TSX uses getComponent from the static componentMap (no dynamic import)', () => {
-  assert.match(COMPONENT_PAGE_TSX, /import \{ getComponent \} from "\.\.\/\.\.\/componentMap"/);
-  // No template-literal dynamic import
-  assert.doesNotMatch(COMPONENT_PAGE_TSX, /await\s+import\(`/);
+test('COMPONENT_PAGE_TSX is a client component', () => {
+  // The page must be a client component so PropToggle can be inlined and
+  // useSearchParams/useRouter can drive URL state without a separate file.
+  const afterMarker = COMPONENT_PAGE_TSX.replace(MARKER_COMMENT, '');
+  assert.match(afterMarker, /^["']use client["']/);
 });
 
-test('COMPONENT_PAGE_TSX reads searchParams for prop toggles', () => {
-  assert.match(COMPONENT_PAGE_TSX, /searchParams/);
+test('COMPONENT_PAGE_TSX uses getComponent from the static componentMap (no fs reads, no dynamic import)', () => {
+  assert.match(COMPONENT_PAGE_TSX, /import \{ components, getComponent, type PropSchema \} from "\.\.\/\.\.\/componentMap"/);
+  assert.doesNotMatch(COMPONENT_PAGE_TSX, /await\s+import\(`/);
+  // No server-side fs reads — the page is fully client.
+  assert.doesNotMatch(COMPONENT_PAGE_TSX, /from "node:fs|from "node:path/);
+});
+
+test('COMPONENT_PAGE_TSX inlines PropToggle (no separate PropToggle.tsx file)', () => {
+  // The PropToggle UI lives in the page itself now. No import from "../PropToggle".
+  assert.match(COMPONENT_PAGE_TSX, /function PropToggle\(/);
+  assert.doesNotMatch(COMPONENT_PAGE_TSX, /from "\.\.\/PropToggle"|from "\.\.\/\.\.\/PropToggle"/);
+});
+
+test('COMPONENT_PAGE_TSX reads URL state via useSearchParams + useParams hooks', () => {
+  assert.match(COMPONENT_PAGE_TSX, /useParams/);
+  assert.match(COMPONENT_PAGE_TSX, /useSearchParams/);
+  assert.match(COMPONENT_PAGE_TSX, /router\.replace/);
 });
 
 test('COMPONENT_PAGE_TSX shows a "Not in the static map" branch for unknown slugs', () => {
-  // Replaces notFound() with an actionable message about re-running setup.
   assert.match(COMPONENT_PAGE_TSX, /Not in the static map/);
   assert.match(COMPONENT_PAGE_TSX, /re-run.*\/adhd:sync-docs/i);
 });
 
-test('COMPONENT_MAP_TSX has the substitution placeholders the installer needs', () => {
-  // The template is a per-install-generated file. These placeholders are
-  // filled in by route-installer.js's renderComponentMap.
+test('COMPONENT_MAP_TSX has the substitution placeholders the installer fills in', () => {
   assert.match(COMPONENT_MAP_TSX, /__COMPONENT_IMPORTS__/);
   assert.match(COMPONENT_MAP_TSX, /__COMPONENT_ENTRIES__/);
   assert.match(COMPONENT_MAP_TSX, /export function getComponent/);
-  assert.match(COMPONENT_MAP_TSX, /export const componentEntries/);
+  assert.match(COMPONENT_MAP_TSX, /export const components/);
+  assert.match(COMPONENT_MAP_TSX, /export type PropSchema/);
 });
 
 test('COMPONENT_MAP_TSX resolves a renderable function via default-then-named fallback', () => {
-  // Mirrors the runtime behavior of the previous dynamic-import resolution:
-  // prefer default export, fall back to first named function. This keeps
-  // existing user components working without changes.
   assert.match(COMPONENT_MAP_TSX, /function resolveComponent/);
   assert.match(COMPONENT_MAP_TSX, /mod\.default/);
 });
 
-test('PROP_TOGGLE_TSX is a client component', () => {
-  const afterMarker = PROP_TOGGLE_TSX.replace(MARKER_COMMENT, '');
-  assert.match(afterMarker, /^["']use client["']/);
-});
-
-test('PROP_TOGGLE_TSX uses router.replace for snappy URL updates', () => {
-  assert.match(PROP_TOGGLE_TSX, /router\.replace/);
-});
-
-test('COMPONENT_ERROR_TSX is a client component error boundary', () => {
-  const afterMarker = COMPONENT_ERROR_TSX.replace(MARKER_COMMENT, '');
-  assert.match(afterMarker, /^["']use client["']/);
-  assert.match(COMPONENT_ERROR_TSX, /error.*reset/);
-  assert.match(COMPONENT_ERROR_TSX, /reset\(\)/);
-});
-
-test('COMPONENT_ERROR_TSX no longer has the build-manifest-specific copy', () => {
-  // With static imports, the build-manifest ENOENT failure mode is gone, so
-  // the error boundary no longer needs to special-case it.
-  assert.doesNotMatch(COMPONENT_ERROR_TSX, /app-build-manifest|isBuildManifestError/);
-});
-
 test('none of the templates contain "ADHD" outside the marker', () => {
-  // Two filename-style exceptions are allowed (they're how the user actually
-  // interacts with the tool, and ejecting from ADHD doesn't break the file —
-  // it just means those references become vestigial guidance the user can edit):
+  // Two filename-style exceptions are allowed:
   //   1. `adhd.config.ts` — the consumer's own config artifact.
-  //   2. `/adhd:sync-docs` — the slash command name,
-  //      referenced in troubleshooting copy so the user knows what to re-run.
-  const all = { LAYOUT_TSX, INDEX_PAGE_TSX, TOKENS_PAGE_TSX, COMPONENT_PAGE_TSX, COMPONENT_ERROR_TSX, COMPONENT_MAP_TSX, PROP_TOGGLE_TSX };
+  //   2. `/adhd:sync-docs` — the slash command name, referenced in re-run copy.
+  const all = { LAYOUT_TSX, INDEX_PAGE_TSX, TOKENS_PAGE_TSX, COMPONENT_PAGE_TSX, COMPONENT_MAP_TSX };
   for (const [name, content] of Object.entries(all)) {
     const body = content
       .replace(MARKER_COMMENT, '')

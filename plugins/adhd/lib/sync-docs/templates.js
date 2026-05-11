@@ -119,12 +119,33 @@ function parseTokens(css: string | null) {
 const COMPONENT_MAP_TSX = `${MARKER_COMMENT}import type React from "react";
 __COMPONENT_IMPORTS__
 
-type ModuleShape = Record<string, unknown>;
+// PropSchema is baked at sync time from each component's TypeScript prop
+// interface (via the lib's prop-parser). Re-run \`/adhd:sync-docs\` after
+// editing a component's props to refresh this file.
+export type PropSchema = {
+  type: "union" | "boolean" | "string" | "number" | "unknown";
+  values?: readonly string[];
+  optional: boolean;
+};
 
-// Resolve the renderable function from a module: prefer the default export,
-// fall back to the first exported function. Mirrors the previous runtime
-// resolution behavior so existing user components keep working.
-function resolveComponent(mod: ModuleShape): React.ComponentType<any> | null {
+export type ComponentEntry = {
+  slug: string;
+  rawPath: string;
+  Component: React.ComponentType<any> | null;
+  props: Record<string, PropSchema>;
+};
+
+type RawEntry = {
+  slug: string;
+  rawPath: string;
+  module: Record<string, unknown>;
+  props: Record<string, PropSchema>;
+};
+
+// Resolve the renderable function: prefer the default export, then the
+// first exported function. Keeps user components working without forcing
+// a particular export style.
+function resolveComponent(mod: Record<string, unknown>): React.ComponentType<any> | null {
   if (typeof mod.default === "function") return mod.default as React.ComponentType<any>;
   for (const v of Object.values(mod)) {
     if (typeof v === "function") return v as React.ComponentType<any>;
@@ -132,21 +153,17 @@ function resolveComponent(mod: ModuleShape): React.ComponentType<any> | null {
   return null;
 }
 
-export type ComponentEntry = {
-  slug: string;
-  rawPath: string;
-  Component: React.ComponentType<any> | null;
-};
+const ENTRIES: RawEntry[] = __COMPONENT_ENTRIES__;
 
-const ENTRIES: Array<{ slug: string; rawPath: string; module: ModuleShape }> = __COMPONENT_ENTRIES__;
+export const components: ComponentEntry[] = ENTRIES.map(e => ({
+  slug: e.slug,
+  rawPath: e.rawPath,
+  Component: resolveComponent(e.module),
+  props: e.props,
+}));
 
-export const componentEntries: Array<{ slug: string; rawPath: string }> =
-  ENTRIES.map(e => ({ slug: e.slug, rawPath: e.rawPath }));
-
-export function getComponent(slug: string): ComponentEntry | null {
-  const entry = ENTRIES.find(e => e.slug === slug);
-  if (!entry) return null;
-  return { slug: entry.slug, rawPath: entry.rawPath, Component: resolveComponent(entry.module) };
+export function getComponent(slug: string): ComponentEntry | undefined {
+  return components.find(c => c.slug === slug);
 }
 `;
 
@@ -155,7 +172,7 @@ export function getComponent(slug: string): ComponentEntry | null {
 // No fs reads, no async — pure server component.
 const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
 import Link from "next/link";
-import { componentEntries } from "./componentMap";
+import { components } from "./componentMap";
 
 export const metadata: Metadata = {
   title: "Design System Docs",
@@ -213,11 +230,11 @@ export default function DesignSystemDocsLayout({ children }: { children: React.R
 
           <section>
             <h2 className="mb-2 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Components</h2>
-            {componentEntries.length === 0 ? (
+            {components.length === 0 ? (
               <p className="text-xs text-zinc-500 px-2">None tracked. Add to <code>adhd.config.ts</code> and re-run <code>/adhd:sync-docs</code>.</p>
             ) : (
               <ul className="flex flex-col gap-1">
-                {componentEntries.map(c => (
+                {components.map(c => (
                   <li key={c.slug}>
                     <Link href={\`__ROUTE_PATH__/components/\${c.slug}\`} className="block rounded px-2 py-1 hover:bg-zinc-200 dark:hover:bg-zinc-800">
                       {c.slug}
@@ -468,205 +485,32 @@ export default async function TokensDomainPage({ params }: { params: Promise<{ d
 }
 `;
 
-// Component page — uses the statically generated componentMap. No fs reads of
-// adhd.config.ts at request time; the rawPath comes from the map. The page
-// still reads the component's source via fs to introspect prop interfaces
-// (that's a one-file read per request, not a bundle).
-const COMPONENT_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
-import path from "node:path";
-import { PropToggle } from "../../PropToggle";
-import { getComponent } from "../../componentMap";
+// Component page — a CLIENT component that does a static lookup in
+// componentMap. Prop schemas are baked into componentMap at sync time
+// (via the lib's prop-parser), so the page has no runtime fs reads. The
+// PropToggle UI is inlined since both it and the page need `"use client"`.
+const COMPONENT_PAGE_TSX = `${MARKER_COMMENT}"use client";
 
-async function parseProps(componentPath: string) {
-  try {
-    const src = await fs.readFile(path.resolve(process.cwd(), componentPath), "utf8");
-    const TYPE_ALIAS_RE = /export\\s+type\\s+([A-Z][A-Za-z0-9]*)\\s*=\\s*([^;]+);/g;
-    const INTERFACE_RE = /(?:export\\s+)?interface\\s+([A-Z][A-Za-z0-9]*Props)\\s*\\{([\\s\\S]*?)\\}/;
-    const PROP_LINE_RE = /^\\s*([a-zA-Z_$][a-zA-Z0-9_$]*)(\\??)\\s*:\\s*([^;,]+)[;,]?\\s*$/;
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { components, getComponent, type PropSchema } from "../../componentMap";
 
-    const knownUnions: Record<string, string[]> = {};
-    TYPE_ALIAS_RE.lastIndex = 0;
-    let m;
-    while ((m = TYPE_ALIAS_RE.exec(src)) !== null) {
-      const body = m[2].trim();
-      if (/^"[^"]*"(\\s*\\|\\s*"[^"]*")*$/.test(body)) {
-        knownUnions[m[1]] = body.split("|").map(s => s.trim().replace(/"/g, ""));
-      }
-    }
-    const iface = INTERFACE_RE.exec(src);
-    if (!iface) return { props: {} as Record<string, any>, knownUnions };
-    const props: Record<string, any> = {};
-    for (const rawLine of iface[2].split("\\n")) {
-      const line = rawLine.replace(/\\/\\/.*$/, "");
-      const pm = PROP_LINE_RE.exec(line);
-      if (!pm) continue;
-      const [, name, opt, type] = pm;
-      const t = type.trim();
-      if (knownUnions[t]) props[name] = { type: "union", values: knownUnions[t], optional: !!opt };
-      else if (/^"[^"]*"(\\s*\\|\\s*"[^"]*")*$/.test(t)) {
-        props[name] = { type: "union", values: t.split("|").map(s => s.trim().replace(/"/g, "")), optional: !!opt };
-      } else if (t === "string") props[name] = { type: "string", optional: !!opt };
-      else if (t === "number") props[name] = { type: "number", optional: !!opt };
-      else if (t === "boolean") props[name] = { type: "boolean", optional: !!opt };
-      else props[name] = { type: "unknown", optional: !!opt };
-    }
-    return { props, knownUnions };
-  } catch {
-    return { props: {} as Record<string, any>, knownUnions: {} };
-  }
-}
-
-export default async function ComponentPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ component: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const { component: slug } = await params;
-  const sp = await searchParams;
-  const entry = getComponent(slug);
-
-  if (!entry) {
-    return (
-      <div className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-6">
-        <h2 className="text-lg font-medium text-amber-900 dark:text-amber-200">Not in the static map</h2>
-        <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
-          The slug <code>{slug}</code> isn&apos;t present in the generated <code>componentMap.tsx</code>.
-        </p>
-        <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
-          If you just edited <code>adhd.config.ts</code> to add this component, re-run <code>/adhd:sync-docs</code> in this project to regenerate the static imports.
-        </p>
-      </div>
-    );
-  }
-
-  const { rawPath, Component } = entry;
-  const { props } = await parseProps(rawPath);
-
-  // Resolve current prop values from searchParams
-  const current: Record<string, any> = {};
-  for (const [name, def] of Object.entries(props)) {
-    const v = sp[name];
-    if (typeof v !== "string") continue;
-    if (def.type === "union" && def.values.includes(v)) current[name] = v;
-    else if (def.type === "boolean") current[name] = v === "true";
-    else if (def.type === "string") current[name] = v;
-    else if (def.type === "number") current[name] = Number(v);
-  }
-
-  const importPath = "@/" + rawPath.replace(/\\.tsx?$/, "").replace(/\\/index$/, "");
-  const importStmt = Component ? \`import \${Component.name ?? slug} from "\${importPath}";\` : null;
-  const jsxSnippet = Component
-    ? \`<\${Component.name ?? slug}\${Object.entries(current).map(([k,v]) => \` \${k}={\${JSON.stringify(v)}}\`).join("")} />\`
-    : null;
-
-  return (
-    <div className="flex flex-col gap-6">
-      <h2 className="text-2xl font-medium">{slug}</h2>
-
-      <section className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
-        <h3 className="mb-3 text-xs font-medium uppercase text-zinc-500">Props</h3>
-        {Object.keys(props).length === 0 ? <p className="text-sm text-zinc-500">No prop introspection available.</p> : (
-          <div className="flex flex-col gap-2">
-            {Object.entries(props).map(([name, def]: [string, any]) => {
-              if (def.type === "union") {
-                return (
-                  <PropToggle key={name} name={name} kind="union" values={def.values} value={current[name] ?? def.values[0]} />
-                );
-              }
-              if (def.type === "boolean") {
-                return (
-                  <PropToggle key={name} name={name} kind="boolean" value={String(current[name] ?? false)} />
-                );
-              }
-              if (def.type === "string" || def.type === "number") {
-                return (
-                  <PropToggle key={name} name={name} kind={def.type} value={String(current[name] ?? "")} />
-                );
-              }
-              return (
-                <div key={name} className="text-xs text-zinc-500">
-                  {name}: <code>{def.type}</code> — toggle unavailable
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="rounded border border-zinc-200 dark:border-zinc-800 p-8">
-        {Component ? <Component {...current} /> : (
-          <p className="text-sm text-zinc-500">No renderable component exported from <code>{rawPath}</code>. The map imported it but couldn&apos;t resolve a function (default or named).</p>
-        )}
-      </section>
-
-      {importStmt && jsxSnippet && (
-        <section className="flex flex-col gap-2">
-          <pre className="rounded bg-zinc-100 dark:bg-zinc-900 p-3 text-xs overflow-x-auto"><code>{importStmt}</code></pre>
-          <pre className="rounded bg-zinc-100 dark:bg-zinc-900 p-3 text-xs overflow-x-auto"><code>{jsxSnippet}</code></pre>
-        </section>
-      )}
-    </div>
-  );
-}
-`;
-
-// Error boundary for the component route. Catches runtime errors thrown during
-// rendering — components that throw on mount, prop-parse failures, etc. With
-// static imports there's no broad-bundle Tailwind blast radius anymore, so this
-// is purely a runtime safety net.
-const COMPONENT_ERROR_TSX = `${MARKER_COMMENT}"use client";
-
-export default function ComponentPageError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-6">
-        <h2 className="text-lg font-medium text-red-900 dark:text-red-200">Couldn&apos;t render this component</h2>
-        <p className="mt-2 text-sm text-red-800 dark:text-red-300">
-          Something went wrong while rendering this component. Common causes:
-        </p>
-        <ul className="mt-3 list-disc pl-6 text-sm text-red-800 dark:text-red-300">
-          <li>The component throws on mount when no props are provided.</li>
-          <li>The component expects context (theme provider, router, query client) that the docs route doesn&apos;t set up.</li>
-          <li>The component&apos;s prop interface uses types the docs route can&apos;t introspect.</li>
-        </ul>
-        <details className="mt-4 text-xs">
-          <summary className="cursor-pointer text-red-700 dark:text-red-300">Show error details</summary>
-          <pre className="mt-2 overflow-x-auto rounded bg-red-100 dark:bg-red-950/50 p-2 text-red-900 dark:text-red-200">{error.message}{error.digest ? \`\\n\\nDigest: \${error.digest}\` : ""}</pre>
-        </details>
-        <button
-          type="button"
-          onClick={() => reset()}
-          className="mt-4 rounded border border-red-300 dark:border-red-700 px-3 py-1 text-sm text-red-900 dark:text-red-200 hover:bg-red-100 dark:hover:bg-red-900/30"
-        >
-          Try again
-        </button>
-      </div>
-    </div>
-  );
-}
-`;
-
-const PROP_TOGGLE_TSX = `${MARKER_COMMENT}"use client";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
-
-type Props =
-  | { name: string; kind: "union"; values: string[]; value: string }
+// Inline PropToggle: a small client UI for one prop, wired to the URL via
+// router.replace so the parent re-renders with the new value. Kept in this
+// file because both it and the page need "use client" — no reason to split.
+function PropToggle(p:
+  | { name: string; kind: "union"; values: readonly string[]; value: string }
   | { name: string; kind: "boolean"; value: string }
-  | { name: string; kind: "string"; value: string }
-  | { name: string; kind: "number"; value: string };
-
-export function PropToggle(p: Props) {
+  | { name: string; kind: "string" | "number"; value: string }
+) {
   const router = useRouter();
-  const path = usePathname();
+  const pathname = usePathname();
   const sp = useSearchParams();
 
   function setParam(v: string) {
     const next = new URLSearchParams(sp.toString());
     if (v === "") next.delete(p.name);
     else next.set(p.name, v);
-    router.replace(\`\${path}?\${next}\`);
+    router.replace(\`\${pathname}?\${next.toString()}\`);
   }
 
   return (
@@ -684,6 +528,101 @@ export function PropToggle(p: Props) {
     </label>
   );
 }
+
+function NotInMap({ slug }: { slug: string }) {
+  return (
+    <div className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-6">
+      <h2 className="text-lg font-medium text-amber-900 dark:text-amber-200">Not in the static map</h2>
+      <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+        The slug <code>{slug}</code> isn&apos;t present in the generated <code>componentMap.tsx</code>.
+      </p>
+      <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+        Tracked slugs: {components.length === 0 ? <em>none</em> : components.map(c => <code key={c.slug} className="mr-2">{c.slug}</code>)}
+      </p>
+      <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+        If you just edited <code>adhd.config.ts</code> to add this component, re-run <code>/adhd:sync-docs</code> in this project to regenerate the static imports.
+      </p>
+    </div>
+  );
+}
+
+export default function ComponentPage() {
+  const params = useParams<{ component: string }>();
+  const slug = params.component;
+  const sp = useSearchParams();
+  const entry = getComponent(slug);
+
+  if (!entry) return <NotInMap slug={slug} />;
+
+  const { rawPath, Component, props } = entry;
+
+  // Resolve current prop values from the URL.
+  const current: Record<string, any> = {};
+  for (const [name, def] of Object.entries(props) as Array<[string, PropSchema]>) {
+    const v = sp.get(name);
+    if (v == null) continue;
+    if (def.type === "union" && def.values?.includes(v)) current[name] = v;
+    else if (def.type === "boolean") current[name] = v === "true";
+    else if (def.type === "string") current[name] = v;
+    else if (def.type === "number") current[name] = Number(v);
+  }
+
+  const importPath = "@/" + rawPath.replace(/\\.tsx?$/, "").replace(/\\/index$/, "");
+  const componentName = Component?.name || slug;
+  const importStmt = Component ? \`import \${componentName} from "\${importPath}";\` : null;
+  const jsxSnippet = Component
+    ? \`<\${componentName}\${Object.entries(current).map(([k, v]) => \` \${k}={\${JSON.stringify(v)}}\`).join("")} />\`
+    : null;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <h2 className="text-2xl font-medium">{slug}</h2>
+
+      <section className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
+        <h3 className="mb-3 text-xs font-medium uppercase text-zinc-500">Props</h3>
+        {Object.keys(props).length === 0 ? (
+          <p className="text-sm text-zinc-500">No prop interface detected at sync time.</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {Object.entries(props).map(([name, def]) => {
+              if (def.type === "union" && def.values) {
+                return <PropToggle key={name} name={name} kind="union" values={def.values} value={current[name] ?? def.values[0]} />;
+              }
+              if (def.type === "boolean") {
+                return <PropToggle key={name} name={name} kind="boolean" value={String(current[name] ?? false)} />;
+              }
+              if (def.type === "string" || def.type === "number") {
+                return <PropToggle key={name} name={name} kind={def.type} value={String(current[name] ?? "")} />;
+              }
+              return (
+                <div key={name} className="text-xs text-zinc-500">
+                  {name}: <code>{def.type}</code> — toggle unavailable
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded border border-zinc-200 dark:border-zinc-800 p-8">
+        {Component ? (
+          <Component {...current} />
+        ) : (
+          <p className="text-sm text-zinc-500">
+            No renderable component exported from <code>{rawPath}</code>. componentMap imported it but couldn&apos;t resolve a function (default or named).
+          </p>
+        )}
+      </section>
+
+      {importStmt && jsxSnippet && (
+        <section className="flex flex-col gap-2">
+          <pre className="rounded bg-zinc-100 dark:bg-zinc-900 p-3 text-xs overflow-x-auto"><code>{importStmt}</code></pre>
+          <pre className="rounded bg-zinc-100 dark:bg-zinc-900 p-3 text-xs overflow-x-auto"><code>{jsxSnippet}</code></pre>
+        </section>
+      )}
+    </div>
+  );
+}
 `;
 
 module.exports = {
@@ -692,7 +631,5 @@ module.exports = {
   INDEX_PAGE_TSX,
   TOKENS_PAGE_TSX,
   COMPONENT_PAGE_TSX,
-  COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
-  PROP_TOGGLE_TSX,
 };

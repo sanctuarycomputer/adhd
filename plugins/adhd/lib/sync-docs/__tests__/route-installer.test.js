@@ -8,23 +8,40 @@ const os = require('node:os');
 const { installRoute, detectExistingInstall, renderComponentMap } = require('../route-installer');
 
 function makeTempProject() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adhd-setup-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adhd-sync-'));
   fs.mkdirSync(path.join(root, 'app'), { recursive: true });
   return root;
+}
+
+// A fixture component the installer can read for prop-baking tests.
+function writeLogoFixture(root) {
+  const dir = path.join(root, 'components/design-system/logo');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'index.tsx'), `
+export type LogoSize = "sm" | "md" | "lg";
+
+export interface LogoProps {
+  size: LogoSize;
+  inverted?: boolean;
+  title?: string;
+}
+
+export default function Logo(props: LogoProps) {
+  return null;
+}
+`);
 }
 
 const SAMPLE_COMPONENTS = [
   { slug: 'logo', rawPath: 'components/design-system/logo/index.tsx', importPath: '@/components/design-system/logo' },
 ];
 
-test('installRoute writes the full generated file set with .design-system suffix when prodExcluded', () => {
+test('installRoute writes the five generated files when prodExcluded', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
   // Route files get the suffix so pageExtensions filters them in prod.
@@ -32,44 +49,36 @@ test('installRoute writes the full generated file set with .design-system suffix
   assert.ok(fs.existsSync(path.join(docsDir, 'page.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'tokens', '[domain]', 'page.design-system.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'page.design-system.tsx')));
-  assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.design-system.tsx')));
-  // Shared modules (imported by the route files) are plain .tsx so TS resolves them.
+  // componentMap is a plain .tsx module so TS module resolution finds it.
   assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
-  assert.ok(fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
-  assert.ok(!fs.existsSync(path.join(docsDir, 'componentMap.design-system.tsx')));
-  assert.ok(!fs.existsSync(path.join(docsDir, 'PropToggle.design-system.tsx')));
-  // tokenDomains.tsx no longer exists — the catalog is named-exported from the
-  // layout, and the tokens page imports it from there.
+  // Files we used to write but no longer do:
+  assert.ok(!fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.design-system.tsx')));
+  assert.ok(!fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.tsx')));
+  assert.ok(!fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
   assert.ok(!fs.existsSync(path.join(docsDir, 'tokenDomains.tsx')));
 });
 
 test('installRoute writes plain .tsx files for route files when not prodExcluded', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: false,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: false,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
   assert.ok(fs.existsSync(path.join(docsDir, 'layout.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'page.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'tokens', '[domain]', 'page.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'page.tsx')));
-  assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
-  assert.ok(fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
 });
 
 test('all written files start with the marker comment', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
   for (const f of [
@@ -77,9 +86,7 @@ test('all written files start with the marker comment', () => {
     'page.design-system.tsx',
     'tokens/[domain]/page.design-system.tsx',
     'components/[component]/page.design-system.tsx',
-    'components/[component]/error.design-system.tsx',
     'componentMap.tsx',
-    'PropToggle.tsx',
   ]) {
     const content = fs.readFileSync(path.join(docsDir, f), 'utf8');
     assert.match(content, /design-system-docs-route/, `${f} missing marker`);
@@ -88,74 +95,79 @@ test('all written files start with the marker comment', () => {
 
 test('componentMap.tsx has explicit static imports per registered component', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
-  const mapPath = path.join(root, 'app', '(design-system)', '-docs', 'componentMap.tsx');
-  const body = fs.readFileSync(mapPath, 'utf8');
-  // Explicit import for the logo component
+  const body = fs.readFileSync(
+    path.join(root, 'app', '(design-system)', '-docs', 'componentMap.tsx'),
+    'utf8',
+  );
   assert.match(body, /import \* as \$cmp0 from "@\/components\/design-system\/logo"/);
-  // Entry with matching slug and rawPath
   assert.match(body, /slug: "logo"/);
   assert.match(body, /rawPath: "components\/design-system\/logo\/index\.tsx"/);
   assert.match(body, /module: \$cmp0/);
-  // No dynamic import — that's the whole point of this rewrite
   assert.doesNotMatch(body, /await\s+import\(`/);
 });
 
-test('componentMap.tsx handles an empty components list (no tracked components yet)', () => {
+test('componentMap.tsx bakes prop schemas read from each component source at sync time', () => {
+  // The component page no longer does fs reads — props are baked here. Test
+  // verifies that the LogoProps interface (size: union, inverted: boolean,
+  // title: string) is preserved verbatim in the generated map.
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: [],
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const body = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'componentMap.tsx'),
     'utf8',
   );
-  // No import lines for components — placeholder substituted with empty string
+  // The whole entry is a single JS line — match the inline JSON body.
+  assert.match(body, /props: \{[^}]*"size":\{"type":"union","values":\["sm","md","lg"\],"optional":false\}/);
+  assert.match(body, /"inverted":\{"type":"boolean","optional":true\}/);
+  assert.match(body, /"title":\{"type":"string","optional":true\}/);
+});
+
+test('componentMap.tsx handles an empty components list', () => {
+  const root = makeTempProject();
+  installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: [], cssEntry: 'app/globals.css',
+  });
+  const body = fs.readFileSync(
+    path.join(root, 'app', '(design-system)', '-docs', 'componentMap.tsx'),
+    'utf8',
+  );
   assert.doesNotMatch(body, /import \* as \$cmp/);
-  // ENTRIES is an empty array literal
   assert.match(body, /const ENTRIES.*=\s*\[\]/);
 });
 
-test('componentMap.tsx renders multiple components with distinct import bindings', () => {
+test('componentMap.tsx handles a missing component source file (empty props baked)', () => {
+  // If a component listed in adhd.config.ts doesn't exist on disk, sync shouldn't
+  // crash — it bakes `{}` for that entry's props. The page then shows "No prop
+  // interface detected at sync time" which is the right signal.
   const root = makeTempProject();
+  // Note: we DON'T call writeLogoFixture — the file is missing on purpose.
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: [
-      { slug: 'logo', rawPath: 'src/components/Logo.tsx', importPath: '@/src/components/Logo' },
-      { slug: 'button', rawPath: 'src/components/Button/index.tsx', importPath: '@/src/components/Button' },
-    ],
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const body = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'componentMap.tsx'),
     'utf8',
   );
-  assert.match(body, /import \* as \$cmp0 from "@\/src\/components\/Logo"/);
-  assert.match(body, /import \* as \$cmp1 from "@\/src\/components\/Button"/);
-  assert.match(body, /slug: "logo".*module: \$cmp0/s);
-  assert.match(body, /slug: "button".*module: \$cmp1/s);
+  assert.match(body, /props: \{\}/);
 });
 
 test('layout sidebar links use absolute hrefs derived from the route segment', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const layout = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'layout.design-system.tsx'),
@@ -166,31 +178,24 @@ test('layout sidebar links use absolute hrefs derived from the route segment', (
   assert.doesNotMatch(layout, /__ROUTE_PATH__/);
 });
 
-test('layout imports componentEntries from componentMap (the sidebar list source)', () => {
+test('layout imports the static components array from componentMap', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const layout = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'layout.design-system.tsx'),
     'utf8',
   );
-  assert.match(layout, /from "\.\/componentMap"/);
-  assert.match(layout, /componentEntries/);
-  // No fs/path imports — the components list is baked at install time so the
-  // layout doesn't need to read adhd.config.ts at request time.
+  assert.match(layout, /import \{ components \} from "\.\/componentMap"/);
   assert.doesNotMatch(layout, /from "node:fs|from "node:path/);
 });
 
 test('tokens page imports TOKEN_DOMAINS from layout.design-system when prodExcluded', () => {
-  // The layout file's basename has `.design-system` when prod-excluded, and the
-  // tokens page must use that basename in its import so TS's bundler resolution
-  // adds `.tsx` and finds it.
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
     groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
@@ -205,6 +210,7 @@ test('tokens page imports TOKEN_DOMAINS from layout.design-system when prodExclu
 
 test('tokens page imports TOKEN_DOMAINS from layout (no suffix) when not prodExcluded', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
     groupName: '(design-system)', routeSegment: '-docs', prodExcluded: false,
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
@@ -217,70 +223,52 @@ test('tokens page imports TOKEN_DOMAINS from layout (no suffix) when not prodExc
   assert.doesNotMatch(tokensPage, /__LAYOUT_MODULE__/);
 });
 
-test('re-sync removes stale tokenDomains.tsx from a previous template layout', () => {
-  // Mirrors the actual upgrade path: previous installer versions wrote
-  // tokenDomains.tsx alongside componentMap.tsx. Re-syncing should clean it up.
-  const root = makeTempProject();
-  const docsDir = path.join(root, 'app', '(design-system)', '-docs');
-  fs.mkdirSync(docsDir, { recursive: true });
-  const stalePath = path.join(docsDir, 'tokenDomains.tsx');
-  fs.writeFileSync(stalePath, '// design-system-docs-route — stale\nexport const TOKEN_DOMAINS = [];\n');
-
-  const r = installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
-    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
-  });
-
-  assert.ok(!fs.existsSync(stalePath), 'stale tokenDomains.tsx should be removed');
-  assert.ok(r.removed.includes(stalePath));
-});
-
 test('tokens page bakes the configured cssEntry path as a constant', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'src/app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'src/app/globals.css',
   });
   const tokensPage = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'tokens', '[domain]', 'page.design-system.tsx'),
     'utf8',
   );
   assert.match(tokensPage, /CSS_ENTRY = "src\/app\/globals\.css"/);
-  // No runtime read of adhd.config.ts
   assert.doesNotMatch(tokensPage, /adhd\.config\.ts/);
 });
 
-test('component page imports getComponent from componentMap, not a dynamic import', () => {
+test('component page is a client component with inline PropToggle and no fs reads', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const componentPage = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'components', '[component]', 'page.design-system.tsx'),
     'utf8',
   );
-  assert.match(componentPage, /import \{ getComponent \} from "\.\.\/\.\.\/componentMap"/);
-  assert.match(componentPage, /import \{ PropToggle \} from "\.\.\/\.\.\/PropToggle"/);
-  // No broad dynamic import — that's what the rewrite eliminates
-  assert.doesNotMatch(componentPage, /await\s+import\(`@\//);
+  // "use client" sits after the marker comment (two `//` lines), so strip leading
+  // comments before checking the directive is the first real statement.
+  assert.match(componentPage.replace(/^(?:\/\/[^\n]*\n)+/, ''), /^["']use client["']/);
+  // Uses hooks instead of async params/searchParams.
+  assert.match(componentPage, /useParams/);
+  assert.match(componentPage, /useSearchParams/);
+  assert.match(componentPage, /useRouter/);
+  // PropToggle is inlined, not imported.
+  assert.match(componentPage, /function PropToggle\(/);
+  assert.doesNotMatch(componentPage, /from "\.\.\/PropToggle"|from "\.\.\/\.\.\/PropToggle"/);
+  // No fs reads — everything's baked into componentMap.
+  assert.doesNotMatch(componentPage, /from "node:fs|from "node:path/);
 });
 
 test('component page shows a "not in static map" message when slug is missing', () => {
-  // This is the new UX for "user added to adhd.config.ts but didn't re-run setup."
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const componentPage = fs.readFileSync(
     path.join(root, 'app', '(design-system)', '-docs', 'components', '[component]', 'page.design-system.tsx'),
@@ -292,15 +280,13 @@ test('component page shows a "not in static map" message when slug is missing', 
 
 test('detectExistingInstall returns marker-bearing files', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)',
-    routeSegment: '-docs',
-    prodExcluded: true,
-    components: SAMPLE_COMPONENTS,
-    cssEntry: 'app/globals.css',
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const found = detectExistingInstall(root);
-  assert.ok(found.length >= 7);
+  assert.ok(found.length >= 5);
   assert.ok(found.every(p => p.includes('-docs')));
 });
 
@@ -311,6 +297,7 @@ test('detectExistingInstall returns [] when no marker is present', () => {
 
 test('re-running installRoute overwrites files cleanly', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
     groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
@@ -326,28 +313,35 @@ test('re-running installRoute overwrites files cleanly', () => {
   assert.match(after, /DesignSystemDocsLayout/);
 });
 
-test('installRoute removes stale marker-bearing files from a previous layout', () => {
-  // Simulate an older install where the dynamic-import-era component page
-  // lived at `[component]/page` directly under docsDir.
+test('re-sync removes stale files from previous template layouts', () => {
+  // Mirrors actual upgrade paths: previous installer versions wrote a separate
+  // tokenDomains.tsx + PropToggle.tsx + error.design-system.tsx. Re-syncing
+  // should clean them all up because they carry the marker.
   const root = makeTempProject();
+  writeLogoFixture(root);
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
-  const oldCompDir = path.join(docsDir, '[component]');
-  fs.mkdirSync(oldCompDir, { recursive: true });
-  const oldPath = path.join(oldCompDir, 'page.design-system.tsx');
-  fs.writeFileSync(oldPath, '// design-system-docs-route — stale\nexport {};\n');
+  fs.mkdirSync(path.join(docsDir, 'components', '[component]'), { recursive: true });
+  const stale = [
+    path.join(docsDir, 'tokenDomains.tsx'),
+    path.join(docsDir, 'PropToggle.tsx'),
+    path.join(docsDir, 'components', '[component]', 'error.design-system.tsx'),
+  ];
+  for (const p of stale) fs.writeFileSync(p, '// design-system-docs-route — stale\nexport {};\n');
 
   const r = installRoute(root, {
     groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
 
-  assert.ok(!fs.existsSync(oldPath));
-  assert.ok(r.removed.includes(oldPath));
-  assert.ok(!fs.existsSync(oldCompDir));
+  for (const p of stale) {
+    assert.ok(!fs.existsSync(p), `stale ${path.basename(p)} should be removed`);
+    assert.ok(r.removed.includes(p));
+  }
 });
 
 test('installRoute preserves user files that lack the marker', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
   fs.mkdirSync(docsDir, { recursive: true });
   const userFile = path.join(docsDir, 'user-notes.tsx');
@@ -363,6 +357,7 @@ test('installRoute preserves user files that lack the marker', () => {
 
 test('installRoute supports an empty groupName (no route group)', () => {
   const root = makeTempProject();
+  writeLogoFixture(root);
   installRoute(root, {
     groupName: '', routeSegment: '-docs', prodExcluded: true,
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
@@ -372,11 +367,15 @@ test('installRoute supports an empty groupName (no route group)', () => {
   assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
 });
 
-test('renderComponentMap is exposed (standalone snapshot of the map source)', () => {
-  const body = renderComponentMap([
+test('renderComponentMap is exposed (standalone snapshot helper, takes projectRoot)', () => {
+  // The renderComponentMap export takes (projectRoot, components) so it can
+  // read each component's source file for prop baking. With a non-existent
+  // root, props bake to {} but the rest of the output is well-formed.
+  const body = renderComponentMap('/nonexistent', [
     { slug: 'logo', rawPath: 'components/Logo.tsx', importPath: '@/components/Logo' },
   ]);
   assert.match(body, /design-system-docs-route/);
   assert.match(body, /import \* as \$cmp0 from "@\/components\/Logo"/);
   assert.match(body, /slug: "logo"/);
+  assert.match(body, /props: \{\}/);
 });

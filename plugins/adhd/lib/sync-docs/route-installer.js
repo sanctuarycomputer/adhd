@@ -7,10 +7,9 @@ const {
   INDEX_PAGE_TSX,
   TOKENS_PAGE_TSX,
   COMPONENT_PAGE_TSX,
-  COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
-  PROP_TOGGLE_TSX,
 } = require('./templates');
+const { parseProps } = require('./prop-parser');
 
 const MARKER_STR = 'design-system-docs-route';
 
@@ -18,15 +17,45 @@ function mkdirpSync(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+// Reads a component's source file and returns a sync-time-baked prop schema
+// suitable for embedding in componentMap.tsx. The schema mirrors the runtime
+// PropSchema type in the template — only the shape the page actually uses
+// (type + optional values for unions + the `optional` flag).
+function bakedPropsFor(projectRoot, rawPath) {
+  const fullPath = path.join(projectRoot, rawPath);
+  let src;
+  try { src = fs.readFileSync(fullPath, 'utf8'); }
+  catch { return {}; }
+  const { props } = parseProps(src);
+  const out = {};
+  for (const [name, def] of Object.entries(props)) {
+    // The page only renders toggles for these four shapes; everything else
+    // shows up as "toggle unavailable" so collapsing to "unknown" is fine.
+    if (def.type === 'union' && Array.isArray(def.values)) {
+      out[name] = { type: 'union', values: def.values, optional: !!def.optional };
+    } else if (def.type === 'boolean' || def.type === 'string' || def.type === 'number') {
+      out[name] = { type: def.type, optional: !!def.optional };
+    } else {
+      out[name] = { type: 'unknown', optional: !!def.optional };
+    }
+  }
+  return out;
+}
+
 // Build the import + entries source for componentMap.tsx from the parsed
-// adhd.config.ts components list. Empty list is fine — the map exports an
-// empty array and the layout's sidebar shows a friendly "none tracked" message.
-function renderComponentMap(components) {
+// adhd.config.ts components list. Each entry includes baked prop schemas so
+// the component page doesn't need to do any fs reads at request time. Empty
+// list is fine — the map exports an empty `components` array and the layout's
+// sidebar shows a friendly "none tracked" message.
+function renderComponentMap(projectRoot, components) {
   const imports = components
     .map((c, i) => `import * as $cmp${i} from "${c.importPath}";`)
     .join('\n');
   const entries = components
-    .map((c, i) => `  { slug: ${JSON.stringify(c.slug)}, rawPath: ${JSON.stringify(c.rawPath)}, module: $cmp${i} },`)
+    .map((c, i) => {
+      const props = JSON.stringify(bakedPropsFor(projectRoot, c.rawPath));
+      return `  { slug: ${JSON.stringify(c.slug)}, rawPath: ${JSON.stringify(c.rawPath)}, module: $cmp${i}, props: ${props} },`;
+    })
     .join('\n');
   return COMPONENT_MAP_TSX
     .replace('__COMPONENT_IMPORTS__', imports)
@@ -67,9 +96,7 @@ function installRoute(projectRoot, opts) {
     { abs: path.join(docsDir, `page${pageExt}`), body: INDEX_PAGE_TSX },
     { abs: path.join(tokensDir, `page${pageExt}`), body: TOKENS_PAGE_TSX },
     { abs: path.join(componentsDir, `page${pageExt}`), body: COMPONENT_PAGE_TSX },
-    { abs: path.join(componentsDir, `error${pageExt}`), body: COMPONENT_ERROR_TSX },
-    { abs: path.join(docsDir, `componentMap${moduleExt}`), body: renderComponentMap(components) },
-    { abs: path.join(docsDir, `PropToggle${moduleExt}`), body: PROP_TOGGLE_TSX },
+    { abs: path.join(docsDir, `componentMap${moduleExt}`), body: renderComponentMap(projectRoot, components) },
   ];
 
   // The tokens page imports TOKEN_DOMAINS from the layout. The layout file's
