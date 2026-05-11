@@ -50,7 +50,18 @@ Ask all three questions in a **single** `AskUserQuestion` call so the user sees 
 
 1. **Route URL** — default `/-docs`. Validate: starts with `/`, only `a-z0-9-/` characters, no leading `_`.
 2. **Route group** — default `(design-system)`. Validate: parens-wrapped, alphanumerics + hyphens inside, OR empty string for "no group."
-3. **Exclude from production builds?** — default `Yes`.
+3. **Where should the docs route render?** — three options, default `Dev only`:
+   - **Dev only** — gates on `process.env.NODE_ENV === 'production'`. Excludes the route from any production build, on any host.
+   - **Dev + Vercel preview** — gates on `process.env.VERCEL_ENV === 'production' || (!process.env.VERCEL && process.env.NODE_ENV === 'production')`. Renders on Vercel preview deploys; excluded from Vercel production AND from any non-Vercel production deploy.
+   - **Everywhere** — no `pageExtensions` patch; route files use plain `.tsx` and ship to production (still `noindex`'d via `robots: { index: false, follow: false }` on the layout's metadata).
+
+Map the answer to the `renderMode` field passed downstream:
+
+| Answer label | `renderMode` |
+|---|---|
+| Dev only | `"dev-only"` |
+| Dev + Vercel preview | `"vercel-preview"` |
+| Everywhere | `"everywhere"` |
 
 If a custom "Other" answer fails validation, re-ask only that one question in a follow-up `AskUserQuestion` call.
 
@@ -75,27 +86,40 @@ test -e "$TARGET" && echo "EXISTS" || echo "FREE"
 
 If `EXISTS` and Phase 2 didn't already mark this as an existing install: prompt "Path `<TARGET>` already exists but is not an installer artifact. Pick a different route or abort."
 
-## Phase 6: Patch next.config.ts (only if prod-exclusion: yes)
+## Phase 6: Patch next.config.ts (only when `renderMode !== "everywhere"`)
+
+Skip this phase entirely if `renderMode` is `"everywhere"` — those files use plain `.tsx` and ship to prod, so no `pageExtensions` conditional is needed.
+
+For the two excluding modes, the patcher generates a different conditional based on `--render-mode`:
 
 ```bash
 node plugins/adhd/lib/sync-docs/cli.js patch-next-config \
   --config "<next.config.path>" \
-  --route-url "<routeUrl>"
+  --route-url "<routeUrl>" \
+  --render-mode "<dev-only|vercel-preview>"
 ```
 
 Exit codes:
 - `0` — patched successfully (or already at the expected state; idempotent no-op).
 - `3` — the file already sets `pageExtensions` to a different value. The CLI prints the existing value on stdout.
-- non-zero, non-3 — the file's shape isn't safely patchable. Print the manual patch block (see below) and continue with file installs.
+- non-zero, non-3 — the file's shape isn't safely patchable. Print the manual patch block (matching the chosen `renderMode`) and continue with file installs.
 
 **On exit code 3**, use `AskUserQuestion`: "Your next.config.ts sets pageExtensions to `<existing>`. How do you want to handle it? [Show me the manual patch and continue / Abort]."
 
-Automatic merging is NOT supported in v1. On "Show me the manual patch and continue," print this block and continue with Phase 7:
+Automatic merging is NOT supported in v1. On "Show me the manual patch and continue," print the appropriate block for the chosen `renderMode` and continue with Phase 7:
 
 ```ts
+// renderMode: "dev-only"
 pageExtensions: process.env.NODE_ENV === 'production'
   ? ['ts', 'tsx']
   : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],
+
+// renderMode: "vercel-preview"
+pageExtensions:
+  process.env.VERCEL_ENV === 'production' ||
+  (!process.env.VERCEL && process.env.NODE_ENV === 'production')
+    ? ['ts', 'tsx']
+    : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],
 ```
 
 …and tell the user to merge it with their existing `pageExtensions` value by hand. On "Abort," exit with no further changes.
@@ -113,9 +137,11 @@ Where `<choices.json>` is a temp file with shape:
   "projectRoot": ".",
   "groupName": "(design-system)",
   "routeSegment": "-docs",
-  "prodExcluded": true
+  "renderMode": "dev-only"
 }
 ```
+
+`renderMode` is one of `"dev-only"`, `"vercel-preview"`, or `"everywhere"` (from Phase 3's third question). The installer derives the file extension internally (`.design-system.tsx` for the two excluding modes, plain `.tsx` for `"everywhere"`).
 
 The CLI reads `adhd.config.ts` from `<projectRoot>` to discover the components list and `cssEntry`, bakes them into the generated files (including a per-install `componentMap.tsx` with static imports), and prints the list of files it wrote plus the slugs that ended up in the map.
 

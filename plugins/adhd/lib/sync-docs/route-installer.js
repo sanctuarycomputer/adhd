@@ -62,21 +62,36 @@ function renderComponentMap(projectRoot, components) {
     .replace('__COMPONENT_ENTRIES__', entries.length === 0 ? '[]' : `[\n${entries}\n]`);
 }
 
+// Three render modes:
+//   - 'everywhere'      → files use plain .tsx, no next.config patch, ship to prod
+//   - 'dev-only'        → files use .design-system.tsx, next.config gates on NODE_ENV
+//   - 'vercel-preview'  → files use .design-system.tsx, next.config gates on a
+//                         compound (VERCEL_ENV='production' OR non-Vercel prod)
+const VALID_RENDER_MODES = new Set(['everywhere', 'dev-only', 'vercel-preview']);
+
 function installRoute(projectRoot, opts) {
   const {
     groupName = '',
     routeSegment,
-    prodExcluded,
+    renderMode = 'dev-only',
     components = [],
     cssEntry = 'app/globals.css',
   } = opts;
   if (!routeSegment) throw new Error('routeSegment is required');
+  if (!VALID_RENDER_MODES.has(renderMode)) {
+    throw new Error(`Unknown renderMode: ${renderMode}. Expected one of: ${[...VALID_RENDER_MODES].join(', ')}.`);
+  }
+  // 'everywhere' is the only mode where pages don't get the suffix; the other
+  // two both rely on `pageExtensions` to filter `.design-system.tsx` files in
+  // production builds (they just differ in WHICH env var the conditional reads,
+  // which is a next-config-patcher concern, not a file-extension concern).
+  const prodExcluded = renderMode !== 'everywhere';
 
-  // Page/layout/error files get the `.design-system.tsx` suffix only when
-  // prod-excluded so Next.js's `pageExtensions` filters them out of production
-  // builds. componentMap and PropToggle are regular modules — they're only
-  // bundled when imported by a page that IS suffix-excluded, so plain `.tsx`
-  // is correct (and necessary for standard TS module resolution to find them).
+  // Page/layout files get the `.design-system.tsx` suffix only when prod-excluded
+  // so Next.js's `pageExtensions` filters them out of production builds.
+  // componentMap is a regular module — it's only bundled when imported by a page
+  // that IS suffix-excluded, so plain `.tsx` is correct (and necessary for
+  // standard TS module resolution to find it).
   const pageExt = prodExcluded ? '.design-system.tsx' : '.tsx';
   const moduleExt = '.tsx';
   const segments = ['app'];

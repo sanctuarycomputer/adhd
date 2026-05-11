@@ -1,8 +1,9 @@
 'use strict';
 
-// Detection: look for the sentinel "design-system.tsx" pageExtension entry
-// inside the conditional. This is the unique fingerprint of OUR patch.
-const PATCHED_SENTINEL_RE = /pageExtensions:\s*process\.env\.NODE_ENV\s*===\s*['"]production['"][\s\S]*?'design-system\.tsx'/;
+// Detection: look for any pageExtensions entry that mentions our sentinel
+// "design-system.tsx" — that's the unique fingerprint of OUR patch, regardless
+// of which env-var condition guards it ('NODE_ENV' vs 'VERCEL_ENV').
+const PATCHED_SENTINEL_RE = /pageExtensions:[\s\S]*?'design-system\.tsx'/;
 
 // Detection: any other pageExtensions definition (array form).
 const EXISTING_PAGE_EXTENSIONS_RE = /pageExtensions:\s*\[/;
@@ -10,9 +11,23 @@ const EXISTING_PAGE_EXTENSIONS_RE = /pageExtensions:\s*\[/;
 // Captures the full `pageExtensions: ...,` declaration for conflict reporting.
 const EXISTING_PAGE_EXTENSIONS_VALUE_RE = /pageExtensions:[^,\n]+,?/;
 
-const PATCH_BLOCK = `  pageExtensions: process.env.NODE_ENV === 'production'
+// Render-mode → conditional source. The "everywhere" mode is handled by NOT
+// calling the patcher at all (files use plain `.tsx` extensions and ship to
+// production). The two excluding modes only differ in which env vars they read.
+const PATCH_BLOCKS = {
+  'dev-only': `  pageExtensions: process.env.NODE_ENV === 'production'
     ? ['ts', 'tsx']
-    : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],`;
+    : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],`,
+  // Vercel-preview-aware: excludes on Vercel's production environment AND on
+  // any non-Vercel production deploy (Netlify, fly.io, CI, etc.). Vercel
+  // preview deploys have VERCEL_ENV='preview', which doesn't satisfy either
+  // disjunct, so the route renders there.
+  'vercel-preview': `  pageExtensions:
+    process.env.VERCEL_ENV === 'production' ||
+    (!process.env.VERCEL && process.env.NODE_ENV === 'production')
+      ? ['ts', 'tsx']
+      : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],`,
+};
 
 function isPatched(source) {
   return PATCHED_SENTINEL_RE.test(source);
@@ -49,6 +64,12 @@ function patchNextConfig(source, options = {}) {
     throw new Error('next.config already sets pageExtensions to a different value. Run with detectOnly: true to inspect and prompt the user.');
   }
 
+  const renderMode = options.renderMode || 'dev-only';
+  const block = PATCH_BLOCKS[renderMode];
+  if (!block) {
+    throw new Error(`Unknown renderMode: ${renderMode}. Expected one of: ${Object.keys(PATCH_BLOCKS).join(', ')}.`);
+  }
+
   const insertAt = findConfigObjectStart(source);
   if (insertAt === -1) {
     throw new Error('Could not locate the config object in next.config. Manual edit required.');
@@ -58,9 +79,9 @@ function patchNextConfig(source, options = {}) {
   // properties. This puts it at the top of the config for visibility.
   const before = source.slice(0, insertAt);
   // Strip any leading newline from the tail so it isn't duplicated; we always
-  // emit exactly one `\n` on each side of PATCH_BLOCK for clean formatting.
+  // emit exactly one `\n` on each side of the block for clean formatting.
   const after = source.slice(insertAt).replace(/^\n/, '');
-  return before + '\n' + PATCH_BLOCK + '\n' + after;
+  return before + '\n' + block + '\n' + after;
 }
 
 module.exports = { patchNextConfig, isPatched };

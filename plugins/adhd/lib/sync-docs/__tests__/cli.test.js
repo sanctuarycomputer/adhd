@@ -108,7 +108,7 @@ const config = {
 export default config;
 `);
   const choices = tmp('choices.json', JSON.stringify({
-    projectRoot: root, groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    projectRoot: root, groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
   }));
   const r = spawnSync('node', [CLI, 'install', '--config', choices], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
@@ -124,7 +124,7 @@ test('install subcommand aborts with a clear error when adhd.config.ts is missin
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adhd-ids-install-no-config-'));
   fs.mkdirSync(path.join(root, 'app'), { recursive: true });
   const choices = tmp('choices.json', JSON.stringify({
-    projectRoot: root, groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    projectRoot: root, groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
   }));
   const r = spawnSync('node', [CLI, 'install', '--config', choices], { encoding: 'utf8' });
   assert.equal(r.status, 2);

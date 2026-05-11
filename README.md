@@ -135,11 +135,20 @@ request time and statically imports the components listed in
 - Component pages: each component gets its own route with URL-driven prop
   toggles, derived from the component's TypeScript prop interface.
 
-By default the route is excluded from production builds via Next.js's
-`pageExtensions` trick — files use the `.design-system.tsx` extension and
-the production build literally doesn't see them. You can opt out at setup
-time if you'd rather ship the route (it still has `<meta name="robots"
-content="noindex, nofollow" />` either way).
+The setup command asks **where the docs route should render** with three
+options:
+
+- **Dev only** (default) — files use `.design-system.tsx`; `pageExtensions`
+  in `next.config.ts` gates on `process.env.NODE_ENV === 'production'`. The
+  production build literally doesn't see the files.
+- **Dev + Vercel preview** — same file extension, but `pageExtensions`
+  gates on `process.env.VERCEL_ENV === 'production' || (!VERCEL && NODE_ENV === 'production')`.
+  The route renders on local dev *and* Vercel preview deploys, but stays out
+  of Vercel production (and out of any non-Vercel production deploy too, so
+  CI builds don't accidentally ship it).
+- **Everywhere** — no `pageExtensions` patch; route files use plain `.tsx`
+  and ship in production. The layout's metadata still emits `<meta
+  name="robots" content="noindex, nofollow" />` so it won't be indexed.
 
 #### Re-running after `adhd.config.ts` changes
 

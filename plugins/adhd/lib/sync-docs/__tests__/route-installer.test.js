@@ -36,11 +36,11 @@ const SAMPLE_COMPONENTS = [
   { slug: 'logo', rawPath: 'components/design-system/logo/index.tsx', importPath: '@/components/design-system/logo' },
 ];
 
-test('installRoute writes the five generated files when prodExcluded', () => {
+test('installRoute writes the five generated files with renderMode: dev-only', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
@@ -58,11 +58,11 @@ test('installRoute writes the five generated files when prodExcluded', () => {
   assert.ok(!fs.existsSync(path.join(docsDir, 'tokenDomains.tsx')));
 });
 
-test('installRoute writes plain .tsx files for route files when not prodExcluded', () => {
+test('installRoute writes plain .tsx files for route files with renderMode: "everywhere"', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: false,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'everywhere',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
@@ -73,11 +73,52 @@ test('installRoute writes plain .tsx files for route files when not prodExcluded
   assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
 });
 
+test('installRoute uses .design-system suffix for both excluding renderModes', () => {
+  // Both 'dev-only' and 'vercel-preview' rely on pageExtensions to filter
+  // .design-system.tsx files in production builds. The choice of WHICH env var
+  // gates the filter is the next-config-patcher's concern, not the installer's.
+  for (const renderMode of ['dev-only', 'vercel-preview']) {
+    const root = makeTempProject();
+    writeLogoFixture(root);
+    installRoute(root, {
+      groupName: '(design-system)', routeSegment: '-docs', renderMode,
+      components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+    });
+    const docsDir = path.join(root, 'app', '(design-system)', '-docs');
+    assert.ok(fs.existsSync(path.join(docsDir, 'layout.design-system.tsx')), `renderMode=${renderMode}`);
+    assert.ok(fs.existsSync(path.join(docsDir, 'page.design-system.tsx')), `renderMode=${renderMode}`);
+  }
+});
+
+test('installRoute throws on an unknown renderMode (typo-protection)', () => {
+  const root = makeTempProject();
+  writeLogoFixture(root);
+  assert.throws(
+    () => installRoute(root, {
+      groupName: '(design-system)', routeSegment: '-docs', renderMode: 'preview',
+      components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+    }),
+    /Unknown renderMode: preview/,
+  );
+});
+
+test('installRoute defaults to renderMode: "dev-only" when none is provided', () => {
+  const root = makeTempProject();
+  writeLogoFixture(root);
+  installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs',
+    // renderMode intentionally omitted
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+  });
+  const docsDir = path.join(root, 'app', '(design-system)', '-docs');
+  assert.ok(fs.existsSync(path.join(docsDir, 'layout.design-system.tsx')));
+});
+
 test('all written files start with the marker comment', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '(design-system)', '-docs');
@@ -97,7 +138,7 @@ test('componentMap.tsx has explicit static imports per registered component', ()
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const body = fs.readFileSync(
@@ -118,7 +159,7 @@ test('componentMap.tsx bakes prop schemas read from each component source at syn
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const body = fs.readFileSync(
@@ -134,7 +175,7 @@ test('componentMap.tsx bakes prop schemas read from each component source at syn
 test('componentMap.tsx handles an empty components list', () => {
   const root = makeTempProject();
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: [], cssEntry: 'app/globals.css',
   });
   const body = fs.readFileSync(
@@ -152,7 +193,7 @@ test('componentMap.tsx handles a missing component source file (empty props bake
   const root = makeTempProject();
   // Note: we DON'T call writeLogoFixture — the file is missing on purpose.
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const body = fs.readFileSync(
@@ -166,7 +207,7 @@ test('layout sidebar links use absolute hrefs derived from the route segment', (
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const layout = fs.readFileSync(
@@ -182,7 +223,7 @@ test('layout imports the static components array from componentMap', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const layout = fs.readFileSync(
@@ -193,11 +234,11 @@ test('layout imports the static components array from componentMap', () => {
   assert.doesNotMatch(layout, /from "node:fs|from "node:path/);
 });
 
-test('tokens page imports TOKEN_DOMAINS from layout.design-system when prodExcluded', () => {
+test('tokens page imports TOKEN_DOMAINS from layout.design-system with renderMode: dev-only', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const tokensPage = fs.readFileSync(
@@ -208,11 +249,11 @@ test('tokens page imports TOKEN_DOMAINS from layout.design-system when prodExclu
   assert.doesNotMatch(tokensPage, /__LAYOUT_MODULE__/);
 });
 
-test('tokens page imports TOKEN_DOMAINS from layout (no suffix) when not prodExcluded', () => {
+test('tokens page imports TOKEN_DOMAINS from layout (no suffix) with renderMode: "everywhere"', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: false,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'everywhere',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const tokensPage = fs.readFileSync(
@@ -227,7 +268,7 @@ test('tokens page bakes the configured cssEntry path as a constant', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'src/app/globals.css',
   });
   const tokensPage = fs.readFileSync(
@@ -242,7 +283,7 @@ test('component page is a client component with inline PropToggle and no fs read
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const componentPage = fs.readFileSync(
@@ -267,7 +308,7 @@ test('component page shows a "not in static map" message when slug is missing', 
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const componentPage = fs.readFileSync(
@@ -282,7 +323,7 @@ test('detectExistingInstall returns marker-bearing files', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const found = detectExistingInstall(root);
@@ -299,13 +340,13 @@ test('re-running installRoute overwrites files cleanly', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const layoutPath = path.join(root, 'app', '(design-system)', '-docs', 'layout.design-system.tsx');
   fs.writeFileSync(layoutPath, 'corrupted');
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const after = fs.readFileSync(layoutPath, 'utf8');
@@ -329,7 +370,7 @@ test('re-sync removes stale files from previous template layouts', () => {
   for (const p of stale) fs.writeFileSync(p, '// design-system-docs-route — stale\nexport {};\n');
 
   const r = installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
 
@@ -348,7 +389,7 @@ test('installRoute preserves user files that lack the marker', () => {
   fs.writeFileSync(userFile, '// user wrote this\nexport const NOTE = "keep";\n');
 
   installRoute(root, {
-    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
 
@@ -359,7 +400,7 @@ test('installRoute supports an empty groupName (no route group)', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
   installRoute(root, {
-    groupName: '', routeSegment: '-docs', prodExcluded: true,
+    groupName: '', routeSegment: '-docs', renderMode: 'dev-only',
     components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
   });
   const docsDir = path.join(root, 'app', '-docs');
