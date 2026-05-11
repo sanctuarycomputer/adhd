@@ -198,6 +198,43 @@ Then print "Rolled back. No changes to Figma. Fix the issues in your component a
 
 If user picks keep, proceed to Phase 12.
 
+## Phase 11.5: Write component mapping to adhd.config.ts
+
+Only runs on the finalize path (skip on rollback — if the user chose roll back in Phase 11, the captured page is gone and there's no mapping to write).
+
+Determine the relative path of the component file from the directory containing `adhd.config.ts`:
+
+```bash
+RELATIVE_PATH=$(node -e "
+const path = require('path');
+const cfgDir = path.dirname(path.resolve('adhd.config.ts'));
+const comp = path.resolve('<component-path>');
+process.stdout.write(path.relative(cfgDir, comp));
+")
+```
+
+Build the Figma URL with the new page's node-id:
+
+```bash
+FIGMA_URL_BASE=$(node -e "
+const { default: cfg } = require(require('path').resolve('adhd.config.ts'));
+process.stdout.write(cfg.figma.url.replace(/\/?$/, '/'));
+")
+NODE_ID_ENCODED=$(echo "$PAGE_ID" | tr ':' '-')
+FIGMA_URL="${FIGMA_URL_BASE}?node-id=${NODE_ID_ENCODED}"
+```
+
+Write the mapping (idempotent — re-pushing the same component does not duplicate the entry):
+
+```bash
+node plugins/adhd/lib/pull-component/cli.js config-write \
+  --config adhd.config.ts \
+  --path "$RELATIVE_PATH" \
+  --figma-url "$FIGMA_URL"
+```
+
+This records the mapping so subsequent `/adhd:pull-component <path>` or `/adhd:pull-component <figma-url>` invocations can find each other. In v2, push will use this mapping to update the same Component Set instead of creating a new page each time.
+
 ## Phase 12: Final report
 
 Print:
