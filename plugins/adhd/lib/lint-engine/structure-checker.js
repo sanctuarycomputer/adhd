@@ -53,8 +53,10 @@ function visit(node, ctx, parentPath, parent) {
     }
   }
 
-  // STRUCT002: spacing uses variables
-  if (node.layoutMode && node.layoutMode !== 'NONE') {
+  // STRUCT002: spacing uses variables.
+  // Skip COMPONENT_SET wrappers — they're organizational scaffolding that doesn't
+  // render in instances. Padding on a CS wrapper is editor-only.
+  if (node.type !== 'COMPONENT_SET' && node.layoutMode && node.layoutMode !== 'NONE') {
     const spacingFields = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'itemSpacing'];
     for (const field of spacingFields) {
       const v = node[field];
@@ -68,8 +70,12 @@ function visit(node, ctx, parentPath, parent) {
   // STRUCT003: visible solid colors use variables. Paints with `visible: false`
   // don't render and are excluded — Figma keeps invisible paint entries on a node
   // when the user has hidden them in the UI; enforcing variable bindings on
-  // unseen paints is busywork.
-  if (Array.isArray(node.fills)) {
+  // unseen paints is busywork. COMPONENT_SET wrappers are also skipped — they're
+  // organizational scaffolding that doesn't render in instances. Figma's editor
+  // chrome (the dashed-purple Component Set outline at #9747FF) shows up in the
+  // wrapper's `strokes` array as a real SOLID entry; firing STRUCT003 on it would
+  // ask the designer to bind a color they never added.
+  if (node.type !== 'COMPONENT_SET' && Array.isArray(node.fills)) {
     for (const fill of node.fills) {
       if (fill.type === 'SOLID' && isVisiblePaint(fill) && !fill.boundVariables?.color) {
         push('STRUCT003', 'error', 'Fill is a raw color; use a color variable.');
@@ -77,7 +83,7 @@ function visit(node, ctx, parentPath, parent) {
       }
     }
   }
-  if (Array.isArray(node.strokes)) {
+  if (node.type !== 'COMPONENT_SET' && Array.isArray(node.strokes)) {
     for (const stroke of node.strokes) {
       if (stroke.type === 'SOLID' && isVisiblePaint(stroke) && !stroke.boundVariables?.color) {
         push('STRUCT003', 'error', 'Stroke is a raw color; use a color variable.');
@@ -102,8 +108,9 @@ function visit(node, ctx, parentPath, parent) {
   // STRUCT005: visible effects use variables/styles.
   // An empty `boundVariables: {}` is NOT a real binding — Figma emits it on
   // unbound effects. Only a non-empty object counts. Effects with `visible: false`
-  // don't render and are excluded for parity with STRUCT003.
-  if (Array.isArray(node.effects)) {
+  // don't render and are excluded for parity with STRUCT003. COMPONENT_SET
+  // wrappers are skipped for the same reason as STRUCT002/003.
+  if (node.type !== 'COMPONENT_SET' && Array.isArray(node.effects)) {
     const visibleEffects = node.effects.filter(isVisiblePaint);
     if (visibleEffects.length > 0) {
       const allBound = visibleEffects.every(e => {
