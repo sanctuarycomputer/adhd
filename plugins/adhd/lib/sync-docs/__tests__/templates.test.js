@@ -10,7 +10,6 @@ const {
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
-  TOKEN_DOMAINS_TSX,
   PROP_TOGGLE_TSX,
 } = require('../templates');
 
@@ -28,26 +27,25 @@ test('LAYOUT_TSX sets robots: noindex / nofollow', () => {
   assert.match(LAYOUT_TSX, /robots:\s*\{[^}]*index:\s*false[^}]*follow:\s*false/);
 });
 
-test('LAYOUT_TSX imports the TOKEN_DOMAINS catalog from the shared tokenDomains module', () => {
-  // Single source of truth lives in tokenDomains.tsx; the layout just imports it
-  // and iterates. Inlining the labels here would duplicate the catalog (the
-  // duplication the rewrite was meant to remove).
-  assert.match(LAYOUT_TSX, /import \{ TOKEN_DOMAINS \} from "\.\/tokenDomains"/);
-});
-
-test('TOKEN_DOMAINS_TSX exports the full Tailwind v4 token-domain catalog', () => {
-  // The catalog is THE source of truth — every token domain rendered by the
-  // tokens page must be listed here with its varPrefix and Tailwind docs link.
+test('LAYOUT_TSX declares and named-exports the TOKEN_DOMAINS catalog', () => {
+  // Single source of truth lives in the layout. Tokens page imports it from there.
+  // The catalog covers every Tailwind v4 token domain with its varPrefix and
+  // Tailwind docs link (used for empty-state messaging on each domain page).
+  assert.match(LAYOUT_TSX, /export const TOKEN_DOMAINS: TokenDomain\[\]/);
+  assert.match(LAYOUT_TSX, /export type TokenDomain/);
   for (const label of [
     'Colors', 'Spacing', 'Typography', 'Font Families', 'Font Weights',
     'Tracking', 'Leading', 'Radius', 'Shadows', 'Breakpoints', 'Easing', 'Animation',
   ]) {
-    assert.match(TOKEN_DOMAINS_TSX, new RegExp(`label: "${label}"`), `missing domain label: ${label}`);
+    assert.match(LAYOUT_TSX, new RegExp(`label: "${label}"`), `missing domain label: ${label}`);
   }
-  // Shape: each entry has slug + label + varPrefix + tailwindDocs.
-  assert.match(TOKEN_DOMAINS_TSX, /slug:\s*"colors".*varPrefix:\s*"--color-".*tailwindDocs:/s);
-  assert.match(TOKEN_DOMAINS_TSX, /export const TOKEN_DOMAINS:/);
-  assert.match(TOKEN_DOMAINS_TSX, /export type TokenDomain/);
+  assert.match(LAYOUT_TSX, /slug:\s*"colors".*varPrefix:\s*"--color-".*tailwindDocs:/s);
+});
+
+test('TOKENS_PAGE_TSX imports the catalog from the layout via a __LAYOUT_MODULE__ placeholder', () => {
+  // The path depends on prod-exclusion (`layout` vs `layout.design-system`) — the
+  // installer substitutes it. Template body should carry the placeholder verbatim.
+  assert.match(TOKENS_PAGE_TSX, /import \{ TOKEN_DOMAINS, type TokenDomain \} from "__LAYOUT_MODULE__"/);
 });
 
 test('LAYOUT_TSX imports componentEntries from componentMap (no runtime config read)', () => {
@@ -95,9 +93,8 @@ test('TOKENS_PAGE_TSX reads globals.css from a baked CSS_ENTRY constant', () => 
   assert.doesNotMatch(TOKENS_PAGE_TSX, /readConfig|adhd\.config\.ts/);
 });
 
-test('TOKENS_PAGE_TSX imports TOKEN_DOMAINS from the shared catalog (no inlined list)', () => {
-  assert.match(TOKENS_PAGE_TSX, /import \{ TOKEN_DOMAINS, type TokenDomain \} from "\.\.\/\.\.\/tokenDomains"/);
-  // The inline `const TOKEN_DOMAINS = [...]` block from earlier versions is gone.
+test('TOKENS_PAGE_TSX does not inline the TOKEN_DOMAINS list', () => {
+  // The inline catalog from earlier versions is gone — the page imports from the layout.
   assert.doesNotMatch(TOKENS_PAGE_TSX, /const TOKEN_DOMAINS = \[/);
 });
 

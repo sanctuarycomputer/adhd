@@ -35,11 +35,12 @@ test('installRoute writes the full generated file set with .design-system suffix
   assert.ok(fs.existsSync(path.join(docsDir, 'components', '[component]', 'error.design-system.tsx')));
   // Shared modules (imported by the route files) are plain .tsx so TS resolves them.
   assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
-  assert.ok(fs.existsSync(path.join(docsDir, 'tokenDomains.tsx')));
   assert.ok(fs.existsSync(path.join(docsDir, 'PropToggle.tsx')));
   assert.ok(!fs.existsSync(path.join(docsDir, 'componentMap.design-system.tsx')));
-  assert.ok(!fs.existsSync(path.join(docsDir, 'tokenDomains.design-system.tsx')));
   assert.ok(!fs.existsSync(path.join(docsDir, 'PropToggle.design-system.tsx')));
+  // tokenDomains.tsx no longer exists — the catalog is named-exported from the
+  // layout, and the tokens page imports it from there.
+  assert.ok(!fs.existsSync(path.join(docsDir, 'tokenDomains.tsx')));
 });
 
 test('installRoute writes plain .tsx files for route files when not prodExcluded', () => {
@@ -78,7 +79,6 @@ test('all written files start with the marker comment', () => {
     'components/[component]/page.design-system.tsx',
     'components/[component]/error.design-system.tsx',
     'componentMap.tsx',
-    'tokenDomains.tsx',
     'PropToggle.tsx',
   ]) {
     const content = fs.readFileSync(path.join(docsDir, f), 'utf8');
@@ -186,6 +186,55 @@ test('layout imports componentEntries from componentMap (the sidebar list source
   assert.doesNotMatch(layout, /from "node:fs|from "node:path/);
 });
 
+test('tokens page imports TOKEN_DOMAINS from layout.design-system when prodExcluded', () => {
+  // The layout file's basename has `.design-system` when prod-excluded, and the
+  // tokens page must use that basename in its import so TS's bundler resolution
+  // adds `.tsx` and finds it.
+  const root = makeTempProject();
+  installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+  });
+  const tokensPage = fs.readFileSync(
+    path.join(root, 'app', '(design-system)', '-docs', 'tokens', '[domain]', 'page.design-system.tsx'),
+    'utf8',
+  );
+  assert.match(tokensPage, /from "\.\.\/\.\.\/layout\.design-system"/);
+  assert.doesNotMatch(tokensPage, /__LAYOUT_MODULE__/);
+});
+
+test('tokens page imports TOKEN_DOMAINS from layout (no suffix) when not prodExcluded', () => {
+  const root = makeTempProject();
+  installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: false,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+  });
+  const tokensPage = fs.readFileSync(
+    path.join(root, 'app', '(design-system)', '-docs', 'tokens', '[domain]', 'page.tsx'),
+    'utf8',
+  );
+  assert.match(tokensPage, /from "\.\.\/\.\.\/layout"/);
+  assert.doesNotMatch(tokensPage, /__LAYOUT_MODULE__/);
+});
+
+test('re-sync removes stale tokenDomains.tsx from a previous template layout', () => {
+  // Mirrors the actual upgrade path: previous installer versions wrote
+  // tokenDomains.tsx alongside componentMap.tsx. Re-syncing should clean it up.
+  const root = makeTempProject();
+  const docsDir = path.join(root, 'app', '(design-system)', '-docs');
+  fs.mkdirSync(docsDir, { recursive: true });
+  const stalePath = path.join(docsDir, 'tokenDomains.tsx');
+  fs.writeFileSync(stalePath, '// design-system-docs-route — stale\nexport const TOKEN_DOMAINS = [];\n');
+
+  const r = installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+  });
+
+  assert.ok(!fs.existsSync(stalePath), 'stale tokenDomains.tsx should be removed');
+  assert.ok(r.removed.includes(stalePath));
+});
+
 test('tokens page bakes the configured cssEntry path as a constant', () => {
   const root = makeTempProject();
   installRoute(root, {
@@ -251,7 +300,7 @@ test('detectExistingInstall returns marker-bearing files', () => {
     cssEntry: 'app/globals.css',
   });
   const found = detectExistingInstall(root);
-  assert.ok(found.length >= 8);
+  assert.ok(found.length >= 7);
   assert.ok(found.every(p => p.includes('-docs')));
 });
 

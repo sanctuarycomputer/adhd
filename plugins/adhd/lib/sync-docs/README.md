@@ -11,7 +11,7 @@ Modules:
 - `config-parser.js` — parse `adhd.config.ts` at sync time (components + cssEntry)
 - `next-config-patcher.js` — idempotent patch of next.config.{ts,mjs,js}
 - `robots-patcher.js` — idempotent patch of public/robots.txt
-- `route-installer.js` — write the generated files at the target path, including per-sync `componentMap.tsx` and `tokenDomains.tsx` modules
+- `route-installer.js` — write the seven generated files at the target path. Only `componentMap.tsx` is per-sync; the rest are committed-once boilerplate. The token-domain catalog lives as a named export on the layout (no separate file).
 - `templates.js` — page template strings (with substitution placeholders)
 - `cli.js` — orchestrator surface invoked by SKILL.md
 

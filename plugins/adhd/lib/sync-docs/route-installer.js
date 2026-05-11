@@ -9,7 +9,6 @@ const {
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
-  TOKEN_DOMAINS_TSX,
   PROP_TOGGLE_TSX,
 } = require('./templates');
 
@@ -70,17 +69,22 @@ function installRoute(projectRoot, opts) {
     { abs: path.join(componentsDir, `page${pageExt}`), body: COMPONENT_PAGE_TSX },
     { abs: path.join(componentsDir, `error${pageExt}`), body: COMPONENT_ERROR_TSX },
     { abs: path.join(docsDir, `componentMap${moduleExt}`), body: renderComponentMap(components) },
-    // Shared token-domain catalog: imported by layout (sidebar nav) and the
-    // tokens page (renderer keys + empty-state link targets). One source of truth.
-    { abs: path.join(docsDir, `tokenDomains${moduleExt}`), body: TOKEN_DOMAINS_TSX },
     { abs: path.join(docsDir, `PropToggle${moduleExt}`), body: PROP_TOGGLE_TSX },
   ];
+
+  // The tokens page imports TOKEN_DOMAINS from the layout. The layout file's
+  // basename depends on prod-exclusion (`layout` vs `layout.design-system`).
+  // TS/bundler resolution adds `.tsx` to whichever basename we use, so we
+  // substitute the right one here. Path is two levels up from
+  // `tokens/[domain]/page.*` to the docs root where `layout.*` lives.
+  const layoutModule = prodExcluded ? '../../layout.design-system' : '../../layout';
 
   // Per-template placeholder substitution.
   for (const t of targets) {
     t.body = t.body
       .replace(/__ROUTE_PATH__/g, routeUrl)
-      .replace(/__CSS_ENTRY__/g, cssEntry);
+      .replace(/__CSS_ENTRY__/g, cssEntry)
+      .replace(/__LAYOUT_MODULE__/g, layoutModule);
   }
 
   // Remove stale marker-bearing files from previous template layouts (e.g. the

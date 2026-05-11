@@ -4,33 +4,12 @@ const MARKER_COMMENT = `// design-system-docs-route — auto-generated installer
 // Remove this comment to disable future overwrites from re-running the installer.
 `;
 
-// tokenDomains.tsx — the single source of truth for the token-domain catalog
-// (sidebar entries + per-domain renderer keys). Generated once per install and
-// imported by both layout.* and tokens/[domain]/page.*. The `tailwindDocs`
-// field is the URL to Tailwind v4's relevant theme section, used in
-// empty-state messaging on each domain page.
-const TOKEN_DOMAINS_TSX = `${MARKER_COMMENT}export type TokenDomain = {
-  slug: string;
-  label: string;
-  varPrefix: string;
-  tailwindDocs: string;
-};
-
-export const TOKEN_DOMAINS: TokenDomain[] = [
-  { slug: "colors", label: "Colors", varPrefix: "--color-", tailwindDocs: "https://tailwindcss.com/docs/colors" },
-  { slug: "spacing", label: "Spacing", varPrefix: "--spacing", tailwindDocs: "https://tailwindcss.com/docs/theme#spacing" },
-  { slug: "typography", label: "Typography", varPrefix: "--text-", tailwindDocs: "https://tailwindcss.com/docs/font-size" },
-  { slug: "font", label: "Font Families", varPrefix: "--font-", tailwindDocs: "https://tailwindcss.com/docs/font-family" },
-  { slug: "font-weight", label: "Font Weights", varPrefix: "--font-weight-", tailwindDocs: "https://tailwindcss.com/docs/font-weight" },
-  { slug: "tracking", label: "Tracking", varPrefix: "--tracking-", tailwindDocs: "https://tailwindcss.com/docs/letter-spacing" },
-  { slug: "leading", label: "Leading", varPrefix: "--leading-", tailwindDocs: "https://tailwindcss.com/docs/line-height" },
-  { slug: "radius", label: "Radius", varPrefix: "--radius-", tailwindDocs: "https://tailwindcss.com/docs/border-radius" },
-  { slug: "shadows", label: "Shadows", varPrefix: "--shadow-", tailwindDocs: "https://tailwindcss.com/docs/box-shadow" },
-  { slug: "breakpoint", label: "Breakpoints", varPrefix: "--breakpoint-", tailwindDocs: "https://tailwindcss.com/docs/responsive-design" },
-  { slug: "ease", label: "Easing", varPrefix: "--ease-", tailwindDocs: "https://tailwindcss.com/docs/transition-timing-function" },
-  { slug: "animate", label: "Animation", varPrefix: "--animate-", tailwindDocs: "https://tailwindcss.com/docs/animation" },
-];
-`;
+// The TOKEN_DOMAINS catalog is declared (and named-exported) directly in
+// LAYOUT_TSX. Keeping it there means we don't ship a separate tokenDomains.tsx
+// file just to share a 12-entry constant. The tokens page imports
+// `{ TOKEN_DOMAINS, type TokenDomain }` from the layout module — TS's bundler
+// resolution handles the `.design-system.tsx` extension via `__LAYOUT_MODULE__`
+// substitution at install time.
 
 // Tokens-page CSS reader. Kept inline because the tokens page is a runtime
 // server component in the consumer's app and can't import ADHD's lib helpers.
@@ -171,17 +150,43 @@ export function getComponent(slug: string): ComponentEntry | null {
 }
 `;
 
-// Layout: sidebar links into the token-domain catalog and the static component
-// map. No fs reads, no async — pure server component.
+// Layout: sidebar links into the token-domain catalog (declared inline + named-
+// exported so the tokens page can import it) and the static component map.
+// No fs reads, no async — pure server component.
 const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
 import Link from "next/link";
-import { TOKEN_DOMAINS } from "./tokenDomains";
 import { componentEntries } from "./componentMap";
 
 export const metadata: Metadata = {
   title: "Design System Docs",
   robots: { index: false, follow: false },
 };
+
+// Single source of truth for the token-domain catalog. Imported by the
+// tokens page (renderer keys + empty-state link targets). Adding a new
+// domain means editing this list AND the matching renderer block in the
+// tokens page — surgical, two-file change.
+export type TokenDomain = {
+  slug: string;
+  label: string;
+  varPrefix: string;
+  tailwindDocs: string;
+};
+
+export const TOKEN_DOMAINS: TokenDomain[] = [
+  { slug: "colors", label: "Colors", varPrefix: "--color-", tailwindDocs: "https://tailwindcss.com/docs/colors" },
+  { slug: "spacing", label: "Spacing", varPrefix: "--spacing", tailwindDocs: "https://tailwindcss.com/docs/theme#spacing" },
+  { slug: "typography", label: "Typography", varPrefix: "--text-", tailwindDocs: "https://tailwindcss.com/docs/font-size" },
+  { slug: "font", label: "Font Families", varPrefix: "--font-", tailwindDocs: "https://tailwindcss.com/docs/font-family" },
+  { slug: "font-weight", label: "Font Weights", varPrefix: "--font-weight-", tailwindDocs: "https://tailwindcss.com/docs/font-weight" },
+  { slug: "tracking", label: "Tracking", varPrefix: "--tracking-", tailwindDocs: "https://tailwindcss.com/docs/letter-spacing" },
+  { slug: "leading", label: "Leading", varPrefix: "--leading-", tailwindDocs: "https://tailwindcss.com/docs/line-height" },
+  { slug: "radius", label: "Radius", varPrefix: "--radius-", tailwindDocs: "https://tailwindcss.com/docs/border-radius" },
+  { slug: "shadows", label: "Shadows", varPrefix: "--shadow-", tailwindDocs: "https://tailwindcss.com/docs/box-shadow" },
+  { slug: "breakpoint", label: "Breakpoints", varPrefix: "--breakpoint-", tailwindDocs: "https://tailwindcss.com/docs/responsive-design" },
+  { slug: "ease", label: "Easing", varPrefix: "--ease-", tailwindDocs: "https://tailwindcss.com/docs/transition-timing-function" },
+  { slug: "animate", label: "Animation", varPrefix: "--animate-", tailwindDocs: "https://tailwindcss.com/docs/animation" },
+];
 
 export default function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -264,7 +269,7 @@ const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemInd
 const TOKENS_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
 import path from "node:path";
 import { notFound } from "next/navigation";
-import { TOKEN_DOMAINS, type TokenDomain } from "../../tokenDomains";
+import { TOKEN_DOMAINS, type TokenDomain } from "__LAYOUT_MODULE__";
 
 ${READ_CSS_SRC}
 
@@ -689,6 +694,5 @@ module.exports = {
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
   COMPONENT_MAP_TSX,
-  TOKEN_DOMAINS_TSX,
   PROP_TOGGLE_TSX,
 };
