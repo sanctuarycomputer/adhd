@@ -41,7 +41,7 @@ Output is newline-separated paths of files containing the marker comment.
   - "Move to new location" — Phase 3 reasks the install questions; files at the old location are NOT deleted (the user manages them).
   - "Abort" — exit with no changes.
 
-If user chose "Update in place," skip ahead to Phase 6 (patch + write) using the existing folder's group/segment as the choice; ask only "Exclude from production builds?" to confirm current state.
+If user chose "Update in place": derive `groupName` and `routeSegment` from the existing install's folder path, then skip Phase 3's first two questions (route URL, route group) and ask ONLY question 3 ("Exclude from production builds?") to confirm current state. Then proceed to Phase 4.
 
 ## Phase 3: Ask installation choices
 
@@ -80,9 +80,22 @@ node plugins/adhd/lib/install-design-system-docs-route/cli.js patch-next-config 
   --route-url "<routeUrl>"
 ```
 
-Exit code 3 means an existing different `pageExtensions` was detected. The CLI prints the existing value. Use `AskUserQuestion`: "Your next.config.ts sets pageExtensions to `<existing>`. Merge with the design-system extension conditional? [Yes / Show me the manual patch / Abort]."
+Exit codes:
+- `0` — patched successfully (or already at the expected state; idempotent no-op).
+- `3` — the file already sets `pageExtensions` to a different value. The CLI prints the existing value on stdout.
+- non-zero, non-3 — the file's shape isn't safely patchable. Print the manual patch block (see below) and continue with file installs.
 
-On "Yes": re-run the CLI without `detectOnly` (currently errors; for v1, print "Manual merge required. Patch the file to combine the existing pageExtensions with the conditional. Example:" and abort). On "Show me the manual patch": print the patch block and continue with file installs.
+**On exit code 3**, use `AskUserQuestion`: "Your next.config.ts sets pageExtensions to `<existing>`. How do you want to handle it? [Show me the manual patch and continue / Abort]."
+
+Automatic merging is NOT supported in v1. On "Show me the manual patch and continue," print this block and continue with Phase 7:
+
+```ts
+pageExtensions: process.env.NODE_ENV === 'production'
+  ? ['ts', 'tsx']
+  : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],
+```
+
+…and tell the user to merge it with their existing `pageExtensions` value by hand. On "Abort," exit with no further changes.
 
 ## Phase 7: Write the page files
 
