@@ -45,11 +45,13 @@ If user chose "Update in place": derive `groupName` and `routeSegment` from the 
 
 ## Phase 3: Ask installation choices
 
-Use `AskUserQuestion` three times:
+Ask all three questions in a **single** `AskUserQuestion` call so the user sees them as one wizard-style prompt rather than three round-trips. The questions are independent — no branching between answers — so batching is safe.
 
 1. **Route URL** — default `/-docs`. Validate: starts with `/`, only `a-z0-9-/` characters, no leading `_`.
 2. **Route group** — default `(design-system)`. Validate: parens-wrapped, alphanumerics + hyphens inside, OR empty string for "no group."
 3. **Exclude from production builds?** — default `Yes`.
+
+If a custom "Other" answer fails validation, re-ask only that one question in a follow-up `AskUserQuestion` call.
 
 Derive `groupName` and `routeSegment` from these answers. Example: routeUrl `/-docs` → routeSegment `-docs`. The group is independent of the URL.
 
