@@ -123,6 +123,90 @@ test('STRUCT003: still flags a visible stroke that lacks a bound variable', () =
   assert.ok(violations.find(v => v.rule === 'STRUCT003'));
 });
 
+test('STRUCT003: does NOT fire on a COMPONENT_SET wrapper — wrappers do not render', () => {
+  // Figma stuffs the dashed-purple "this is a component set" chrome into the
+  // wrapper's strokes array as a real SOLID stroke. The chrome is editor-only;
+  // CS wrappers do not render in instances. Lint rules that care about visible
+  // output should not fire on them.
+  const node = {
+    id: '818:2610',
+    name: 'Logo',
+    type: 'COMPONENT_SET',
+    strokes: [{
+      type: 'SOLID', visible: true, opacity: 1,
+      color: { r: 0.592, g: 0.278, b: 1 }, // Figma's #9747FF chrome
+      boundVariables: {},
+    }],
+    fills: [
+      { type: 'SOLID', visible: true, color: { r: 1, g: 0, b: 0 } }, // also a fill — should also skip
+    ],
+    children: [
+      { id: '818:2612', name: 'Colour=dark', type: 'COMPONENT', children: [] },
+    ],
+  };
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT003').length, 0);
+});
+
+test('STRUCT002: does NOT fire on a COMPONENT_SET wrapper — wrappers do not render padding', () => {
+  const node = {
+    id: '818:2610',
+    name: 'Logo',
+    type: 'COMPONENT_SET',
+    layoutMode: 'VERTICAL',
+    paddingTop: 16, // raw, no variable
+    fills: [],
+    strokes: [],
+    children: [
+      { id: '818:2612', name: 'Colour=dark', type: 'COMPONENT', children: [] },
+    ],
+  };
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT002').length, 0);
+});
+
+test('STRUCT005: does NOT fire on a COMPONENT_SET wrapper — wrappers do not render effects', () => {
+  const node = {
+    id: '818:2610',
+    name: 'Logo',
+    type: 'COMPONENT_SET',
+    effects: [
+      { type: 'DROP_SHADOW', visible: true, color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 4 }, radius: 8 },
+    ],
+    fills: [],
+    strokes: [],
+    children: [
+      { id: '818:2612', name: 'Colour=dark', type: 'COMPONENT', children: [] },
+    ],
+  };
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT005').length, 0);
+});
+
+test('STRUCT003: still fires on a child COMPONENT inside a Component Set with a raw stroke', () => {
+  // Sanity: the exemption is narrow — it only spares the WRAPPER. Real component
+  // variants still get linted.
+  const node = {
+    id: '818:2610',
+    name: 'Logo',
+    type: 'COMPONENT_SET',
+    fills: [],
+    strokes: [],
+    children: [
+      {
+        id: '818:2612',
+        name: 'Colour=dark',
+        type: 'COMPONENT',
+        fills: [],
+        strokes: [{ type: 'SOLID', visible: true, color: { r: 1, g: 0, b: 0 }, boundVariables: {} }],
+        children: [],
+      },
+    ],
+  };
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT003'), 'STRUCT003 should still fire on a child COMPONENT inside a CS');
+});
+
 test('STRUCT008: flags auto-named layers like "Frame 47"', () => {
   const node = makeFrame({
     children: [{ id: '1:2', name: 'Frame 47', type: 'FRAME' }],
