@@ -503,6 +503,29 @@ Always runs (even on abort):
 rm -rf /tmp/adhd-pull-component
 ```
 
+## Phase 12: Offer to sync the docs route
+
+Runs only on success (skip if Phase 5 aborted). Pulling a component updates its prop interface, which means the static map at `componentMap.tsx` may now be stale (its baked prop schemas were captured the last time `/adhd:sync-docs` ran).
+
+```bash
+node plugins/adhd/lib/sync-docs/cli.js detect-install --app-dir .
+```
+
+- **Empty output** (route not installed): skip this phase silently.
+- **Non-empty output** (route installed): use `AskUserQuestion`:
+
+```
+Question: "Re-sync the design-system docs route now? Pulling the component changed its props, so componentMap.tsx's baked schemas need refreshing."
+Header: "Sync docs"
+Options:
+  - "Yes, re-sync now"
+  - "No, skip"
+```
+
+On "Yes": execute the phases of `/adhd:sync-docs` inline. See `plugins/adhd/skills/sync-docs/SKILL.md` for the phase list. The docs route's existing install choices (route URL, group, render mode) are preserved — Phase 2 of sync-docs detects the existing install and offers "Update in place".
+
+On "No": print `Run /adhd:sync-docs later to refresh the docs route.` Exit normally.
+
 ---
 
 ## Common errors

@@ -102,6 +102,29 @@ Print:
   - <K> code-only variables left untouched (additive policy)
 ```
 
+## Phase 10: Offer to sync the docs route
+
+Runs only on success (skip if no changes were applied to `globals.css`). The docs route reads `globals.css` at request time, so the new tokens will appear without any code change — but if the user has also been editing components, re-syncing refreshes `componentMap.tsx`'s baked prop schemas at the same time.
+
+```bash
+node plugins/adhd/lib/sync-docs/cli.js detect-install --app-dir .
+```
+
+- **Empty output** (route not installed): skip this phase silently.
+- **Non-empty output** (route installed): use `AskUserQuestion`:
+
+```
+Question: "Re-sync the design-system docs route now? Tokens propagate live, but a re-sync also regenerates componentMap.tsx in case your components changed."
+Header: "Sync docs"
+Options:
+  - "Yes, re-sync now"
+  - "No, skip"
+```
+
+On "Yes": execute the phases of `/adhd:sync-docs` inline. See `plugins/adhd/skills/sync-docs/SKILL.md`. Existing install choices are preserved.
+
+On "No": print `Run /adhd:sync-docs later to refresh the docs route.` Exit normally.
+
 ## Common errors
 
 (Same table as push, plus:)
