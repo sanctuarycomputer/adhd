@@ -16,7 +16,7 @@ Plugin source lives at the repo root (`plugins/`, `docs/`, `scripts/`, etc.). Th
 
 Both commands are persistent — Claude Code remembers the marketplace and the enabled plugin across sessions. Run them once per machine.
 
-After install, five slash commands are available:
+After install, six slash commands are available:
 
 | Command | Args | Direction | What it does |
 |---|---|---|---|
@@ -25,6 +25,7 @@ After install, five slash commands are available:
 | `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
+| `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
 
 `/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:lint`, and `/adhd:push-component` all require the official Figma plugin — install it with:
 
@@ -86,6 +87,22 @@ The scoped report covers the same rules (STRUCT001–010 + variable mismatches),
 ```
 
 The skill parses the component's TypeScript prop unions, generates a temp preview route, auto-starts the Next.js dev server if needed, captures via `generate_figma_design`, wraps the captured frames into a Component Set with variant properties, rebinds raw values to existing design-system variables, and runs the same lint engine `/adhd:lint` uses as a preflight check before finalizing. If the Cartesian product would exceed 30 variants, pass `--max-variants <n>` to cap with coverage-first selection.
+
+### Pull a component
+
+```
+# From the consumer repo, with a mapping already established by /adhd:push-component:
+/adhd:pull-component app/components/avatar/index.tsx
+
+# Or by Figma URL — reverse-resolves to the path via adhd.config.ts:
+/adhd:pull-component https://www.figma.com/design/<KEY>?node-id=91-18
+
+# Pre-flight is strict by default — if Figma has unbound raw values, pull aborts and asks the designer to bind them.
+# To accept hardcoded fallbacks anyway (with adhd:off-system comments for greppability):
+/adhd:pull-component app/components/avatar/index.tsx --allow-unbound
+```
+
+The skill reads the Figma Component Set, diffs it against the React file's `Record<Union, string>` lookup tables, prompts on each divergence, and rewrites only those tables (plus union type members). Function body, JSX, hooks, handlers, and imports are never modified.
 
 ### Figma file structure
 
