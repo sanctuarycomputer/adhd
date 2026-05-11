@@ -145,7 +145,9 @@ Write a brief structured summary of what you found to `/tmp/adhd-pull-component/
 
 **Figma side:** use another `use_figma` call (separate from Phase 2.5's structural extract) that, for every variant in the Component Set, captures the resolved Tailwind class string for each design-token-bearing property on each named layer.
 
-For each `boundVariables.fills[].id`, you have the variable's `name` (from Phase 2.5's `vars.json`). The mapping from variable name → Tailwind class is direct:
+The JS you pass to `use_figma` must, for each variant COMPONENT in the set: walk its named children; for each child read its `variantProperties` (on the parent COMPONENT) and `boundVariables`; for every bound variable id, call `await figma.variables.getVariableByIdAsync(id)` and read `.name` (and its collection's name via `getVariableCollectionByIdAsync(variable.variableCollectionId).name`) to form a `'<collection>/<name>'` key. Return a structure that lets you build the `figma.json` shape below — e.g. `[{ props, layers: [{ name, fills, strokes, fontSize, cornerRadius, padding*, itemSpacing, effectStyleId, boundVarNames: { fill: 'color/zinc/800', ... } }] }]`. Do NOT rely on Phase 2.5's `vars.json` for the id→name lookup — that map is keyed by name, not id.
+
+The mapping from variable name → Tailwind class is direct:
 - `color/zinc/800` → `bg-zinc-800` (for a fill) or `text-zinc-800` (for a text color) — disambiguate by the layer/property context.
 - `typography/text/xs` → `text-xs`.
 - `radius/lg` → `rounded-lg`.
@@ -195,7 +197,7 @@ In working memory, walk both sides and produce three buckets:
 
 Write a human-readable summary to `/tmp/adhd-pull-component/diff.md` so the final report can reference it. Keep the structured form in working memory for Phase 5/7.
 
-If all three buckets are empty AND mode is `update`: print "No changes — Avatar is in sync with Figma." Skip to Phase 11 cleanup. Exit 0.
+If all three buckets are empty AND mode is `update`: print "No changes — <ComponentName> is in sync with Figma." Skip to Phase 11 cleanup. Exit 0.
 
 ## Phase 5: Resolve divergences
 
@@ -209,7 +211,7 @@ Pull plan:
 
 How to proceed?
   [1] Apply ALL Figma values
-  [2] Keep ALL local values (no-op — exits)
+  [2] Keep ALL local values (no edits — proceeds to final report)
   [3] Review each
 ```
 
