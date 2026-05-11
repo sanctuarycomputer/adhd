@@ -34,7 +34,7 @@ After install, seven slash commands are available:
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
-| `/adhd:setup-design-system-docs-route` | — | install | Generates a design-system docs route in your Next.js consumer app. Tokens read live from globals.css; components are statically imported from adhd.config.ts at setup time — re-run after editing the components map. Excluded from production builds by default. |
+| `/adhd:sync-docs` | — | install | Generates a design-system docs route in your Next.js consumer app. Tokens read live from globals.css; components are statically imported from adhd.config.ts at setup time — re-run after editing the components map. Excluded from production builds by default. |
 
 Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
 
@@ -116,7 +116,7 @@ The skill reads the Figma Component Set, diffs it against the React file's `Reco
 Run once in your consumer repo:
 
 ```
-/adhd:setup-design-system-docs-route
+/adhd:sync-docs
 ```
 
 This generates a documentation page that reads your `globals.css` live at
@@ -146,7 +146,7 @@ content="noindex, nofollow" />` either way).
 The setup command generates a `componentMap.tsx` with explicit static
 imports per component. After **adding, renaming, or removing entries** in
 `adhd.config.ts`'s `components` map, re-run
-`/adhd:setup-design-system-docs-route` to regenerate the static imports.
+`/adhd:sync-docs` to regenerate the static imports.
 Tokens don't need this — they're read from `globals.css` at request time.
 
 Files where you've removed the `// design-system-docs-route` marker comment

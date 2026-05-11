@@ -235,27 +235,27 @@ Then run /adhd:sync --dry-run to preview your first diff (Figma → code).
 
 If running on a healthy config that didn't change, print `Config unchanged.` instead of the saved-to message.
 
-## Phase 6 (optional): Set up the design-system docs route
+## Phase 6 (optional): Sync the design-system docs route
 
 Use `AskUserQuestion`:
 
 ```
-Question: "Set up the design-system docs route now? It's a live, self-generating
-documentation page that reads your adhd.config.ts and globals.css. Mini-Storybook
-for designers; not indexed by search engines."
+Question: "Generate the design-system docs route now? It's a live page that
+reads your adhd.config.ts and globals.css. Mini-Storybook for designers;
+not indexed by search engines."
 Header: "Docs route"
 Options:
-  - "Yes, install it now"
+  - "Yes, generate it now"
   - "No, maybe later"
 ```
 
-On "Yes": execute the phases of `/adhd:setup-design-system-docs-route` inline.
-See `plugins/adhd/skills/setup-design-system-docs-route/SKILL.md` for the
+On "Yes": execute the phases of `/adhd:sync-docs` inline.
+See `plugins/adhd/skills/sync-docs/SKILL.md` for the
 detailed phase list (validate environment → detect existing install → ask install
 choices → detect Next.js config → detect collisions → patch next.config.ts →
 write files → patch robots.txt → final report).
 
-On "No": print `Run /adhd:setup-design-system-docs-route later to set it up.`
+On "No": print `Run /adhd:sync-docs later to generate it.`
 Exit normally.
 
 ## Reference: Common errors and fix-up guidance

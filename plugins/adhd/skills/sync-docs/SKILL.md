@@ -1,22 +1,22 @@
 ---
-description: "Generate a design-system documentation route in a Next.js consumer app. Sidebar + viewer layout: sidebar lists every Tailwind v4 token domain (colors, spacing, typography, font, font-weight, tracking, leading, radius, shadows, breakpoints, easing, animation) plus every component tracked in adhd.config.ts; the main pane renders the selected route. Tokens are read from globals.css at request time. Components are statically imported from adhd.config.ts at install time — re-run this command after editing the components map. Component pages introspect props for URL-driven toggles. Optionally excluded from production builds via Next.js pageExtensions trick. Marker-comment detection makes it safe to re-run; stale files from earlier template layouts are cleaned up automatically."
+description: "Sync the design-system docs route in a Next.js consumer app. Sidebar + viewer layout: sidebar lists every Tailwind v4 token domain (colors, spacing, typography, font, font-weight, tracking, leading, radius, shadows, breakpoints, easing, animation) plus every component tracked in adhd.config.ts; the main pane renders the selected route. Tokens are read from globals.css at request time. Components are statically imported from adhd.config.ts at sync time — re-run this command after editing the components map. Component pages introspect props for URL-driven toggles. Optionally excluded from production builds via Next.js pageExtensions trick. Marker-comment detection makes it safe to re-run; stale files from earlier template layouts are cleaned up automatically."
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools: Read Write Edit Bash AskUserQuestion
 ---
 
-# ADHD Setup Design System Docs Route
+# ADHD Sync Docs
 
-Generates a design-system docs page in a Next.js App Router project. Tokens are read live from `globals.css`. Components are statically imported from `adhd.config.ts` at the moment this skill runs — **re-run after editing the components map** to regenerate the static imports.
+Generates (and re-generates) a design-system docs page in a Next.js App Router project. Tokens are read live from `globals.css`. Components are statically imported from `adhd.config.ts` at the moment this skill runs — **re-run after editing the components map** to sync the static imports.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-11-adhd-install-design-system-docs-route.md` (historical name).
 
 ## Invariants
 
-1. **No ADHD references in generated files** outside of two filename-style exceptions: the consumer's `adhd.config.ts` filename, and the slash-command name `/adhd:setup-design-system-docs-route` referenced in troubleshooting copy.
+1. **No ADHD references in generated files** outside of two filename-style exceptions: the consumer's `adhd.config.ts` filename, and the slash-command name `/adhd:sync-docs` referenced in re-run copy.
 2. **adhd.config.ts is NOT modified** by this skill. The skill reads it; the user owns it.
 3. **All file writes are idempotent on re-run.** Marker-bearing files are replaced wholesale with the latest templates. Files where the user deleted the marker are left alone. Stale marker-bearing files from earlier template layouts are removed.
-4. **Static component imports.** The installer parses `adhd.config.ts` and generates `componentMap.tsx` with explicit `import * as $cmpN from "@/..."` per registered component. The component page does a static lookup — no dynamic imports, no broad Webpack context modules, no Tailwind-blast-radius issues.
+4. **Static component imports.** The skill parses `adhd.config.ts` and generates `componentMap.tsx` with explicit `import * as $cmpN from "@/..."` per registered component. The component page does a static lookup — no dynamic imports, no broad Webpack context modules, no Tailwind-blast-radius issues.
 
 ## Phase 1: Validate consumer environment
 
@@ -31,7 +31,7 @@ Read `package.json` and confirm `next` is in `dependencies` or `devDependencies`
 ## Phase 2: Detect existing install
 
 ```bash
-node plugins/adhd/lib/setup-design-system-docs-route/cli.js detect-install --app-dir .
+node plugins/adhd/lib/sync-docs/cli.js detect-install --app-dir .
 ```
 
 Output is newline-separated paths of files containing the marker comment.
@@ -78,7 +78,7 @@ If `EXISTS` and Phase 2 didn't already mark this as an existing install: prompt 
 ## Phase 6: Patch next.config.ts (only if prod-exclusion: yes)
 
 ```bash
-node plugins/adhd/lib/setup-design-system-docs-route/cli.js patch-next-config \
+node plugins/adhd/lib/sync-docs/cli.js patch-next-config \
   --config "<next.config.path>" \
   --route-url "<routeUrl>"
 ```
@@ -103,7 +103,7 @@ pageExtensions: process.env.NODE_ENV === 'production'
 ## Phase 7: Write the page files
 
 ```bash
-node plugins/adhd/lib/setup-design-system-docs-route/cli.js install \
+node plugins/adhd/lib/sync-docs/cli.js install \
   --config <choices.json>
 ```
 
@@ -124,7 +124,7 @@ If `adhd.config.ts` is missing, the CLI aborts with `install: failed to read adh
 ## Phase 8: Patch robots.txt
 
 ```bash
-node plugins/adhd/lib/setup-design-system-docs-route/cli.js patch-robots \
+node plugins/adhd/lib/sync-docs/cli.js patch-robots \
   --robots public/robots.txt \
   --route-url "<routeUrl>"
 ```
@@ -138,7 +138,7 @@ mkdir -p public
 
 Print:
 ```
-✓ Design system docs route set up.
+✓ Design system docs synced.
 
   URL:            http://localhost:3000<routeUrl>
   Filesystem:     app/<group>/<segment>/
@@ -152,7 +152,7 @@ Run `npm run dev` and visit the URL to preview.
 Tokens are read from globals.css at request time, so editing globals.css just
 works. Components are statically imported from adhd.config.ts — after adding,
 renaming, or removing entries in the components map, re-run
-/adhd:setup-design-system-docs-route to regenerate the static imports.
+/adhd:sync-docs to regenerate the static imports.
 
 Files where you've removed the marker comment are left alone.
 ```

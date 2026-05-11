@@ -132,7 +132,7 @@ function parseTokens(css: string | null) {
 // `import * as $cmpN from "@/<path>"` so Webpack/Turbopack resolves a single,
 // known module per component — no context module, no broad bundle, no
 // Tailwind blast radius. To add/rename/remove a component: edit
-// `adhd.config.ts`, then re-run `/adhd:setup-design-system-docs-route`.
+// `adhd.config.ts`, then re-run `/adhd:sync-docs`.
 //
 // Placeholders substituted by route-installer.js:
 //   __COMPONENT_IMPORTS__ — one `import * as $cmpN from "<importPath>";` per component
@@ -209,7 +209,7 @@ export default function DesignSystemDocsLayout({ children }: { children: React.R
           <section>
             <h2 className="mb-2 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Components</h2>
             {componentEntries.length === 0 ? (
-              <p className="text-xs text-zinc-500 px-2">None tracked. Add to <code>adhd.config.ts</code> and re-run the setup command.</p>
+              <p className="text-xs text-zinc-500 px-2">None tracked. Add to <code>adhd.config.ts</code> and re-run <code>/adhd:sync-docs</code>.</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {componentEntries.map(c => (
@@ -247,7 +247,7 @@ const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemInd
         <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
         <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks. Components are statically imported from
         <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code> — after editing the components map, re-run
-        <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">/adhd:setup-design-system-docs-route</code> to regenerate the static imports.
+        <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">/adhd:sync-docs</code> to regenerate the static imports.
       </p>
       <p className="text-xs text-zinc-500 max-w-prose">
         Only <code>@theme {"{ ... }"}</code> and <code>@theme inline {"{ ... }"}</code> declarations are picked up — plain <code>:root</code> variables aren&apos;t.
@@ -530,7 +530,7 @@ export default async function ComponentPage({
           The slug <code>{slug}</code> isn&apos;t present in the generated <code>componentMap.tsx</code>.
         </p>
         <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
-          If you just edited <code>adhd.config.ts</code> to add this component, re-run <code>/adhd:setup-design-system-docs-route</code> in this project to regenerate the static imports.
+          If you just edited <code>adhd.config.ts</code> to add this component, re-run <code>/adhd:sync-docs</code> in this project to regenerate the static imports.
         </p>
       </div>
     );

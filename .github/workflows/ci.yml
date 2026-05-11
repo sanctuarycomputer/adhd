@@ -23,8 +23,8 @@ jobs:
         run: node --test plugins/adhd/lib/push-component/__tests__/
       - name: Run pull-component tests
         run: node --test plugins/adhd/lib/pull-component/__tests__/
-      - name: Run setup-design-system-docs-route tests
-        run: node --test plugins/adhd/lib/setup-design-system-docs-route/__tests__/
+      - name: Run sync-docs tests
+        run: node --test plugins/adhd/lib/sync-docs/__tests__/
 
   hygiene:
     name: project hygiene

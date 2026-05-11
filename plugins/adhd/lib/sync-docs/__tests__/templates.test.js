@@ -85,7 +85,7 @@ test('INDEX_PAGE_TSX has no Troubleshooting section (each route handles its own 
   assert.doesNotMatch(INDEX_PAGE_TSX, /Troubleshooting/);
   assert.doesNotMatch(INDEX_PAGE_TSX, /app-build-manifest|broad dynamic/i);
   // It still mentions the re-run command so the user knows how to refresh the map.
-  assert.match(INDEX_PAGE_TSX, /\/adhd:setup-design-system-docs-route/);
+  assert.match(INDEX_PAGE_TSX, /\/adhd:sync-docs/);
 });
 
 test('TOKENS_PAGE_TSX reads globals.css from a baked CSS_ENTRY constant', () => {
@@ -114,7 +114,7 @@ test('COMPONENT_PAGE_TSX reads searchParams for prop toggles', () => {
 test('COMPONENT_PAGE_TSX shows a "Not in the static map" branch for unknown slugs', () => {
   // Replaces notFound() with an actionable message about re-running setup.
   assert.match(COMPONENT_PAGE_TSX, /Not in the static map/);
-  assert.match(COMPONENT_PAGE_TSX, /re-run.*\/adhd:setup-design-system-docs-route/i);
+  assert.match(COMPONENT_PAGE_TSX, /re-run.*\/adhd:sync-docs/i);
 });
 
 test('COMPONENT_MAP_TSX has the substitution placeholders the installer needs', () => {
@@ -161,14 +161,14 @@ test('none of the templates contain "ADHD" outside the marker', () => {
   // interacts with the tool, and ejecting from ADHD doesn't break the file —
   // it just means those references become vestigial guidance the user can edit):
   //   1. `adhd.config.ts` — the consumer's own config artifact.
-  //   2. `/adhd:setup-design-system-docs-route` — the slash command name,
+  //   2. `/adhd:sync-docs` — the slash command name,
   //      referenced in troubleshooting copy so the user knows what to re-run.
   const all = { LAYOUT_TSX, INDEX_PAGE_TSX, TOKENS_PAGE_TSX, COMPONENT_PAGE_TSX, COMPONENT_ERROR_TSX, COMPONENT_MAP_TSX, PROP_TOGGLE_TSX };
   for (const [name, content] of Object.entries(all)) {
     const body = content
       .replace(MARKER_COMMENT, '')
       .replace(/adhd\.config\.ts/g, '')
-      .replace(/\/adhd:setup-design-system-docs-route/g, '');
+      .replace(/\/adhd:sync-docs/g, '');
     assert.equal(/adhd/i.test(body), false, `${name} must not reference ADHD outside marker / allowed exceptions`);
   }
 });

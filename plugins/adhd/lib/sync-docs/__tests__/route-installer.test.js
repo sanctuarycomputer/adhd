@@ -238,7 +238,7 @@ test('component page shows a "not in static map" message when slug is missing', 
     'utf8',
   );
   assert.match(componentPage, /Not in the static map/);
-  assert.match(componentPage, /\/adhd:setup-design-system-docs-route/);
+  assert.match(componentPage, /\/adhd:sync-docs/);
 });
 
 test('detectExistingInstall returns marker-bearing files', () => {
