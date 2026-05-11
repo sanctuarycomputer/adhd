@@ -12,27 +12,41 @@ function installRoute(projectRoot, opts) {
   const { groupName = '', routeSegment, prodExcluded } = opts;
   if (!routeSegment) throw new Error('routeSegment is required');
 
-  const ext = prodExcluded ? '.design-system.tsx' : '.tsx';
+  // Page/layout files get the `.design-system.tsx` extension only when prod-excluded
+  // so Next.js's `pageExtensions` conditional filters them out of production builds.
+  const pageExt = prodExcluded ? '.design-system.tsx' : '.tsx';
+  // PropToggle is a regular module (not a route file by name), so it doesn't need
+  // the `.design-system` suffix to be excluded — it's only bundled if its importing
+  // page is in the build, and the page IS suffix-excluded. Using a plain `.tsx`
+  // keeps the `import "../PropToggle"` in COMPONENT_PAGE_TSX resolvable.
+  const moduleExt = '.tsx';
   const segments = ['app'];
   if (groupName) segments.push(groupName);
   segments.push(routeSegment);
   const docsDir = path.join(projectRoot, ...segments);
   const componentDir = path.join(docsDir, '[component]');
 
+  // The runtime route URL (route groups like `(design-system)` are invisible in URLs,
+  // so the URL is just `/<routeSegment>`). Templates use `__ROUTE_PATH__` as a
+  // placeholder for this — relative hrefs like `./<slug>` would resolve incorrectly
+  // when the current path is `/<segment>` without a trailing slash.
+  const routeUrl = '/' + routeSegment;
+  const indexBody = INDEX_PAGE_TSX.replace(/__ROUTE_PATH__/g, routeUrl);
+
   mkdirpSync(docsDir);
   mkdirpSync(componentDir);
 
-  fs.writeFileSync(path.join(docsDir, `layout${ext}`), LAYOUT_TSX);
-  fs.writeFileSync(path.join(docsDir, `page${ext}`), INDEX_PAGE_TSX);
-  fs.writeFileSync(path.join(componentDir, `page${ext}`), COMPONENT_PAGE_TSX);
-  fs.writeFileSync(path.join(docsDir, `PropToggle${ext}`), PROP_TOGGLE_TSX);
+  fs.writeFileSync(path.join(docsDir, `layout${pageExt}`), LAYOUT_TSX);
+  fs.writeFileSync(path.join(docsDir, `page${pageExt}`), indexBody);
+  fs.writeFileSync(path.join(componentDir, `page${pageExt}`), COMPONENT_PAGE_TSX);
+  fs.writeFileSync(path.join(docsDir, `PropToggle${moduleExt}`), PROP_TOGGLE_TSX);
 
   return {
     files: [
-      path.join(docsDir, `layout${ext}`),
-      path.join(docsDir, `page${ext}`),
-      path.join(componentDir, `page${ext}`),
-      path.join(docsDir, `PropToggle${ext}`),
+      path.join(docsDir, `layout${pageExt}`),
+      path.join(docsDir, `page${pageExt}`),
+      path.join(componentDir, `page${pageExt}`),
+      path.join(docsDir, `PropToggle${moduleExt}`),
     ],
   };
 }

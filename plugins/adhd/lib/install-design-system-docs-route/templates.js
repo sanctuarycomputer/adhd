@@ -170,7 +170,7 @@ export default async function DesignSystemIndex() {
             {cfg.components.map(p => {
               const slug = p.replace(/\\.tsx?$/, "").replace(/\\/index$/, "").split("/").pop()?.toLowerCase() ?? p;
               return (
-                <Link key={p} href={\`./\${slug}\`} className="rounded border border-zinc-200 dark:border-zinc-800 p-4 hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                <Link key={p} href={\`__ROUTE_PATH__/\${slug}\`} className="rounded border border-zinc-200 dark:border-zinc-800 p-4 hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <div className="text-sm font-medium">{slug}</div>
                   <div className="text-xs text-zinc-500 truncate">{p}</div>
                 </Link>
