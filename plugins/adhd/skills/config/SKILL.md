@@ -6,42 +6,21 @@ allowed-tools: Read Edit Write Bash AskUserQuestion mcp__plugin_figma_figma__who
 
 # ADHD Config
 
-You are running the ADHD config wizard. ADHD ("agent-driven harmonious development") keeps design tokens synchronized between this Tailwind v4 codebase and a Figma file. This skill produces a valid `adhd.config.ts` and (when `leader: "code"`) wires up a Figma personal access token (PAT) via `.env.local`.
+You are running the ADHD config wizard. ADHD ("agent-driven harmonious development") keeps design tokens synchronized between this Tailwind v4 codebase and a Figma file. This skill produces a valid `adhd.config.ts`. Authentication to Figma is handled entirely by the official Figma plugin (`figma@claude-plugins-official`) — ADHD never reads or writes credentials.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-09-adhd-config-design.md` — read it if you need detail beyond what this skill provides.
 
 The wizard is **linear**. Each phase prompts at most once, validates, and either proceeds or stops with a clear error. After the wizard completes, the user runs `/adhd:sync --dry-run` separately. The wizard never invokes sync.
 
-## Phase 0: Detect existing config + PAT-leak preflight
+## Phase 0: Detect existing config
 
 Resolve the path: `adhd.config.ts` at the repo root. Use `Read` to load it. There are three branches:
 
-**Branch A — File exists and is well-formed.** Treat it as the source of defaults the user can accept by hitting Enter on later prompts. Continue to the preflight scan below.
+**Branch A — File exists and is well-formed.** Treat it as the source of defaults the user can accept by hitting Enter on later prompts. Continue to parse defaults below.
 
 **Branch B — File exists but is malformed** (parse fails, or required keys missing). Print: `Found adhd.config.ts but could not parse it. The wizard will re-create it from scratch; existing values will not be used as defaults.` Continue without defaults.
 
 **Branch C — File does not exist.** Continue without defaults.
-
-### PAT-leak preflight (always runs in Branches A and B)
-
-Before parsing the config for defaults, scan the raw source text of `adhd.config.ts` for anything that looks like a literal Figma PAT. Run two regex checks against the file's text:
-
-1. `figd_[A-Za-z0-9_-]+` — Figma's standard PAT prefix; strongest signal.
-2. Any string longer than 30 characters assigned to a key literally named `pat`, `token`, or `secret`. (Heuristic: match `(pat|token|secret)\s*:\s*"[^"]{30,}"`.) If the matched value also satisfies `^[A-Z][A-Z0-9_]*$` (i.e., it looks like an env var name), skip this heuristic — it's a long but valid name, not a token.
-
-If either matches, **abort the wizard immediately** with this exact message:
-
-```
-Looks like a Figma PAT is committed to adhd.config.ts. This is a credential leak.
-
-Remove it from the config and store it as FIGMA_PAT in either:
-  • .env.local in the repo root (gitignored), or
-  • your shell environment (e.g., export FIGMA_PAT=... in ~/.zshrc).
-
-Then re-run /adhd:config.
-```
-
-Do not proceed to Phase 1.
 
 ### Parse defaults (Branch A only)
 
@@ -232,10 +211,6 @@ When omitting an optional field, also drop the corresponding `// optional:` plac
 
 On "No", abort. On "Yes", `Write` the file.
 
-### .env.local / .gitignore
-
-An earlier phase may have already written `.env.local` and updated `.gitignore`. Don't re-do those writes here; this phase touches only `adhd.config.ts`.
-
 ## Phase 5: Report
 
 Print a summary of what was done. Tailor to the actual operations:
@@ -262,9 +237,6 @@ If running on a healthy config that didn't change, print `Config unchanged.` ins
 
 ## Reference: Common errors and fix-up guidance
 
-### "Looks like a Figma PAT is committed to adhd.config.ts"
-The preflight scan found a string that looks like a Figma personal access token in your config. Tokens never go in `adhd.config.ts` (it's tracked in git). Move the token to `.env.local` (gitignored) or your shell rc, then re-run.
-
 ### "The official Figma plugin isn't installed"
 ADHD drives Figma exclusively through the `figma@claude-plugins-official` Claude Code plugin. Install it with `claude plugin install figma@claude-plugins-official`, then re-run `/adhd:config`.
 
@@ -287,4 +259,4 @@ const config = {
 export default config;
 ```
 
-The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:lint`, and `/adhd:export-for-figma`. No fields hold credentials — the PAT-leak preflight (Phase 0) actively blocks any commit that puts a token in this file. ADHD always syncs every supported token domain (color, spacing, typography, radius, shadow, plus any others added in the future); there's no per-domain opt-out.
+The schema is read by `/adhd:config`, `/adhd:sync`, `/adhd:lint`, and `/adhd:export-for-figma`. No fields hold credentials — authentication is delegated entirely to the `figma@claude-plugins-official` plugin. ADHD always syncs every supported token domain (color, spacing, typography, radius, shadow, plus any others added in the future); there's no per-domain opt-out.

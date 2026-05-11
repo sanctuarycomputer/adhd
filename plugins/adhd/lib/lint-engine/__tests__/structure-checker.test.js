@@ -33,6 +33,54 @@ test('STRUCT001: does not flag a frame with no children even if layoutMode is NO
   assert.equal(violations.filter(v => v.rule === 'STRUCT001').length, 0);
 });
 
+test('STRUCT001: does NOT flag a frame holding a single shape primitive (icon/logo container)', () => {
+  // Common case: a Logo Component Set variant frame whose only child is a VECTOR.
+  // Auto-layout manages flow between multiple children; a single shape fills its
+  // container via constraints, no auto-layout needed.
+  for (const childType of ['VECTOR', 'BOOLEAN_OPERATION', 'ELLIPSE', 'RECTANGLE', 'STAR', 'POLYGON', 'LINE']) {
+    const node = makeFrame({
+      layoutMode: 'NONE',
+      children: [{ id: '1:2', name: 'logo-art', type: childType }],
+    });
+    const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+    assert.equal(
+      violations.filter(v => v.rule === 'STRUCT001').length,
+      0,
+      `expected no STRUCT001 for single-child of type ${childType}`,
+    );
+  }
+});
+
+test('STRUCT001: still flags a frame with a single TEXT child (needs padding/alignment control)', () => {
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [{ id: '1:2', name: 'label', type: 'TEXT' }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT001'));
+});
+
+test('STRUCT001: still flags a frame with a single FRAME child', () => {
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [{ id: '1:2', name: 'inner', type: 'FRAME' }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT001'));
+});
+
+test('STRUCT001: still flags a frame with 2+ children regardless of types', () => {
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      { id: '1:2', name: 'a', type: 'VECTOR' },
+      { id: '1:3', name: 'b', type: 'VECTOR' },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT001'));
+});
+
 test('STRUCT003: flags a fill with raw hex (no boundVariables)', () => {
   const node = makeFrame({
     fills: [{ type: 'SOLID', color: { r: 0.37, g: 0.23, b: 0.93 } }],
@@ -47,6 +95,32 @@ test('STRUCT003: does not flag a fill that has boundVariables.color', () => {
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   assert.equal(violations.filter(v => v.rule === 'STRUCT003').length, 0);
+});
+
+test('STRUCT003: does NOT flag a fill with visible: false (invisible paints do not render)', () => {
+  // Figma keeps invisible paint entries on a node when the user has hidden them
+  // in the UI. Enforcing variable bindings on paints the viewer cannot see is busywork.
+  const node = makeFrame({
+    fills: [{ type: 'SOLID', visible: false, color: { r: 1, g: 0, b: 0 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT003').length, 0);
+});
+
+test('STRUCT003: does NOT flag a stroke with visible: false', () => {
+  const node = makeFrame({
+    strokes: [{ type: 'SOLID', visible: false, color: { r: 0, g: 0, b: 0 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT003').length, 0);
+});
+
+test('STRUCT003: still flags a visible stroke that lacks a bound variable', () => {
+  const node = makeFrame({
+    strokes: [{ type: 'SOLID', visible: true, color: { r: 0, g: 0, b: 0 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT003'));
 });
 
 test('STRUCT008: flags auto-named layers like "Frame 47"', () => {
@@ -89,20 +163,40 @@ test('STRUCT010: does not flag a Component Set with declared variant properties'
   assert.equal(violations.filter(v => v.rule === 'STRUCT010').length, 0);
 });
 
-test('STRUCT009: flags PascalCase variant property values when convention is kebab-case', () => {
+test('STRUCT009: flags non-kebab variant property names when convention is kebab-case', () => {
   const node = {
     id: '1:1',
-    name: 'Button',
+    name: 'button',
     type: 'COMPONENT_SET',
     componentPropertyDefinitions: {
-      variant: { type: 'VARIANT', defaultValue: 'Primary', variantOptions: ['Primary', 'Secondary'] },
+      // PascalCase property name violates kebab-case
+      Variant: { type: 'VARIANT', defaultValue: 'primary', variantOptions: ['primary', 'secondary'] },
     },
     children: [
-      { id: '1:2', name: 'Button/Primary', type: 'COMPONENT', variantProperties: { variant: 'Primary' } },
+      { id: '1:2', name: 'Variant=primary', type: 'COMPONENT', variantProperties: { Variant: 'primary' } },
     ],
   };
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
-  assert.ok(violations.find(v => v.rule === 'STRUCT009'));
+  const hits = violations.filter(v => v.rule === 'STRUCT009');
+  assert.ok(hits.find(v => /property/i.test(v.message)), 'expected a STRUCT009 violation on the property name');
+});
+
+test('STRUCT009: does NOT flag variant property VALUES regardless of casing — values are string-literal type members, not identifiers', () => {
+  const node = {
+    id: '1:1',
+    name: 'logo',
+    type: 'COMPONENT_SET',
+    componentPropertyDefinitions: {
+      // Property name is kebab-friendly; values are lowercase but the rule should not enforce casing on values.
+      colour: { type: 'VARIANT', defaultValue: 'light', variantOptions: ['light', 'dark', 'OnDark'] },
+    },
+    children: [
+      { id: '1:2', name: 'colour=light', type: 'COMPONENT', variantProperties: { colour: 'light' } },
+    ],
+  };
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const valueViolations = violations.filter(v => v.rule === 'STRUCT009' && /value/i.test(v.message));
+  assert.equal(valueViolations.length, 0, 'STRUCT009 should not fire on variant values, even mixed-case ones like "OnDark"');
 });
 
 test('STRUCT009: passes when convention is set to false (disabled)', () => {
@@ -189,6 +283,16 @@ test('STRUCT005: flags a node with effects but no boundVariables and no effectSt
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   assert.ok(violations.find(v => v.rule === 'STRUCT005'));
+});
+
+test('STRUCT005: does NOT flag effects with visible: false (parity with STRUCT003 paints)', () => {
+  const node = makeFrame({
+    effects: [
+      { type: 'DROP_SHADOW', visible: false, color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 4 }, radius: 8 },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT005').length, 0);
 });
 
 test('STRUCT006: flags a FRAME with wasInstance: true (warning, not error)', () => {

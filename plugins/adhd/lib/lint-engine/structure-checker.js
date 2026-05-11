@@ -2,6 +2,17 @@
 
 const AUTO_NAME_RE = /^(Frame|Group|Rectangle|Ellipse|Vector|Line|Star|Polygon)\s+\d+$/;
 
+// Shape primitives that, as a frame's only child, fill the container via constraints
+// and do not benefit from auto-layout (icons, logos, decorative backgrounds).
+const SINGLE_CHILD_SHAPE_EXEMPT = new Set([
+  'VECTOR', 'BOOLEAN_OPERATION', 'ELLIPSE', 'RECTANGLE', 'STAR', 'POLYGON', 'LINE',
+]);
+
+// Paints are "visible" by default; only treat as hidden when explicitly false.
+function isVisiblePaint(p) {
+  return p && p.visible !== false;
+}
+
 function deepLink(fileKey, nodeId) {
   return 'https://figma.com/design/' + fileKey + '?node-id=' + nodeId.replace(':', '-');
 }
@@ -28,11 +39,18 @@ function visit(node, ctx, parentPath, parent) {
     });
   };
 
-  // STRUCT001: auto-layout required
+  // STRUCT001: auto-layout required.
+  // Exempt: a frame whose ONLY child is a shape primitive (icon / logo / decorative
+  // shape that fills the container via constraints). Multi-child frames and
+  // single-child wrappers around TEXT / FRAME / COMPONENT / INSTANCE still fire —
+  // those typically want auto-layout for padding and alignment.
   if ((node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE') &&
       Array.isArray(node.children) && node.children.length > 0 &&
       node.layoutMode === 'NONE') {
-    push('STRUCT001', 'error', 'Frame has children but auto-layout is not enabled.');
+    const exempt = node.children.length === 1 && SINGLE_CHILD_SHAPE_EXEMPT.has(node.children[0].type);
+    if (!exempt) {
+      push('STRUCT001', 'error', 'Frame has children but auto-layout is not enabled.');
+    }
   }
 
   // STRUCT002: spacing uses variables
@@ -47,10 +65,13 @@ function visit(node, ctx, parentPath, parent) {
     }
   }
 
-  // STRUCT003: colors use variables
+  // STRUCT003: visible solid colors use variables. Paints with `visible: false`
+  // don't render and are excluded — Figma keeps invisible paint entries on a node
+  // when the user has hidden them in the UI; enforcing variable bindings on
+  // unseen paints is busywork.
   if (Array.isArray(node.fills)) {
     for (const fill of node.fills) {
-      if (fill.type === 'SOLID' && !fill.boundVariables?.color) {
+      if (fill.type === 'SOLID' && isVisiblePaint(fill) && !fill.boundVariables?.color) {
         push('STRUCT003', 'error', 'Fill is a raw color; use a color variable.');
         break;
       }
@@ -58,7 +79,7 @@ function visit(node, ctx, parentPath, parent) {
   }
   if (Array.isArray(node.strokes)) {
     for (const stroke of node.strokes) {
-      if (stroke.type === 'SOLID' && !stroke.boundVariables?.color) {
+      if (stroke.type === 'SOLID' && isVisiblePaint(stroke) && !stroke.boundVariables?.color) {
         push('STRUCT003', 'error', 'Stroke is a raw color; use a color variable.');
         break;
       }
@@ -78,16 +99,20 @@ function visit(node, ctx, parentPath, parent) {
     }
   }
 
-  // STRUCT005: effects use variables/styles.
+  // STRUCT005: visible effects use variables/styles.
   // An empty `boundVariables: {}` is NOT a real binding — Figma emits it on
-  // unbound effects. Only a non-empty object counts.
-  if (Array.isArray(node.effects) && node.effects.length > 0) {
-    const allBound = node.effects.every(e => {
-      const hasBoundVars = e.boundVariables && Object.keys(e.boundVariables).length > 0;
-      return hasBoundVars || node.effectStyleId;
-    });
-    if (!allBound) {
-      push('STRUCT005', 'error', 'Effects include raw values; bind effect styles or shadow variables.');
+  // unbound effects. Only a non-empty object counts. Effects with `visible: false`
+  // don't render and are excluded for parity with STRUCT003.
+  if (Array.isArray(node.effects)) {
+    const visibleEffects = node.effects.filter(isVisiblePaint);
+    if (visibleEffects.length > 0) {
+      const allBound = visibleEffects.every(e => {
+        const hasBoundVars = e.boundVariables && Object.keys(e.boundVariables).length > 0;
+        return hasBoundVars || node.effectStyleId;
+      });
+      if (!allBound) {
+        push('STRUCT005', 'error', 'Effects include raw values; bind effect styles or shadow variables.');
+      }
     }
   }
 
@@ -101,21 +126,16 @@ function visit(node, ctx, parentPath, parent) {
     push('STRUCT008', 'warning', `Layer is auto-named ("${node.name}"); rename for clarity.`);
   }
 
-  // STRUCT009: naming convention (component, variant prop names, variant prop values)
+  // STRUCT009: naming convention applies to identifiers that flow into code as
+  // names — the component name and the variant property names. It does NOT apply
+  // to variant property VALUES, which are string-literal type members in
+  // generated code (e.g. `type LogoColour = "light" | "dark"`) and serve as
+  // user-facing labels in Figma's variant picker; casing has no codegen impact.
   if (node.type === 'COMPONENT_SET' && node.componentPropertyDefinitions) {
     for (const propName of Object.keys(node.componentPropertyDefinitions)) {
       if (!caseMatches(propName, ctx.namingConvention)) {
         push('STRUCT009', 'warning',
           `Variant property "${propName}" doesn't match ${ctx.namingConvention} convention.`);
-      }
-      const def = node.componentPropertyDefinitions[propName];
-      if (def.variantOptions) {
-        for (const val of def.variantOptions) {
-          if (!caseMatches(val, ctx.namingConvention)) {
-            push('STRUCT009', 'warning',
-              `Variant value "${val}" of property "${propName}" doesn't match ${ctx.namingConvention} convention.`);
-          }
-        }
       }
     }
   }
