@@ -2,17 +2,20 @@
 
 // Detection: look for the sentinel "design-system.tsx" pageExtension entry
 // inside the conditional. This is the unique fingerprint of OUR patch.
-const PATCHED_SENTINEL = /pageExtensions:\s*process\.env\.NODE_ENV\s*===\s*['"]production['"][\s\S]*?'design-system\.tsx'/;
+const PATCHED_SENTINEL_RE = /pageExtensions:\s*process\.env\.NODE_ENV\s*===\s*['"]production['"][\s\S]*?'design-system\.tsx'/;
 
-// Detection: any other pageExtensions definition.
+// Detection: any other pageExtensions definition (array form).
 const EXISTING_PAGE_EXTENSIONS_RE = /pageExtensions:\s*\[/;
+
+// Captures the full `pageExtensions: ...,` declaration for conflict reporting.
+const EXISTING_PAGE_EXTENSIONS_VALUE_RE = /pageExtensions:[^,\n]+,?/;
 
 const PATCH_BLOCK = `  pageExtensions: process.env.NODE_ENV === 'production'
     ? ['ts', 'tsx']
     : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],`;
 
 function isPatched(source) {
-  return PATCHED_SENTINEL.test(source);
+  return PATCHED_SENTINEL_RE.test(source);
 }
 
 function findConfigObjectStart(source) {
@@ -33,13 +36,13 @@ function findConfigObjectStart(source) {
   return -1;
 }
 
-function patchNextConfig(source, opts = {}) {
+function patchNextConfig(source, options = {}) {
   if (isPatched(source)) return source;
 
   // Detect existing different pageExtensions
   if (EXISTING_PAGE_EXTENSIONS_RE.test(source)) {
-    if (opts.detectOnly) {
-      const existing = /pageExtensions:[^,\n]+,?/.exec(source)[0];
+    if (options.detectOnly) {
+      const existing = EXISTING_PAGE_EXTENSIONS_VALUE_RE.exec(source)[0];
       return { conflict: true, existing };
     }
     // Caller hasn't checked; we still refuse to silently merge.
@@ -54,10 +57,10 @@ function patchNextConfig(source, opts = {}) {
   // Insert the patch block immediately inside the object literal, before existing
   // properties. This puts it at the top of the config for visibility.
   const before = source.slice(0, insertAt);
-  const after = source.slice(insertAt);
-  // Add a newline if needed for clean formatting
-  const sep = after.startsWith('\n') ? '' : '\n';
-  return before + sep + PATCH_BLOCK + '\n' + after.replace(/^\n/, '');
+  // Strip any leading newline from the tail so it isn't duplicated; we always
+  // emit exactly one `\n` on each side of PATCH_BLOCK for clean formatting.
+  const after = source.slice(insertAt).replace(/^\n/, '');
+  return before + '\n' + PATCH_BLOCK + '\n' + after;
 }
 
 module.exports = { patchNextConfig, isPatched };
