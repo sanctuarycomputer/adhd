@@ -18,11 +18,16 @@
 
 Also triggered as an optional final phase of `/adhd:config` (the wizard asks "Set up the design-system docs route?" and on `yes` walks through the same install flow inline).
 
+**Re-running the skill** is a first-class flow. As the templates evolve over time (better layouts, new token sections, bug fixes), the user re-runs `/adhd:install-design-system-docs-route` to pick up the improvements. On detect-existing-install:
+- "Update in place" → the skill `Write`s the latest templates over the existing generated files. Idempotent patches (`next.config.ts`, `robots.txt`) are re-applied as no-ops. User customizations to the generated files are replaced.
+- "Abort" → no changes made.
+- The user can opt OUT of future overwrites by deleting the marker comment from a file they want to preserve. The skill refuses to touch any file lacking the marker, except when the user explicitly says "force overwrite" at the prompt.
+
 **Out of scope for v1:**
 - Multi-route documentation (e.g. one URL per token domain). v1 is a single route with index + per-component pages.
 - Image-based component previews (rendering a server-side screenshot). v1 renders the component as live HTML.
 - Live Figma comparison side-by-side. v1 is purely code-side documentation.
-- Storage of user customizations on regen. v1 detects existing installs and prompts before overwriting; in-place updates preserve the layout file's customizations via Edit-not-Write.
+- Three-way merging of user customizations with new template versions. v1's update flow is "wholesale replace, with the marker-removal escape hatch for files the user wants to preserve."
 
 ---
 
@@ -103,6 +108,26 @@ Scan `app/**/page.*tsx` and `app/**/layout.*tsx` for the marker comment. If foun
 | No marker comment anywhere | Fresh install — proceed to Phase 3 with defaults. |
 | One marker found | Prompt: "An existing install at `<path>`. [Update in place / Move to new location / Abort]." |
 | Multiple markers found | Unusual. Print all locations, prompt: "Pick which to update or move; the others stay as-is." |
+
+**Update-in-place semantics (re-running to pick up improved templates):**
+
+- All files with the marker comment get `Write`-replaced with the latest template content. No attempt to preserve user customizations in those files.
+- Files WITHOUT the marker (user removed it deliberately, or new files in the install dir the user added) are NOT touched.
+- The user is shown a list of files that will be replaced before confirming. Sample prompt:
+  ```
+  Update in place at app/(design-system)/-docs/?
+  These files will be replaced with the latest templates:
+    • layout.design-system.tsx
+    • page.design-system.tsx
+    • [component]/page.design-system.tsx
+    • PropToggle.design-system.tsx
+  These files have the marker comment removed and will be left alone:
+    (none)
+  Continue? [Y/n]
+  ```
+- Idempotent patches (`next.config.ts`'s `pageExtensions`, `robots.txt` Disallow) are re-applied; if already at the expected state, they're no-ops.
+
+**Force-overwrite escape:** if the user wants to push a template update onto a file they've previously opted out of (marker removed), they can re-add the marker comment to the top of the file before re-running the skill. The skill will then treat it as an update target.
 
 ### Phase 3 — Ask installation choices
 
@@ -475,3 +500,4 @@ The install phases are documented in the standalone skill; `/adhd:config` refere
 18. With prod-exclusion disabled: route ships with noindex meta still applied.
 19. README's command table includes the new `/adhd:install-design-system-docs-route` row.
 20. Manual smoke test against `example/` passes end-to-end: install → dev server → click through → build → 404 in production.
+21. Re-running the skill against an existing install reliably updates files that still bear the marker comment to the latest template version, while leaving files where the marker was deliberately removed untouched. Verified by: install at template v1 → ship a template v2 (different layout content) → re-run skill → confirm marker-bearing files now contain v2 content and marker-removed files contain their preserved pre-v2 state.
