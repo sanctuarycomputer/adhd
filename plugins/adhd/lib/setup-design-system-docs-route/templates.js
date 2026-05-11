@@ -5,10 +5,9 @@ const MARKER_COMMENT = `// design-system-docs-route — auto-generated installer
 `;
 
 // The list of token domains is shared verbatim between the sidebar (layout) and
-// the token page (so the page can look up the right renderer by slug). Both
-// copies use the same source string here, embedded into the templates below.
-// The `tailwindDocs` field is the URL to Tailwind v4's relevant theme section,
-// used in empty-state messaging.
+// the tokens page (so the page can look up the right renderer by slug). Both
+// copies embed the same source string from here. The `tailwindDocs` field is
+// the URL to Tailwind v4's relevant theme section, used in empty-state messaging.
 const TOKEN_DOMAINS_SRC = `const TOKEN_DOMAINS = [
   { slug: "colors", label: "Colors", varPrefix: "--color-", tailwindDocs: "https://tailwindcss.com/docs/colors" },
   { slug: "spacing", label: "Spacing", varPrefix: "--spacing", tailwindDocs: "https://tailwindcss.com/docs/theme#spacing" },
@@ -24,12 +23,17 @@ const TOKEN_DOMAINS_SRC = `const TOKEN_DOMAINS = [
   { slug: "animate", label: "Animation", varPrefix: "--animate-", tailwindDocs: "https://tailwindcss.com/docs/animation" },
 ];`;
 
-// The CSS @theme parser shared between landing/tokens pages. Kept inline (not
-// imported from the lib) because these are runtime server components in the
-// consumer's app, with no access to ADHD's node_modules. Mirrors token-parser.js
-// but flattened for inline use.
-//   - Brace-counted scan supports `@theme { ... }` AND `@theme inline { ... }`
-//   - Prefix order matters: longer prefixes (`font-weight-`) before shorter (`font-`).
+// Tokens-page CSS reader. Kept inline because the tokens page is a runtime
+// server component in the consumer's app and can't import ADHD's lib helpers.
+const READ_CSS_SRC = `async function readCss(cssEntry: string) {
+  try { return await fs.readFile(path.resolve(process.cwd(), cssEntry), "utf8"); }
+  catch { return null; }
+}`;
+
+// The CSS @theme parser used by the tokens page. Brace-counted scan correctly
+// handles `@theme { ... }` and `@theme inline { ... }`. Prefix order in
+// PREFIX_MAP matters — longer prefixes (`font-weight-`) must precede shorter
+// ones (`font-`) so classification picks the most-specific match.
 const PARSE_TOKENS_SRC = `function extractThemeBodies(css: string): string[] {
   const bodies: string[] = [];
   let i = 0;
@@ -73,7 +77,6 @@ function parseTokens(css: string | null) {
   if (!css) return out;
   const typoByName = new Map<string, TypoRow>();
   const LINE_HEIGHT_SUFFIX = "--line-height";
-  // Order matters: longer prefixes first.
   const PREFIX_MAP: Array<[string, keyof typeof out]> = [
     ["color-", "colors"],
     ["font-weight-", "fontWeights"],
@@ -115,94 +118,55 @@ function parseTokens(css: string | null) {
   return out;
 }`;
 
-const READ_CONFIG_SRC = `async function readConfig() {
-  try {
-    const src = await fs.readFile(path.resolve(process.cwd(), "adhd.config.ts"), "utf8");
-    const components: string[] = [];
-    const compMatch = /components:\\s*\\{([\\s\\S]*?)\\}\\s*[,;]?/.exec(src);
-    if (compMatch) {
-      const inner = compMatch[1];
-      const re = /"([^"]+)"\\s*:\\s*\\{/g;
-      let m;
-      while ((m = re.exec(inner)) !== null) components.push(m[1]);
-    }
-    const cssEntryMatch = /cssEntry\\s*:\\s*"([^"]+)"/.exec(src);
-    const cssEntry = cssEntryMatch ? cssEntryMatch[1] : "app/globals.css";
-    return { components, cssEntry };
-  } catch {
-    return { components: [] as string[], cssEntry: "app/globals.css" };
+// componentMap.tsx — the heart of the new static architecture. Generated per
+// install from adhd.config.ts. Each tracked component gets an explicit
+// `import * as $cmpN from "@/<path>"` so Webpack/Turbopack resolves a single,
+// known module per component — no context module, no broad bundle, no
+// Tailwind blast radius. To add/rename/remove a component: edit
+// `adhd.config.ts`, then re-run `/adhd:setup-design-system-docs-route`.
+//
+// Placeholders substituted by route-installer.js:
+//   __COMPONENT_IMPORTS__ — one `import * as $cmpN from "<importPath>";` per component
+//   __COMPONENT_ENTRIES__ — array literal of `{ slug, rawPath, module: $cmpN }`
+const COMPONENT_MAP_TSX = `${MARKER_COMMENT}import type React from "react";
+__COMPONENT_IMPORTS__
+
+type ModuleShape = Record<string, unknown>;
+
+// Resolve the renderable function from a module: prefer the default export,
+// fall back to the first exported function. Mirrors the previous runtime
+// resolution behavior so existing user components keep working.
+function resolveComponent(mod: ModuleShape): React.ComponentType<any> | null {
+  if (typeof mod.default === "function") return mod.default as React.ComponentType<any>;
+  for (const v of Object.values(mod)) {
+    if (typeof v === "function") return v as React.ComponentType<any>;
   }
+  return null;
 }
 
-function slugFor(p: string) {
-  return p.replace(/\\.tsx?$/, "").replace(/\\/index$/, "").split("/").pop()?.toLowerCase() ?? p;
-}`;
-
-// Shared globals.css reader. Returns the file contents or null if missing.
-const READ_CSS_SRC = `async function readCss(cssEntry: string) {
-  try { return await fs.readFile(path.resolve(process.cwd(), cssEntry), "utf8"); }
-  catch { return null; }
-}`;
-
-// Diagnostic banner detection: scans the consumer's @theme block for token-name
-// shibboleths that indicate a shadcn-style v3-to-v4 migration, and flags common
-// tokens that are missing. The dynamic-import pattern used by the component page
-// pulls in more files than the consumer's normal routes do, which surfaces stale
-// `@apply` directives in transitively-bundled CSS — these missing tokens are the
-// usual cause.
-const DETECT_ISSUES_SRC = `type DetectedIssue = {
-  token: string;
-  why: string;
-  themeLine: string;
-  rootLine?: string;
+export type ComponentEntry = {
+  slug: string;
+  rawPath: string;
+  Component: React.ComponentType<any> | null;
 };
 
-function detectIssues(css: string | null): DetectedIssue[] {
-  const issues: DetectedIssue[] = [];
-  if (!css) return issues;
-  // Extract bodies of every @theme block (supports \`@theme inline\` modifier).
-  const bodies: string[] = [];
-  let i = 0;
-  while (i < css.length) {
-    const idx = css.indexOf("@theme", i);
-    if (idx === -1) break;
-    let j = idx + "@theme".length;
-    while (j < css.length && css[j] !== "{" && css[j] !== ";") j++;
-    if (css[j] !== "{") { i = j + 1; continue; }
-    let depth = 1, k = j + 1;
-    while (k < css.length && depth > 0) {
-      if (css[k] === "{") depth++;
-      else if (css[k] === "}") depth--;
-      if (depth > 0) k++;
-    }
-    bodies.push(css.slice(j + 1, k));
-    i = k + 1;
-  }
-  const themeText = bodies.join("\\n");
-  const has = (token: string) => new RegExp("(?:^|\\\\s)" + token.replace(/[-]/g, "\\\\-") + "\\\\s*:").test(themeText);
+const ENTRIES: Array<{ slug: string; rawPath: string; module: ModuleShape }> = __COMPONENT_ENTRIES__;
 
-  // Shadcn shibboleth: foreground+background plus at least one *-foreground pair.
-  const looksShadcn = has("--color-foreground") && has("--color-background") &&
-    (has("--color-card-foreground") || has("--color-popover-foreground"));
+export const componentEntries: Array<{ slug: string; rawPath: string }> =
+  ENTRIES.map(e => ({ slug: e.slug, rawPath: e.rawPath }));
 
-  if (looksShadcn && !has("--color-ring-offset-background")) {
-    issues.push({
-      token: "--color-ring-offset-background",
-      why: "Shadcn components use \`ring-offset-background\` for focus styles. Without this in @theme, any \`@apply ring-offset-background\` in transitively-bundled CSS (from a UI library or stale components in your project) will fail with \\"Cannot apply unknown utility class ring-offset-background\\" during route compilation, and the component page will 500 with an ENOENT on the build manifest.",
-      themeLine: "--color-ring-offset-background: hsl(var(--ring-offset-background));",
-      rootLine: "--ring-offset-background: 0 0% 100%;",
-    });
-  }
+export function getComponent(slug: string): ComponentEntry | null {
+  const entry = ENTRIES.find(e => e.slug === slug);
+  if (!entry) return null;
+  return { slug: entry.slug, rawPath: entry.rawPath, Component: resolveComponent(entry.module) };
+}
+`;
 
-  return issues;
-}`;
-
-// Layout: sidebar lists token domains + components; main area renders children.
-// The layout is async so it can read adhd.config.ts and globals.css for diagnostics.
+// Layout: sidebar (token domains baked-in, component list baked-in via the
+// generated componentMap). No fs reads, no async — pure server component.
 const LAYOUT_TSX = `${MARKER_COMMENT}import type { Metadata } from "next";
-import fs from "node:fs/promises";
-import path from "node:path";
 import Link from "next/link";
+import { componentEntries } from "./componentMap";
 
 export const metadata: Metadata = {
   title: "Design System Docs",
@@ -211,41 +175,7 @@ export const metadata: Metadata = {
 
 ${TOKEN_DOMAINS_SRC}
 
-${READ_CONFIG_SRC}
-
-${READ_CSS_SRC}
-
-${DETECT_ISSUES_SRC}
-
-function DiagnosticBanner({ issues }: { issues: DetectedIssue[] }) {
-  if (issues.length === 0) return null;
-  return (
-    <aside className="mb-6 rounded-md border border-amber-400 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-4">
-      <h3 className="text-sm font-medium text-amber-900 dark:text-amber-200">
-        Heads up — likely globals.css gaps
-      </h3>
-      <p className="mt-1 text-xs text-amber-800 dark:text-amber-300 max-w-prose">
-        Component pages use a broad dynamic import which causes Tailwind v4 to scan more of your codebase than your other routes do. Your <code>@theme</code> block looks like a shadcn migration but is missing tokens that often appear in transitively-bundled CSS. If you see <code>ENOENT</code> on <code>app-build-manifest.json</code> when navigating to a component, add these:
-      </p>
-      <ul className="mt-3 flex flex-col gap-3 text-xs">
-        {issues.map(i => (
-          <li key={i.token} className="rounded bg-amber-100 dark:bg-amber-950/50 p-3">
-            <code className="font-medium text-amber-900 dark:text-amber-200">{i.token}</code>
-            <p className="mt-1 text-amber-800 dark:text-amber-300">{i.why}</p>
-            <pre className="mt-2 overflow-x-auto rounded bg-amber-200/60 dark:bg-amber-900/40 p-2 text-[11px] text-amber-900 dark:text-amber-100">{\`/* in @theme */\\n\${i.themeLine}\${i.rootLine ? \`\\n\\n/* in :root */\\n\${i.rootLine}\` : ""}\`}</pre>
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
-}
-
-export default async function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
-  const cfg = await readConfig();
-  const css = await readCss(cfg.cssEntry);
-  const issues = detectIssues(css);
-  const components = cfg.components.map(p => ({ raw: p, slug: slugFor(p) }));
-
+export default function DesignSystemDocsLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
       <aside className="w-56 shrink-0 border-r border-zinc-200 dark:border-zinc-800 p-4 sticky top-0 h-screen overflow-y-auto">
@@ -270,12 +200,12 @@ export default async function DesignSystemDocsLayout({ children }: { children: R
 
           <section>
             <h2 className="mb-2 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Components</h2>
-            {components.length === 0 ? (
-              <p className="text-xs text-zinc-500 px-2">None tracked yet.</p>
+            {componentEntries.length === 0 ? (
+              <p className="text-xs text-zinc-500 px-2">None tracked. Add to <code>adhd.config.ts</code> and re-run the setup command.</p>
             ) : (
               <ul className="flex flex-col gap-1">
-                {components.map(c => (
-                  <li key={c.raw}>
+                {componentEntries.map(c => (
+                  <li key={c.slug}>
                     <Link href={\`__ROUTE_PATH__/components/\${c.slug}\`} className="block rounded px-2 py-1 hover:bg-zinc-200 dark:hover:bg-zinc-800">
                       {c.slug}
                     </Link>
@@ -288,29 +218,26 @@ export default async function DesignSystemDocsLayout({ children }: { children: R
       </aside>
 
       <main className="flex-1 p-8 overflow-x-auto">
-        <div className="max-w-5xl">
-          <DiagnosticBanner issues={issues} />
-          {children}
-        </div>
+        <div className="max-w-5xl">{children}</div>
       </main>
     </div>
   );
 }
 `;
 
-// Landing page — welcome + troubleshooting. The sidebar already shows tokens/components,
-// so the body focuses on what the layout's diagnostic banner can't pre-emptively flag.
+// Landing page — welcome + brief troubleshooting. Static. No fs reads.
 const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemIndex() {
   return (
     <div className="flex flex-col gap-8">
       <header>
         <h2 className="text-2xl font-medium">Design System</h2>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400 max-w-prose">
-          Pick a token domain or a component from the sidebar. Tokens are read from your
+          Pick a token domain or a component from the sidebar. Tokens are read live from your
           <code className="mx-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">globals.css</code>
-          <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks.
-          Components are loaded from
-          <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code>.
+          <code className="rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">@theme</code> blocks. Components are statically imported from <code className="ml-1 rounded bg-zinc-100 dark:bg-zinc-900 px-1 py-0.5 text-xs">adhd.config.ts</code>.
+        </p>
+        <p className="mt-3 text-xs text-zinc-500 max-w-prose">
+          After editing <code>adhd.config.ts</code> (adding, renaming, or removing components), re-run <code>/adhd:setup-design-system-docs-route</code> in this project to regenerate the static component map.
         </p>
       </header>
 
@@ -318,36 +245,23 @@ const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemInd
         <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">Troubleshooting</h3>
         <div className="flex flex-col gap-4 text-sm text-zinc-700 dark:text-zinc-300 max-w-prose">
           <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
-            <summary className="cursor-pointer font-medium">Component page 500s with <code>ENOENT: ... app-build-manifest.json</code></summary>
-            <div className="mt-3 flex flex-col gap-3">
-              <p>
-                The component page uses a broad dynamic import keyed off <code>adhd.config.ts</code>, so adding components is just a config edit. The trade-off: Webpack/Turbopack can&apos;t statically resolve the path, so it creates a context module that pulls every file under <code>@/</code> into this route&apos;s bundle, and Tailwind v4 then scans all of them for classes.
-              </p>
-              <p>
-                Your other routes only bundle what they statically import, so latent issues never surface there. On <em>this</em> route, Tailwind hits classes referenced in transitively-bundled CSS (often a UI lib like shadcn or <code>@reactor-team/ui</code>) that your <code>@theme</code> doesn&apos;t define yet. Tailwind throws, the CSS chunk never emits, and the manifest write fails — hence ENOENT.
-              </p>
-              <p className="font-medium">Fix:</p>
-              <ol className="list-decimal pl-5 flex flex-col gap-1">
-                <li>Run <code>npm run dev</code> in a terminal and watch the output when you navigate to <code>/components/&lt;X&gt;</code>.</li>
-                <li>Look for <code>Cannot apply unknown utility class &lt;name&gt;</code> or <code>Cannot use @variant with unknown variant: &lt;name&gt;</code>.</li>
-                <li>For utility class names, add <code>--color-&lt;name&gt;</code> (or appropriate prefix) to your <code>@theme</code> block.</li>
-                <li>For variant names, add <code>--breakpoint-&lt;name&gt;</code> to your <code>@theme</code> block.</li>
-              </ol>
-              <p className="text-xs text-zinc-500">If the layout&apos;s diagnostic banner is showing above this content, it has detected a likely candidate already.</p>
-            </div>
+            <summary className="cursor-pointer font-medium">Component shows in the sidebar but the page says &ldquo;not in the static map&rdquo;</summary>
+            <p className="mt-3">
+              The static map is generated at setup time. If the sidebar lists a component but its page reports it&apos;s not in the map, the layout is out of sync with <code>componentMap.tsx</code>. Re-run <code>/adhd:setup-design-system-docs-route</code>; both files will be regenerated together.
+            </p>
           </details>
 
           <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
-            <summary className="cursor-pointer font-medium">Sidebar shows the component but the page fails to load it</summary>
+            <summary className="cursor-pointer font-medium">Component fails to render at runtime</summary>
             <p className="mt-3">
-              Check the path in <code>adhd.config.ts</code> resolves from your project root, and that the file exports a function (default export or a named function). If the dynamic import fails at runtime (not at compile), the error boundary at <code>components/[component]/error.tsx</code> will catch it and show the message.
+              The error boundary at <code>components/[component]/error.tsx</code> will catch it and show the message + a Try Again button. Most often: the component throws on mount without required props, or it expects context (theme provider, router) that the docs route doesn&apos;t provide.
             </p>
           </details>
 
           <details className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
             <summary className="cursor-pointer font-medium">Token domain shows &ldquo;no custom tokens&rdquo; but you have some</summary>
             <p className="mt-3">
-              The parser supports <code>@theme {"{ ... }"}</code> and <code>@theme inline {"{ ... }"}</code>. If your tokens are in a different syntax (e.g. <code>:root</code>), they won&apos;t be picked up — Tailwind v4 only treats <code>@theme</code> declarations as design tokens.
+              The parser supports <code>@theme {"{ ... }"}</code> and <code>@theme inline {"{ ... }"}</code>. If your tokens are in a different syntax (e.g. plain <code>:root</code>), they won&apos;t be picked up — Tailwind v4 only treats <code>@theme</code> declarations as design tokens.
             </p>
           </details>
         </div>
@@ -357,20 +271,19 @@ const INDEX_PAGE_TSX = `${MARKER_COMMENT}export default function DesignSystemInd
 }
 `;
 
-// Tokens domain page — one route, one renderer per domain. Reads the consumer's
-// globals.css at request time and renders whatever's declared. Empty states
-// reference Tailwind v4's defaults rather than implying the system is broken.
+// Tokens domain page — reads globals.css at request time, renders whatever's
+// declared. cssEntry is baked at install time (substituted from adhd.config.ts).
 const TOKENS_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
 import path from "node:path";
 import { notFound } from "next/navigation";
 
 ${TOKEN_DOMAINS_SRC}
 
-${READ_CONFIG_SRC}
-
 ${READ_CSS_SRC}
 
 ${PARSE_TOKENS_SRC}
+
+const CSS_ENTRY = "__CSS_ENTRY__";
 
 function EmptyState({ domain }: { domain: typeof TOKEN_DOMAINS[number] }) {
   return (
@@ -386,8 +299,7 @@ export default async function TokensDomainPage({ params }: { params: Promise<{ d
   const domain = TOKEN_DOMAINS.find(d => d.slug === slug);
   if (!domain) notFound();
 
-  const cfg = await readConfig();
-  const css = await readCss(cfg.cssEntry);
+  const css = await readCss(CSS_ENTRY);
   const tokens = parseTokens(css);
 
   return (
@@ -564,14 +476,14 @@ export default async function TokensDomainPage({ params }: { params: Promise<{ d
 }
 `;
 
-// Component page — moved to /components/[component]. Two levels deep, so the
-// PropToggle import is now `../../PropToggle`.
+// Component page — uses the statically generated componentMap. No fs reads of
+// adhd.config.ts at request time; the rawPath comes from the map. The page
+// still reads the component's source via fs to introspect prop interfaces
+// (that's a one-file read per request, not a bundle).
 const COMPONENT_PAGE_TSX = `${MARKER_COMMENT}import fs from "node:fs/promises";
 import path from "node:path";
-import { notFound } from "next/navigation";
 import { PropToggle } from "../../PropToggle";
-
-${READ_CONFIG_SRC}
+import { getComponent } from "../../componentMap";
 
 async function parseProps(componentPath: string) {
   try {
@@ -621,11 +533,24 @@ export default async function ComponentPage({
 }) {
   const { component: slug } = await params;
   const sp = await searchParams;
-  const cfg = await readConfig();
-  const componentPath = cfg.components.find(p => slugFor(p) === slug);
-  if (!componentPath) notFound();
+  const entry = getComponent(slug);
 
-  const { props } = await parseProps(componentPath);
+  if (!entry) {
+    return (
+      <div className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-6">
+        <h2 className="text-lg font-medium text-amber-900 dark:text-amber-200">Not in the static map</h2>
+        <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+          The slug <code>{slug}</code> isn&apos;t present in the generated <code>componentMap.tsx</code>.
+        </p>
+        <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+          If you just edited <code>adhd.config.ts</code> to add this component, re-run <code>/adhd:setup-design-system-docs-route</code> in this project to regenerate the static imports.
+        </p>
+      </div>
+    );
+  }
+
+  const { rawPath, Component } = entry;
+  const { props } = await parseProps(rawPath);
 
   // Resolve current prop values from searchParams
   const current: Record<string, any> = {};
@@ -638,19 +563,8 @@ export default async function ComponentPage({
     else if (def.type === "number") current[name] = Number(v);
   }
 
-  // Dynamic import the component
-  let Component: any = null;
-  let importError: string | null = null;
-  try {
-    const mod = await import(\`@/\${componentPath.replace(/\\.tsx?$/, "")}\`);
-    const name = Object.keys(mod).find(k => typeof mod[k] === "function") ?? "default";
-    Component = mod.default ?? mod[name];
-  } catch (e: any) {
-    importError = e?.message ?? String(e);
-  }
-
-  const importPath = "@/" + componentPath.replace(/\\.tsx?$/, "").replace(/\\/index$/, "");
-  const importStmt = Component ? \`import { \${Component.name ?? slug} } from "\${importPath}";\` : null;
+  const importPath = "@/" + rawPath.replace(/\\.tsx?$/, "").replace(/\\/index$/, "");
+  const importStmt = Component ? \`import \${Component.name ?? slug} from "\${importPath}";\` : null;
   const jsxSnippet = Component
     ? \`<\${Component.name ?? slug}\${Object.entries(current).map(([k,v]) => \` \${k}={\${JSON.stringify(v)}}\`).join("")} />\`
     : null;
@@ -690,11 +604,9 @@ export default async function ComponentPage({
       </section>
 
       <section className="rounded border border-zinc-200 dark:border-zinc-800 p-8">
-        {importError ? (
-          <pre className="text-xs text-red-600 whitespace-pre-wrap">{importError}</pre>
-        ) : Component ? (
-          <Component {...current} />
-        ) : null}
+        {Component ? <Component {...current} /> : (
+          <p className="text-sm text-zinc-500">No renderable component exported from <code>{rawPath}</code>. The map imported it but couldn&apos;t resolve a function (default or named).</p>
+        )}
       </section>
 
       {importStmt && jsxSnippet && (
@@ -708,30 +620,25 @@ export default async function ComponentPage({
 }
 `;
 
-// Error boundary for the component route. Catches RUNTIME errors thrown during
-// rendering — broken dynamic imports, components that throw on mount, prop-parse
-// failures. Does NOT catch bundler-level Tailwind/PostCSS failures (those happen
-// before React runs); the layout's diagnostic banner handles that case.
+// Error boundary for the component route. Catches runtime errors thrown during
+// rendering — components that throw on mount, prop-parse failures, etc. With
+// static imports there's no broad-bundle Tailwind blast radius anymore, so this
+// is purely a runtime safety net.
 const COMPONENT_ERROR_TSX = `${MARKER_COMMENT}"use client";
 
 export default function ComponentPageError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
-  const isBuildManifestError = /app-build-manifest\\.json/.test(error.message ?? "");
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-6">
-        <h2 className="text-lg font-medium text-red-900 dark:text-red-200">Couldn't render this component</h2>
+        <h2 className="text-lg font-medium text-red-900 dark:text-red-200">Couldn&apos;t render this component</h2>
         <p className="mt-2 text-sm text-red-800 dark:text-red-300">
-          {isBuildManifestError
-            ? "Next.js failed to load this route's build manifest. This usually means Tailwind v4 couldn't compile CSS for the route — see the diagnostic banner above (or the Troubleshooting section on the docs landing page) for the likely cause."
-            : "Something went wrong while loading or rendering this component. Common causes:"}
+          Something went wrong while rendering this component. Common causes:
         </p>
-        {!isBuildManifestError && (
-          <ul className="mt-3 list-disc pl-6 text-sm text-red-800 dark:text-red-300">
-            <li>The path in <code>adhd.config.ts</code> doesn't resolve from the project root.</li>
-            <li>The component throws on mount when no props are provided.</li>
-            <li>The component's prop interface uses types the docs route can't introspect.</li>
-          </ul>
-        )}
+        <ul className="mt-3 list-disc pl-6 text-sm text-red-800 dark:text-red-300">
+          <li>The component throws on mount when no props are provided.</li>
+          <li>The component expects context (theme provider, router, query client) that the docs route doesn&apos;t set up.</li>
+          <li>The component&apos;s prop interface uses types the docs route can&apos;t introspect.</li>
+        </ul>
         <details className="mt-4 text-xs">
           <summary className="cursor-pointer text-red-700 dark:text-red-300">Show error details</summary>
           <pre className="mt-2 overflow-x-auto rounded bg-red-100 dark:bg-red-950/50 p-2 text-red-900 dark:text-red-200">{error.message}{error.digest ? \`\\n\\nDigest: \${error.digest}\` : ""}</pre>
@@ -794,5 +701,6 @@ module.exports = {
   TOKENS_PAGE_TSX,
   COMPONENT_PAGE_TSX,
   COMPONENT_ERROR_TSX,
+  COMPONENT_MAP_TSX,
   PROP_TOGGLE_TSX,
 };

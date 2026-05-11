@@ -249,13 +249,13 @@ Options:
   - "No, maybe later"
 ```
 
-On "Yes": execute the phases of `/adhd:install-design-system-docs-route` inline.
-See `plugins/adhd/skills/install-design-system-docs-route/SKILL.md` for the
+On "Yes": execute the phases of `/adhd:setup-design-system-docs-route` inline.
+See `plugins/adhd/skills/setup-design-system-docs-route/SKILL.md` for the
 detailed phase list (validate environment → detect existing install → ask install
 choices → detect Next.js config → detect collisions → patch next.config.ts →
 write files → patch robots.txt → final report).
 
-On "No": print `Run /adhd:install-design-system-docs-route later to set it up.`
+On "No": print `Run /adhd:setup-design-system-docs-route later to set it up.`
 Exit normally.
 
 ## Reference: Common errors and fix-up guidance

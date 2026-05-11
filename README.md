@@ -34,7 +34,7 @@ After install, seven slash commands are available:
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
-| `/adhd:install-design-system-docs-route` | — | install | One-shot installer for a live, self-generating design-system docs route in your Next.js consumer app. Reads adhd.config.ts + globals.css at request time. Excluded from production builds by default. |
+| `/adhd:setup-design-system-docs-route` | — | install | Generates a design-system docs route in your Next.js consumer app. Tokens read live from globals.css; components are statically imported from adhd.config.ts at setup time — re-run after editing the components map. Excluded from production builds by default. |
 
 Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
 
@@ -116,14 +116,14 @@ The skill reads the Figma Component Set, diffs it against the React file's `Reco
 Run once in your consumer repo:
 
 ```
-/adhd:install-design-system-docs-route
+/adhd:setup-design-system-docs-route
 ```
 
-This installs a live, self-generating documentation page that reads your
-`adhd.config.ts` and `globals.css` at request time. The default URL is
-`/-docs` (the hyphen prefix telegraphs "internal"), and files live under a
-Next.js route group at `app/(design-system)/-docs/`. The page is a
-sidebar-and-viewer layout:
+This generates a documentation page that reads your `globals.css` live at
+request time and statically imports the components listed in
+`adhd.config.ts`. The default URL is `/-docs` (the hyphen prefix telegraphs
+"internal"), and files live under a Next.js route group at
+`app/(design-system)/-docs/`. The page is a sidebar-and-viewer layout:
 
 - Sidebar: lists every Tailwind v4 token domain (colors, spacing, typography,
   font families, font weights, tracking, leading, radius, shadows,
@@ -137,31 +137,26 @@ sidebar-and-viewer layout:
 
 By default the route is excluded from production builds via Next.js's
 `pageExtensions` trick — files use the `.design-system.tsx` extension and
-the production build literally doesn't see them. You can opt out at install
+the production build literally doesn't see them. You can opt out at setup
 time if you'd rather ship the route (it still has `<meta name="robots"
 content="noindex, nofollow" />` either way).
 
-Re-run the installer over time to pick up improved templates. Files you've
-customized — by removing the `// design-system-docs-route` marker comment —
-are left alone.
+#### Re-running after `adhd.config.ts` changes
 
-#### Caveat: broad dynamic import + Tailwind v4
+The setup command generates a `componentMap.tsx` with explicit static
+imports per component. After **adding, renaming, or removing entries** in
+`adhd.config.ts`'s `components` map, re-run
+`/adhd:setup-design-system-docs-route` to regenerate the static imports.
+Tokens don't need this — they're read from `globals.css` at request time.
 
-The component page resolves its target via `import("@/" + componentPath)` so
-adding to `adhd.config.ts` is enough — no re-install per component. The
-trade-off: Webpack/Turbopack can't statically resolve the path, so it
-creates a context module that pulls every `.ts`/`.tsx` under your project
-root into this route's bundle. Tailwind v4 then scans all of them for
-classes — a much wider surface than your other routes touch.
+Files where you've removed the `// design-system-docs-route` marker comment
+are preserved across re-runs.
 
-If your codebase has shadcn-v3-era classes that you never migrated (most
-commonly `ring-offset-background`, used by Button/Input focus styles),
-they'll surface as `Cannot apply unknown utility class …` errors during
-route compilation, and the page will 500 with an ENOENT on
-`app-build-manifest.json`. The layout pre-scans your `globals.css` for the
-shadcn shibboleth and shows a diagnostic banner with the exact `@theme`
-addition you need to make. There's also an `error.tsx` at the route boundary
-for any runtime failures, and a Troubleshooting section on the landing page.
+The static-import architecture is deliberate: it keeps the docs route's
+bundle scoped to exactly your tracked components, sidestepping the
+`Cannot apply unknown utility class …` failure mode that broad dynamic
+imports trigger under Tailwind v4 (legacy shadcn classes in unrelated parts
+of your codebase get bundled and explode during PostCSS).
 
 You can also trigger the install at the end of `/adhd:config` if you're
 setting up ADHD for the first time.

@@ -9,6 +9,7 @@ const { slugMap } = require('./slug');
 const { patchNextConfig } = require('./next-config-patcher');
 const { patchRobots } = require('./robots-patcher');
 const { installRoute, detectExistingInstall } = require('./route-installer');
+const { readConfig } = require('./config-parser');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -91,8 +92,22 @@ function main() {
     if (!args.config) { console.error('Usage: install --config <choices.json>'); process.exit(2); }
     const choices = JSON.parse(fs.readFileSync(args.config, 'utf8'));
     if (!choices.projectRoot) { console.error('install: choices.projectRoot is required'); process.exit(2); }
-    const r = installRoute(choices.projectRoot, choices);
-    process.stdout.write(JSON.stringify({ files: r.files }, null, 2) + '\n');
+    // The installer needs the components list + cssEntry from the consumer's
+    // adhd.config.ts. The skill enforces "config exists" in Phase 1, so a
+    // missing file here is a hard error — we abort with a useful message
+    // instead of generating an empty componentMap.
+    let parsed;
+    try { parsed = readConfig(choices.projectRoot); }
+    catch (e) {
+      console.error('install: failed to read adhd.config.ts at ' + choices.projectRoot + ': ' + e.message);
+      process.exit(2);
+    }
+    const r = installRoute(choices.projectRoot, {
+      ...choices,
+      components: parsed.components,
+      cssEntry: parsed.cssEntry,
+    });
+    process.stdout.write(JSON.stringify({ files: r.files, removed: r.removed, components: parsed.components.map(c => c.slug) }, null, 2) + '\n');
     process.exit(0);
   }
 

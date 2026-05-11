@@ -94,13 +94,39 @@ test('detect-install subcommand prints existing install paths to stdout', () => 
   assert.match(r.stdout, /-docs\/layout\.tsx/);
 });
 
-test('install subcommand writes files based on choices JSON', () => {
+test('install subcommand reads adhd.config.ts and generates componentMap.tsx', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adhd-ids-install-'));
   fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+  // The new architecture requires adhd.config.ts at the project root — the CLI
+  // reads components + cssEntry from it and bakes them into the generated files.
+  fs.writeFileSync(path.join(root, 'adhd.config.ts'), `
+const config = {
+  components: {
+    "components/Logo.tsx": { figma: {} },
+  },
+};
+export default config;
+`);
   const choices = tmp('choices.json', JSON.stringify({
     projectRoot: root, groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
   }));
   const r = spawnSync('node', [CLI, 'install', '--config', choices], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(fs.existsSync(path.join(root, 'app', '(design-system)', '-docs', 'page.design-system.tsx')));
+  const docsDir = path.join(root, 'app', '(design-system)', '-docs');
+  assert.ok(fs.existsSync(path.join(docsDir, 'page.design-system.tsx')));
+  assert.ok(fs.existsSync(path.join(docsDir, 'componentMap.tsx')));
+  const mapBody = fs.readFileSync(path.join(docsDir, 'componentMap.tsx'), 'utf8');
+  assert.match(mapBody, /import \* as \$cmp0 from "@\/components\/Logo"/);
+  assert.match(mapBody, /slug: "logo"/);
+});
+
+test('install subcommand aborts with a clear error when adhd.config.ts is missing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adhd-ids-install-no-config-'));
+  fs.mkdirSync(path.join(root, 'app'), { recursive: true });
+  const choices = tmp('choices.json', JSON.stringify({
+    projectRoot: root, groupName: '(design-system)', routeSegment: '-docs', prodExcluded: true,
+  }));
+  const r = spawnSync('node', [CLI, 'install', '--config', choices], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /adhd\.config\.ts/);
 });
