@@ -21,10 +21,6 @@
 const CONFIG_OPEN_RE = /\bconst\s+config\s*=\s*\{/;
 const COMPONENTS_OPEN_RE = /\bcomponents\s*:\s*\{/;
 
-function escapeForRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // Walks `source` from `openBraceIdx` (which MUST point at a `{`),
 // returns the index of the matching `}` (inclusive). Throws if
 // unmatched. Skips over braces inside double-quoted strings and
@@ -84,7 +80,6 @@ function findConfigObjectRange(source) {
 // Locates the `components:` field's brace range INSIDE the given config
 // range, or null if not present.
 function findComponentsRange(source, configRange) {
-  COMPONENTS_OPEN_RE.lastIndex = 0;
   // Scan only the slice inside the config object.
   const slice = source.slice(configRange.start + 1, configRange.end);
   const m = COMPONENTS_OPEN_RE.exec(slice);
@@ -221,10 +216,8 @@ function findFigmaUrlInEntry(source, entryValueRange) {
     const figmaRange = { start: child.valueStart, end: child.valueEnd };
     for (const sub of iterateObjectEntries(source, figmaRange)) {
       if (sub.key !== 'url') continue;
-      // sub.valueStart..valueEnd is the inner-quote span. We want the
-      // quote characters themselves.
-      // valueStart is the position of the opening quote, valueEnd is the
-      // index of the closing quote.
+      // For a string value, iterateObjectEntries sets valueStart/valueEnd
+      // to the indexes of the opening and closing quote characters.
       const openQuote = sub.valueStart;
       const closeQuote = sub.valueEnd;
       if (source[openQuote] !== '"' && source[openQuote] !== "'") return null;
