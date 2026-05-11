@@ -27,6 +27,14 @@ function lookupLocal(theme, cssVar, mode) {
   return theme.primitives?.[cssVar] ?? theme.exposure?.[cssVar];
 }
 
+function isLocalAlias(v) {
+  return typeof v === 'string' && /^var\(--[A-Za-z0-9_-]+\)$/i.test(v.trim());
+}
+
+function isFigmaAlias(v) {
+  return v != null && typeof v === 'object' && v.type === 'VARIABLE_ALIAS';
+}
+
 function compareOne(figmaPath, figmaValue, theme, mode) {
   const cssVar = figmaToCssVar(figmaPath);
   const token = strippedToken(figmaPath);
@@ -43,6 +51,14 @@ function compareOne(figmaPath, figmaValue, theme, mode) {
       domain,
       hint: 'Run /adhd:pull-design-system to import this token.',
     };
+  }
+  // Both sides agree this is an alias relationship — no surface-value comparison
+  // is meaningful. The primitive-level comparison catches real drift in the
+  // underlying targets. Mixed alias-vs-literal still falls through to the value
+  // comparison below (where it may produce a false-positive conflict until the
+  // SKILL emits resolved figma values).
+  if (isLocalAlias(localValue) && isFigmaAlias(figmaValue)) {
+    return null;
   }
   if (valuesMatch(figmaValue, localValue, domain)) {
     return null; // same, no violation

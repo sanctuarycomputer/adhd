@@ -74,3 +74,47 @@ test('missing variables include a suggested-fix hint', () => {
   assert.ok(m);
   assert.equal(m.hint, 'Run /adhd:pull-design-system to import this token.');
 });
+
+test('does NOT flag a conflict when both sides are aliases (semantic→primitive)', () => {
+  // Figma side: `Semantic/foreground` is an alias to another variable (light + dark modes).
+  // Local side: `--foreground` is a CSS alias `var(--zinc-900)`. Both sides agree this
+  // is an alias relationship; primitive-level checks elsewhere verify the underlying
+  // target consistency. A surface-string comparison would always flag this as a conflict
+  // because the alias shapes differ (CSS var() string vs Figma VARIABLE_ALIAS object).
+  const figmaVars = {
+    'Semantic/foreground': {
+      Light: { type: 'VARIABLE_ALIAS', id: 'VariableID:7:9' },
+      Dark: { type: 'VARIABLE_ALIAS', id: 'VariableID:7:10' },
+    },
+  };
+  const localTheme = {
+    primitives: {},
+    exposure: {},
+    light: { '--foreground': 'var(--zinc-900)' },
+    dark: { '--foreground': 'var(--zinc-50)' },
+  };
+  const violations = categorizeVariables(figmaVars, localTheme);
+  const conflicts = violations.filter(v => v.status === 'conflict');
+  assert.equal(conflicts.length, 0, 'aliases on both sides should not produce a conflict');
+});
+
+test('still flags a real conflict when one side aliases and the other is a literal that does not match', () => {
+  // Mixed alias-vs-literal case: code points at a CSS alias; figma is a literal.
+  // We can't cheaply resolve the alias chain here, so leave this as a conflict —
+  // accurate when the literal differs from any plausible resolution, false-positive
+  // when the resolved alias would have matched. The both-sides-aliased fast path
+  // above is the common case we care about; mixed-mode resolution is a future
+  // enhancement once the SKILL emits resolved figma values alongside the raw map.
+  const figmaVars = {
+    'Semantic/foreground': { Light: '#171717', Dark: '#ededed' },
+  };
+  const localTheme = {
+    primitives: {},
+    exposure: {},
+    light: { '--foreground': 'var(--zinc-900)' },
+    dark: { '--foreground': 'var(--zinc-50)' },
+  };
+  const violations = categorizeVariables(figmaVars, localTheme);
+  const conflicts = violations.filter(v => v.status === 'conflict');
+  assert.ok(conflicts.length > 0, 'mixed alias-vs-literal still flags (no resolution yet)');
+});
