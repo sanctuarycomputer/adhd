@@ -1,9 +1,17 @@
 'use strict';
 
+function pathSegments(componentPath) {
+  // Strip /index.tsx or .tsx, then split into meaningful segments.
+  return componentPath
+    .replace(/\\/g, '/')
+    .replace(/\.tsx?$/, '')
+    .replace(/\/index$/, '')
+    .split('/')
+    .filter(Boolean);
+}
+
 function baseSlug(componentPath) {
-  // Strip /index.tsx or .tsx; take the last meaningful segment.
-  let p = componentPath.replace(/\\/g, '/').replace(/\.tsx?$/, '').replace(/\/index$/, '');
-  const segs = p.split('/').filter(Boolean);
+  const segs = pathSegments(componentPath);
   return (segs[segs.length - 1] || '').toLowerCase();
 }
 
@@ -20,7 +28,7 @@ function slugMap(paths) {
   // Pass 3: resolve collisions by prepending the parent dir
   for (const t of tentative) {
     if (counts[t.slug] === 1) continue;
-    const segs = t.path.replace(/\\/g, '/').replace(/\.tsx?$/, '').replace(/\/index$/, '').split('/').filter(Boolean);
+    const segs = pathSegments(t.path);
     // Prepend one level of parent until unique
     let depth = 2;
     while (depth <= segs.length) {
