@@ -37,9 +37,11 @@ claude plugin install figma@claude-plugins-official
 
 In your consumer repo, run `/adhd:config`. The wizard walks through:
 
-1. Domains to sync (default: all five — colors, spacing, typography, radius, shadow)
-2. Figma file URL + reachability test via the Figma MCP
+1. Figma file URL + reachability test via the Figma MCP
+2. Naming convention (kebab-case is the default)
 3. CSS entry path auto-detect (`app/globals.css` or `src/app/globals.css`)
+
+ADHD always syncs every supported token domain (colors, spacing, typography, radius, shadow, and any future additions). No per-domain opt-out — the design system is treated as a whole.
 
 It produces `adhd.config.ts` at the repo root:
 
@@ -48,7 +50,7 @@ const config = {
   figma: {
     url: "https://www.figma.com/design/<KEY>/<NAME>",
   },
-  // optional: domains: [...],
+  // optional: naming: "kebab-case" | "PascalCase" | "camelCase" | false,
   // optional: cssEntry: "src/app/globals.css",
 };
 
