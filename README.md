@@ -9,29 +9,33 @@ Plugin source lives at the repo root (`plugins/`, `docs/`, `scripts/`, etc.). Th
 
 ## ADHD Plugin — Install
 
+ADHD requires the **official Figma plugin** from the Claude Code marketplace for every command — it's how every skill talks to Figma. Install it first:
+
+```
+claude plugin install figma@claude-plugins-official
+```
+
+Then install ADHD itself:
+
 ```
 /plugin marketplace add /absolute/path/to/this/repo
 /plugin install adhd@adhd-reference
 ```
 
-Both commands are persistent — Claude Code remembers the marketplace and the enabled plugin across sessions. Run them once per machine.
+All three commands are persistent — Claude Code remembers the marketplaces and the enabled plugins across sessions. Run them once per machine.
 
 After install, six slash commands are available:
 
 | Command | Args | Direction | What it does |
 |---|---|---|---|
-| `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts` |
+| `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
 | `/adhd:lint` | `[<figma-url>]` | read-only | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices |
 | `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
 
-`/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:lint`, and `/adhd:push-component` all require the official Figma plugin — install it with:
-
-```
-claude plugin install figma@claude-plugins-official
-```
+Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
 
 ## ADHD Plugin — Use in your repo
 

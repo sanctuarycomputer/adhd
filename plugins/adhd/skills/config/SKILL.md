@@ -1,7 +1,7 @@
 ---
 description: "Run the ADHD config wizard. Walks through producing or repairing adhd.config.ts: Figma URL (with reachability test), naming convention, and CSS entry path auto-detect. ADHD always syncs every domain we support — the wizard no longer asks the user to pick."
 disable-model-invocation: true
-allowed-tools: Read Edit Write Bash AskUserQuestion mcp__figma__get_metadata WebFetch
+allowed-tools: Read Edit Write Bash AskUserQuestion mcp__plugin_figma_figma__whoami mcp__plugin_figma_figma__get_metadata WebFetch
 ---
 
 # ADHD Config
@@ -52,6 +52,41 @@ For Branch A, extract these fields with targeted regex (the file is a plain Type
 
 Pass these forward as defaults for Phases 1, 2, and 3.
 
+## Phase 0.5: Verify the official Figma plugin is installed and authenticated
+
+ADHD requires the `figma@claude-plugins-official` Claude Code plugin — every other skill (`/adhd:lint`, `/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:push-component`, `/adhd:pull-component`) drives Figma exclusively through it via `mcp__plugin_figma_figma__*`. This phase verifies it's installed and authenticated up front, so users hit setup errors here (when they can act on them) rather than mid-pipeline.
+
+Call `mcp__plugin_figma_figma__whoami`. It's read-only and returns the authenticated Figma user's identity.
+
+Three outcomes:
+
+- **Success** (returns user info): print `✓ Figma plugin connected as <user-handle>.` and continue to Phase 1.
+
+- **Tool unavailable / plugin not installed** (the tool errors out with "not registered", "no MCP server", or similar): abort with this exact message:
+
+  ```
+  ✗ The official Figma plugin isn't installed. ADHD uses it for every Figma operation.
+
+  Install it with:
+
+    claude plugin install figma@claude-plugins-official
+
+  Then re-run /adhd:config.
+  ```
+
+- **Authentication error** (tool exists but reports not authenticated): abort with this exact message:
+
+  ```
+  ✗ The Figma plugin is installed but not authenticated.
+
+  Follow Figma's auth flow per the plugin's documentation
+  (typically: open the plugin in Claude Code and complete the OAuth prompt).
+
+  Then re-run /adhd:config.
+  ```
+
+Do NOT continue to Phase 1 unless `whoami` succeeded. Authentication failures and missing-plugin failures are both setup-blocking conditions; the wizard cannot validate the Figma URL (Phase 1) without the plugin.
+
 ## Phase 1: Figma URL + reachability
 
 > **Tool note:** `AskUserQuestion` does not support free-text input. The URL itself must be pasted into chat. When an existing URL is available from Phase 0, this phase uses `AskUserQuestion` first (keep / replace / abort), and only drops to chat if the user picks "replace".
@@ -94,9 +129,9 @@ That doesn't look like a Figma file URL. Expected format:
 
 Then re-issue the chat prompt from Step 2 and wait for the user's next message.
 
-**Validation step 2 — reachability.** Extract the file key — it's the path segment immediately after `/design/`. Call `mcp__figma__get_metadata` with that file key. Three failure cases:
+**Validation step 2 — reachability.** Extract the file key — it's the path segment immediately after `/design/`. Call `mcp__plugin_figma_figma__get_metadata` with that file key. Three failure cases:
 
-- **Authentication error** (the MCP returns "not authenticated" or similar): abort with `Figma MCP is not authenticated. Run the Figma MCP auth flow per Figma's docs, then re-run /adhd:config.` Do NOT save the URL.
+- **Authentication error** (the MCP returns "not authenticated" or similar): this should have been caught in Phase 0.5; if it happens here, the plugin lost its auth mid-wizard. Abort with `Figma plugin lost authentication. Re-authenticate via the plugin, then re-run /adhd:config.` Do NOT save the URL.
 - **404 / not found:** print `Cannot reach the Figma file at that URL. Verify the URL is correct and that you have access.` Then re-issue the chat prompt from Step 2.
 - **Other error** (network, timeout): print the error and re-issue the chat prompt from Step 2.
 
@@ -230,11 +265,14 @@ If running on a healthy config that didn't change, print `Config unchanged.` ins
 ### "Looks like a Figma PAT is committed to adhd.config.ts"
 The preflight scan found a string that looks like a Figma personal access token in your config. Tokens never go in `adhd.config.ts` (it's tracked in git). Move the token to `.env.local` (gitignored) or your shell rc, then re-run.
 
-### "Figma MCP is not authenticated"
-The Figma MCP needs to be authenticated for the wizard to test reachability. Run the Figma MCP auth flow per Figma MCP documentation, then retry.
+### "The official Figma plugin isn't installed"
+ADHD drives Figma exclusively through the `figma@claude-plugins-official` Claude Code plugin. Install it with `claude plugin install figma@claude-plugins-official`, then re-run `/adhd:config`.
+
+### "The Figma plugin is installed but not authenticated"
+The plugin is registered but `whoami` returned an auth error. Complete the plugin's OAuth flow (open it in Claude Code; follow the prompt), then re-run `/adhd:config`.
 
 ### "Cannot reach the Figma file"
-The URL is well-formed but Figma returned 404 or no metadata. Confirm the URL is correct (copy from your browser's address bar), and that your authenticated MCP user has access to the file.
+The URL is well-formed but Figma returned 404 or no metadata. Confirm the URL is correct (copy from your browser's address bar), and that your authenticated plugin user has access to the file.
 
 ## Reference: adhd.config.ts schema
 
