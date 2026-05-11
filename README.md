@@ -24,7 +24,7 @@ Then install ADHD itself:
 
 All three commands are persistent — Claude Code remembers the marketplaces and the enabled plugins across sessions. Run them once per machine.
 
-After install, six slash commands are available:
+After install, seven slash commands are available:
 
 | Command | Args | Direction | What it does |
 |---|---|---|---|
@@ -34,6 +34,7 @@ After install, six slash commands are available:
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
+| `/adhd:install-design-system-docs-route` | — | install | One-shot installer for a live, self-generating design-system docs route in your Next.js consumer app. Reads adhd.config.ts + globals.css at request time. Excluded from production builds by default. |
 
 Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
 
@@ -109,6 +110,37 @@ The skill parses the component's TypeScript prop unions, generates a temp previe
 ```
 
 The skill reads the Figma Component Set, diffs it against the React file's `Record<Union, string>` lookup tables, prompts on each divergence, and rewrites only those tables (plus union type members). Function body, JSX, hooks, handlers, and imports are never modified.
+
+### Design system docs route
+
+Run once in your consumer repo:
+
+```
+/adhd:install-design-system-docs-route
+```
+
+This installs a live, self-generating documentation page that reads your
+`adhd.config.ts` and `globals.css` at request time. The default URL is
+`/-docs` (the hyphen prefix telegraphs "internal"), and files live under a
+Next.js route group at `app/(design-system)/-docs/`. The page shows:
+
+- Token catalog: every color / spacing / typography / radius / shadow in your
+  Tailwind v4 `@theme` block, rendered as visual samples.
+- Component pages: each component from `adhd.config.ts`'s `components.*` map
+  gets its own route with URL-driven prop toggles.
+
+By default the route is excluded from production builds via Next.js's
+`pageExtensions` trick — files use the `.design-system.tsx` extension and
+the production build literally doesn't see them. You can opt out at install
+time if you'd rather ship the route (it still has `<meta name="robots"
+content="noindex, nofollow" />` either way).
+
+Re-run the installer over time to pick up improved templates. Files you've
+customized — by removing the `// design-system-docs-route` marker comment —
+are left alone.
+
+You can also trigger the install at the end of `/adhd:config` if you're
+setting up ADHD for the first time.
 
 ### Figma file structure
 
