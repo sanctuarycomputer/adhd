@@ -183,6 +183,71 @@ would land in your code's lookup tables and drift on the next push.
 
 If BOTH STRUCT011 AND variable-binding errors are present, surface STRUCT011 first (it's the more fundamental fix — bind-errors might be tolerable with `--allow-unbound`, but bad names always need fixing first).
 
+## Phase 2.7: Opportunistic variable discovery
+
+Once preflight passes (no STRUCT011, no unbound errors or escape engaged), check the lint engine's variable mismatches in `/tmp/adhd-pull-component/stdout.json`. The categorizer reports two interesting statuses for our purpose:
+
+- **`status: "missing"`** — Figma has the variable, code's `globals.css` doesn't. New to the design system.
+- **`status: "conflict"`** — both sides have the variable but values disagree. NOT touched by pull-component; this is `/adhd:pull-design-system`'s job.
+
+Split missing further by the categorizer's `mode` field:
+
+- `mode === undefined` → **primitive**. Auto-addable: a single `@theme` entry.
+- `mode === "light" | "dark"` → **semantic with modes**. Needs coordinated `:root`, `.dark`, and `@theme inline` edits — too much surface to do as a side-effect of pull-component. Surfaced in the prompt with a "run /adhd:pull-design-system for these" note.
+
+If `missingPrimitives.length === 0 && missingSemantics.length === 0 && conflicts.length === 0`, skip this phase entirely.
+
+Otherwise, build a single `AskUserQuestion` prompt:
+
+```
+Found new variables referenced by this frame:
+
+Primitives (add to @theme):
+  color/brand/600     #5e3aee
+  radius/lg           12px
+  shadow/popover      0 4px 12px rgba(0,0,0,.08)
+
+[if missingSemantics > 0]
+Semantic tokens with light/dark modes (not auto-addable):
+  color/text/primary  (light: #111, dark: #fafafa)
+  color/surface       (light: #fff, dark: #0a0a0a)
+Run /adhd:pull-design-system to add these — they need coordinated
+`:root`, `.dark`, and `@theme inline` edits.
+
+[if conflicts > 0]
+Variables with value mismatches (existing in code, different in Figma):
+  color/brand/500     code=#5e3aee  figma=#6a4cf2
+Run /adhd:pull-design-system to resolve.
+
+Options:
+  [Yes — add the <N> primitives and continue]
+  [No — continue without adding (component pull may land raw values)]
+  [Cancel — abort, I'll run /adhd:pull-design-system first]
+```
+
+On **Yes**: build an actions array for each primitive and invoke `applyToCss` (the helper `pull-design-system` already uses for CSS edits). Save under `/tmp/adhd-pull-component/new-globals.css`, then write to the configured `globals.css` path:
+
+```bash
+node -e '
+  const fs = require("fs");
+  const { applyToCss } = require("plugins/adhd/lib/design-system/code-writer.js");
+  const cssPath = process.argv[1];
+  const css = fs.readFileSync(cssPath, "utf8");
+  const actions = JSON.parse(process.argv[2]);
+  fs.writeFileSync(cssPath, applyToCss(css, actions));
+' "<globals.css path>" "$ACTIONS_JSON"
+```
+
+Where each action is shaped `{ kind: "set-primitive", cssVar: "--" + token.replace(/\//g, "-"), value: <figma-value> }`. The token comes from each missing entry's `token` field (already collection-stripped).
+
+Print a confirmation: `Added <N> primitive(s) to globals.css: <comma-separated list>`. Then continue with Phase 3.
+
+On **No**: continue without writing. The component pull proceeds; un-tracked variables may land as raw values or `// adhd:off-system` markers in the lookup tables.
+
+On **Cancel**: abort with `Run /adhd:pull-design-system first to sync the design system, then re-run /adhd:pull-component.`
+
+Skip this phase if conflicts exist BUT no missing — there's nothing additive to do, just print: `Note: <N> variable value(s) differ between Figma and code. Run /adhd:pull-design-system to reconcile.` Then continue (conflicts don't block pull-component v1; the pull works with code's value, drift is reported in the final report).
+
 ## Phase 3: Read both sides
 
 **React side (update mode only):** use `Read` on `<react-path>` (from Phase 2). Identify:
