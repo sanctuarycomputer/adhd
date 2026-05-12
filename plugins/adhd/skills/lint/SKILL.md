@@ -22,6 +22,14 @@ Read `adhd.config.ts` at the repo root. If it doesn't exist, abort with: "Run /a
 
 Extract `figma.url` (required) and `naming` (optional, defaults to `kebab-case`). Extract the file key from `figma.url` — the segment after `/design/`.
 
+## Phase 1.5: Validate flag combinations
+
+Before anything else, scan `$ARGUMENTS` for incompatible flag pairs and abort immediately if any are present:
+
+- **`--fix` + `--dry-run` →** abort with: "`--fix` and `--dry-run` are mutually exclusive: `--fix` applies consolidations; `--dry-run` previews without changes. Drop one. (Note: `/adhd:lint` doesn't have a `--dry-run` mode of its own — the per-candidate `AskUserQuestion` in Phase 8 already gives you preview-then-approve. The `--dry-run` flag belongs to `/adhd:push-tokens` and `/adhd:pull-tokens`.)"
+
+This guard exists because designers who've seen `--dry-run` work on push/pull-tokens may reflexively try the same flag combination on lint. Failing loudly is safer than silently picking one interpretation.
+
 ## Phase 2: Resolve target
 
 Branch on `$ARGUMENTS`. The arguments can include a URL plus flags (`--annotate`, `--fix`) in any order; pull flags out first, then look at what remains.
