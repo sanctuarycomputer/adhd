@@ -1,13 +1,15 @@
 ---
-description: "Push the local design system (globals.css variables + named styles) into the configured Figma file. Two-way diff with per-attribute conflict prompts; additive (never deletes from Figma). Reads adhd.config.ts at the repo root."
+description: "Push the local design tokens (globals.css variables + named styles) into the configured Figma file. Two-way diff with per-attribute conflict prompts; additive (never deletes from Figma). Reads adhd.config.ts at the repo root. Pass --dry-run to preview without writing."
 disable-model-invocation: true
-argument-hint: ""
+argument-hint: "[--dry-run]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
-# ADHD Push Design System
+# ADHD Push Tokens
 
 Pushes the codebase's design tokens (variables + named styles) into the configured Figma file. Compares both sides; for each conflicting variable, prompts the user; for variables that exist only in code, creates them in Figma; for variables that exist only in Figma, leaves them alone (additive policy).
+
+Pass `--dry-run` to see exactly what would be added or overwritten without making any changes — no prompts, no writes, no MCP traffic beyond the initial extract.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-push-pull-design-system.md`
 
@@ -48,6 +50,20 @@ Read `/tmp/adhd-push/diff.json`. The diff has four arrays: `same`, `conflict`, `
 
 If `conflict.length === 0` and `codeOnly.length === 0`, print "Figma is already in sync with code. No changes." and exit 0.
 
+## Phase 3b: Dry run (only if `--dry-run` was passed)
+
+If the user invoked `/adhd:push-tokens --dry-run`, print the preview from the comparator and exit BEFORE the prompt loop. The dry run is a pure discovery tool — no `AskUserQuestion`, no writes, no MCP traffic beyond Phase 2's extract:
+
+```bash
+node plugins/adhd/lib/design-system/cli.js preview \
+  --diff /tmp/adhd-push/diff.json \
+  --direction push
+```
+
+The preview lists every variable that would be added to Figma (one row per mode), every variable whose code/Figma values differ (showing both — the dry run intentionally doesn't pre-resolve in favor of either side), and the count of Figma-only variables that would stay untouched per the additive policy. Echo the output verbatim to the user, then print a one-line summary: `Dry run complete. Re-run without --dry-run to apply (you'll be prompted on each conflict).` Exit 0.
+
+If `--dry-run` was NOT passed, skip this phase and continue to Phase 4.
+
 ## Phase 4: Resolve conflicts via AskUserQuestion
 
 For each conflict in `diff.conflict`, use `AskUserQuestion` with these four options:
@@ -82,7 +98,7 @@ Re-run the extract script via `use_figma` (same call as Phase 2). Save the respo
 diff /tmp/adhd-push/figma.json /tmp/adhd-push/figma-recheck.json
 ```
 
-If they differ, abort with: "Figma drifted during this run. Re-run /adhd:push-design-system to see fresh conflicts." Exit 1.
+If they differ, abort with: "Figma drifted during this run. Re-run /adhd:push-tokens to see fresh conflicts." Exit 1.
 
 ## Phase 7: Apply actions to Figma
 
@@ -108,5 +124,5 @@ Print:
 |---|---|
 | `adhd.config.ts not found` | Run `/adhd:config`. |
 | `globals.css not found` | Pass `cssEntry` in adhd.config.ts or place the file at `app/globals.css`. |
-| `Figma drifted during this run` | Someone changed Figma while you were resolving conflicts. Re-run `/adhd:push-design-system`. |
+| `Figma drifted during this run` | Someone changed Figma while you were resolving conflicts. Re-run `/adhd:push-tokens`. |
 | `Figma MCP unreachable` | Verify the figma plugin is installed: `claude plugin install figma@claude-plugins-official`. |

@@ -33,7 +33,7 @@ Pass these forward as defaults for Phases 1, 2, and 3.
 
 ## Phase 0.5: Verify the official Figma plugin is installed and authenticated
 
-ADHD requires the `figma@claude-plugins-official` Claude Code plugin — every other skill (`/adhd:lint`, `/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:push-component`, `/adhd:pull-component`) drives Figma exclusively through it via `mcp__plugin_figma_figma__*`. This phase verifies it's installed and authenticated up front, so users hit setup errors here (when they can act on them) rather than mid-pipeline.
+ADHD requires the `figma@claude-plugins-official` Claude Code plugin — every other skill (`/adhd:lint`, `/adhd:push-tokens`, `/adhd:pull-tokens`, `/adhd:push-component`, `/adhd:pull-component`) drives Figma exclusively through it via `mcp__plugin_figma_figma__*`. This phase verifies it's installed and authenticated up front, so users hit setup errors here (when they can act on them) rather than mid-pipeline.
 
 Call `mcp__plugin_figma_figma__whoami`. It's read-only and returns the authenticated Figma user's identity.
 

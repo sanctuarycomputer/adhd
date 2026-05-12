@@ -72,7 +72,7 @@ test('missing variables include a suggested-fix hint', () => {
   );
   const m = violations.find(v => v.status === 'missing');
   assert.ok(m);
-  assert.equal(m.hint, 'Run /adhd:pull-design-system to import this token.');
+  assert.equal(m.hint, 'Run /adhd:pull-tokens to import this token.');
 });
 
 test('does NOT flag a conflict when both sides are aliases (semantic→primitive)', () => {

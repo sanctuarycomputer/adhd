@@ -49,7 +49,7 @@ function compareOne(figmaPath, figmaValue, theme, mode) {
       local: null,
       mode,
       domain,
-      hint: 'Run /adhd:pull-design-system to import this token.',
+      hint: 'Run /adhd:pull-tokens to import this token.',
     };
   }
   // Both sides agree this is an alias relationship — no surface-value comparison

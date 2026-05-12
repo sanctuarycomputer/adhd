@@ -69,3 +69,76 @@ test('apply mode produces actions list', () => {
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, 'create-variable');
 });
+
+test('preview (push): lists adds + conflicts + figma-only count without writing', () => {
+  // Verifies the dry-run formatter for /adhd:push-tokens --dry-run:
+  // every code-only token shows as an ADD line per mode, every conflict
+  // shows BOTH values (we don't pre-resolve in dry-run), figma-only
+  // tokens are surfaced as a count only.
+  const diff = tmp('diff.json', {
+    same: [],
+    conflict: [
+      { path: 'color/brand-500', mode: 'default', domain: 'color', code: '#aaa', figma: '#bbb' },
+      { path: 'spacing/4',       mode: 'default', domain: 'spacing', code: '1rem',  figma: '0.875rem' },
+    ],
+    codeOnly: [
+      { domain: 'color', path: 'gold/100', values: { default: '#faf0c5' } },
+      { domain: 'color', path: 'surface',  values: { light: '#fff', dark: '#0a0a0a' } },
+    ],
+    figmaOnly: [
+      { domain: 'color', path: 'legacy/old', values: { default: '#123456' } },
+    ],
+  });
+
+  const result = spawnSync('node', [CLI, 'preview', '--diff', diff, '--direction', 'push'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+
+  assert.match(result.stdout, /DRY RUN — code → Figma/);
+  // Each codeOnly token expanded per mode → 1 + 2 = 3 ADD rows
+  assert.match(result.stdout, /Would add to Figma \(3 entries\)/);
+  assert.match(result.stdout, /\+ gold\/100/);
+  assert.match(result.stdout, /\+ surface[^\n]+light[^\n]+#fff/);
+  assert.match(result.stdout, /\+ surface[^\n]+dark[^\n]+#0a0a0a/);
+  // Conflict rows show both sides
+  assert.match(result.stdout, /Would prompt for 2 conflicts/);
+  assert.match(result.stdout, /! color\/brand-500[^\n]+code=#aaa[^\n]+figma=#bbb/);
+  // Figma-only count
+  assert.match(result.stdout, /Figma-only \(left untouched per additive policy\): 1 entry/);
+  // Footer
+  assert.match(result.stdout, /To apply: re-run without --dry-run/);
+});
+
+test('preview (pull): flips the direction labels', () => {
+  // Symmetric for pull — figmaOnly becomes ADD, codeOnly becomes the
+  // untouched count.
+  const diff = tmp('diff.json', {
+    same: [], conflict: [],
+    codeOnly: [
+      { domain: 'color', path: 'kept-in-code', values: { default: '#aaa' } },
+    ],
+    figmaOnly: [
+      { domain: 'color', path: 'new-from-figma', values: { default: '#bbb' } },
+    ],
+  });
+
+  const result = spawnSync('node', [CLI, 'preview', '--diff', diff, '--direction', 'pull'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+
+  assert.match(result.stdout, /DRY RUN — figma → code/);
+  assert.match(result.stdout, /Would add to code \(1 entry\)/);
+  assert.match(result.stdout, /\+ new-from-figma/);
+  assert.match(result.stdout, /code-only \(left untouched per additive policy\): 1 entry/);
+});
+
+test('preview: errors on missing --diff or invalid --direction', () => {
+  // Sanity: the subcommand must validate its inputs.
+  let r = spawnSync('node', [CLI, 'preview', '--direction', 'push'], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+
+  const diff = tmp('diff.json', { same: [], conflict: [], codeOnly: [], figmaOnly: [] });
+  r = spawnSync('node', [CLI, 'preview', '--diff', diff], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+
+  r = spawnSync('node', [CLI, 'preview', '--diff', diff, '--direction', 'bogus'], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0);
+});

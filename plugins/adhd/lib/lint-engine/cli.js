@@ -24,7 +24,7 @@ const { parseTheme } = require('./theme-parser');
 // Tailwind v4 ships a full default @theme: --color-white, --color-black,
 // --color-red-500, --spacing, the --text-* / --leading-* scales, etc.
 // `lib/design-system/tailwind-defaults.css` carries the canonical copy
-// (already used by push/pull-design-system via parseCodeDesignSystem).
+// (already used by push/pull-tokens via parseCodeDesignSystem).
 // We merge those defaults into the user's parsed primitives BEFORE the
 // variable comparator runs — otherwise a Figma `Color/white` variable
 // would surface as "missing in code" even though Tailwind covers it,

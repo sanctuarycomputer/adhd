@@ -30,8 +30,8 @@ After install, nine slash commands are available:
 |---|---|---|---|
 | `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
 | `/adhd:lint` | `[<figma-url>] [--annotate]` | read-only by default | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices. With `--annotate`, also writes Figma annotations on each offending node in a "lint" category. |
-| `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
-| `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
+| `/adhd:push-tokens` | `[--dry-run]` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP. `--dry-run` previews what would be added or overwritten without writing. |
+| `/adhd:pull-tokens` | `[--dry-run]` | Figma → code | Pulls Figma variables + named styles into globals.css. `--dry-run` previews without writing. |
 | `/adhd:push-component` | `<path> [--max-variants <n>] [--annotate]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. `--annotate` annotates preflight violations on Figma nodes. |
 | `/adhd:push-all-components` | `[--continue-on-error] [--max-variants <n>] [--annotate]` | code → Figma | Bulk version of `push-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. |
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound] [--annotate]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched). `--annotate` annotates preflight violations on Figma nodes. |
@@ -69,8 +69,10 @@ Then:
 ```
 /adhd:lint                                       # validate the whole Figma file
 /adhd:lint https://figma.com/design/<KEY>?node-id=12-2   # validate a single page/frame/component
-/adhd:push-design-system                         # apply (code → Figma; will prompt before writing)
-/adhd:pull-design-system                         # apply (Figma → code; will prompt before writing)
+/adhd:push-tokens                                # apply (code → Figma; will prompt before writing)
+/adhd:push-tokens --dry-run                      # preview what would change without writing
+/adhd:pull-tokens                                # apply (Figma → code; will prompt before writing)
+/adhd:pull-tokens --dry-run                      # preview what would change without writing
 /adhd:push-component app/components/avatar/index.tsx     # push a React component to Figma
 ```
 
@@ -210,7 +212,7 @@ cd example
 ```
 .
 ├── plugins/adhd/                 # The plugin source
-│   ├── skills/                   # config, lint, push-design-system, pull-design-system
+│   ├── skills/                   # config, lint, push-tokens, pull-tokens
 │   ├── lib/                      # zero-deps Node libraries (lint-engine, design-system)
 │   └── .claude-plugin/           # plugin manifest
 ├── docs/superpowers/

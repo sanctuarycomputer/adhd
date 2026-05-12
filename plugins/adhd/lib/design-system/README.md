@@ -1,7 +1,7 @@
 # design-system
 
-Pure-JS engine that powers `/adhd:push-design-system` and
-`/adhd:pull-design-system`. Parses both sides (globals.css and Figma
+Pure-JS engine that powers `/adhd:push-tokens` and
+`/adhd:pull-tokens`. Parses both sides (globals.css and Figma
 variables) into a canonical `DesignSystem` shape, compares them, and
 emits conflict reports / write actions.
 

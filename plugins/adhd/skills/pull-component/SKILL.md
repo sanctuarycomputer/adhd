@@ -143,7 +143,7 @@ Check whether the escape is active:
 These need to be bound to design-system variables before we can pull. The designer can:
   1. Bind them in Figma (right-click the layer → "Apply variable")
   2. Or create new variables if these are new design tokens, then run
-     /adhd:pull-design-system first, then re-run /adhd:pull-component
+     /adhd:pull-tokens first, then re-run /adhd:pull-component
 
 We don't generate arbitrary Tailwind classes like text-[20px] or h-[80px] in your
 code — those would leak the design system the moment they shipped.
@@ -189,12 +189,12 @@ If BOTH STRUCT011 AND variable-binding errors are present, surface STRUCT011 fir
 Once preflight passes (no STRUCT011, no unbound errors or escape engaged), check the lint engine's variable mismatches in `/tmp/adhd-pull-component/stdout.json`. The categorizer reports two interesting statuses for our purpose:
 
 - **`status: "missing"`** — Figma has the variable, code's `globals.css` doesn't. New to the design system. (The lint engine merges Tailwind v4's default theme into the comparison BEFORE evaluating "missing" — so vars like `Color/white` that Tailwind already provides won't surface here. Never propose adding something to globals.css that Tailwind covers implicitly.)
-- **`status: "conflict"`** — both sides have the variable but values disagree. NOT touched by pull-component; this is `/adhd:pull-design-system`'s job.
+- **`status: "conflict"`** — both sides have the variable but values disagree. NOT touched by pull-component; this is `/adhd:pull-tokens`'s job.
 
 Split missing further by the categorizer's `mode` field:
 
 - `mode === undefined` → **primitive**. Auto-addable: a single `@theme` entry.
-- `mode === "light" | "dark"` → **semantic with modes**. Needs coordinated `:root`, `.dark`, and `@theme inline` edits — too much surface to do as a side-effect of pull-component. Surfaced in the prompt with a "run /adhd:pull-design-system for these" note.
+- `mode === "light" | "dark"` → **semantic with modes**. Needs coordinated `:root`, `.dark`, and `@theme inline` edits — too much surface to do as a side-effect of pull-component. Surfaced in the prompt with a "run /adhd:pull-tokens for these" note.
 
 If `missingPrimitives.length === 0 && missingSemantics.length === 0 && conflicts.length === 0`, skip this phase entirely.
 
@@ -212,21 +212,21 @@ Primitives (add to @theme):
 Semantic tokens with light/dark modes (not auto-addable):
   color/text/primary  (light: #111, dark: #fafafa)
   color/surface       (light: #fff, dark: #0a0a0a)
-Run /adhd:pull-design-system to add these — they need coordinated
+Run /adhd:pull-tokens to add these — they need coordinated
 `:root`, `.dark`, and `@theme inline` edits.
 
 [if conflicts > 0]
 Variables with value mismatches (existing in code, different in Figma):
   color/brand/500     code=#5e3aee  figma=#6a4cf2
-Run /adhd:pull-design-system to resolve.
+Run /adhd:pull-tokens to resolve.
 
 Options:
   [Yes — add the <N> primitives and continue]
   [No — continue without adding (component pull may land raw values)]
-  [Cancel — abort, I'll run /adhd:pull-design-system first]
+  [Cancel — abort, I'll run /adhd:pull-tokens first]
 ```
 
-On **Yes**: build an actions array for each primitive and invoke `applyToCss` (the helper `pull-design-system` already uses for CSS edits). Save under `/tmp/adhd-pull-component/new-globals.css`, then write to the configured `globals.css` path:
+On **Yes**: build an actions array for each primitive and invoke `applyToCss` (the helper `pull-tokens` already uses for CSS edits). Save under `/tmp/adhd-pull-component/new-globals.css`, then write to the configured `globals.css` path:
 
 ```bash
 node -e '
@@ -245,9 +245,9 @@ Print a confirmation: `Added <N> primitive(s) to globals.css: <comma-separated l
 
 On **No**: continue without writing. The component pull proceeds; un-tracked variables may land as raw values or `// adhd:off-system` markers in the lookup tables.
 
-On **Cancel**: abort with `Run /adhd:pull-design-system first to sync the design system, then re-run /adhd:pull-component.`
+On **Cancel**: abort with `Run /adhd:pull-tokens first to sync the design system, then re-run /adhd:pull-component.`
 
-Skip this phase if conflicts exist BUT no missing — there's nothing additive to do, just print: `Note: <N> variable value(s) differ between Figma and code. Run /adhd:pull-design-system to reconcile.` Then continue (conflicts don't block pull-component v1; the pull works with code's value, drift is reported in the final report).
+Skip this phase if conflicts exist BUT no missing — there's nothing additive to do, just print: `Note: <N> variable value(s) differ between Figma and code. Run /adhd:pull-tokens to reconcile.` Then continue (conflicts don't block pull-component v1; the pull works with code's value, drift is reported in the final report).
 
 ## Phase 3: Read both sides
 
