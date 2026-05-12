@@ -166,17 +166,20 @@ test('cli with structure errors but no variable issues exits 1', () => {
   assert.ok(summary.errors >= 1);
 });
 
-test('STRUCT011: emits one concrete rename target per variable (mixed case + domain issues)', () => {
-  // Real-world scenario from the user's reactor file: a bundled "Type +
-  // Effects" collection that conflates typography sizes, line-heights, and
-  // effects. Each variable gets a single target, not two contradictory
-  // hints. The designer can act on each line independently.
+test('STRUCT011: groups renames by target collection + calls the action "Move to"', () => {
+  // Real-world scenario from the user's reactor file: a "Type + Effects"
+  // collection bundling typography sizes, line-heights, and opacity. The
+  // message groups by target collection so the designer sees the pattern
+  // ("create Text + Leading, move things into them") instead of N
+  // disconnected lines.
   const varDefs = tmp('vars.json', {
-    'Type + Effects/Font-Size/Body':           '16px',
+    'Type + Effects/Font-Size/Body':             '16px',
+    'Type + Effects/Font-Size/Body LG':          '20px',
     'Type + Effects/Line-Height/Line Height 28': '28px',
-    'Type + Effects/Effects/Opacity 100%':     '1',     // no Tailwind v4 mapping
-    'Primitives/color/BrandPrimary':           '#000',  // tier-mode case fix
-    'Color/gold':                              '#c5a572', // already correct
+    'Type + Effects/Line-Height/Letter Space 0': '0',     // ambiguous (leaf hints tracking)
+    'Type + Effects/Effects/Opacity 100%':       '1',     // opacity has no v4 domain
+    'Primitives/color/BrandPrimary':             '#000',  // tier-mode case fix
+    'Color/gold':                                '#c5a572', // already correct
   });
   const ctx = tmp('ctx.json', { id: '5:42', name: 'Logo', type: 'FRAME', layoutMode: 'VERTICAL' });
   const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
@@ -194,20 +197,28 @@ test('STRUCT011: emits one concrete rename target per variable (mixed case + dom
   assert.ok(struct011);
   assert.equal(struct011.severity, 'warning');
   assert.equal(struct011.nodeId, '5:42');
-  // Header counts ALL issues (4 — Color/gold is compliant and doesn't appear).
-  assert.match(struct011.message, /4 variable\(s\) need renaming for Tailwind v4 alignment/);
-  // Unknown-collection + domain-segment-hint → MOVE into domain-named collection
-  assert.match(struct011.message, /Type \+ Effects\/Font-Size\/Body[\s\S]*→ Text\/body/);
-  assert.match(struct011.message, /Type \+ Effects\/Line-Height\/Line Height 28[\s\S]*→ Leading\/line-height-28/);
-  // Tier collection + case-only issue → preserve tier, kebab the leaf
-  assert.match(struct011.message, /Primitives\/color\/BrandPrimary[\s\S]*→ Primitives\/color\/brand-primary/);
-  // Domain-less variable → no-mapping explanation
-  assert.match(struct011.message, /Type \+ Effects\/Effects\/Opacity 100%[\s\S]*⚠ No Tailwind v4 domain/);
+  // Header tone shifted from "renaming" (misleading) to "restructure" — these
+  // are moves, not renames, and the body explains how Figma's Move-To works.
+  assert.match(struct011.message, /variable-naming issue\(s\)\. Suggested restructure/);
+  // Target-collection groups present:
+  assert.match(struct011.message, /Move to "Text" collection \(2 vars\):/);
+  assert.match(struct011.message, /Text\/body/);
+  assert.match(struct011.message, /Text\/body-lg/);
+  assert.match(struct011.message, /Move to "Leading" collection \(1 var\):/);
+  assert.match(struct011.message, /Leading\/line-height-28/);
+  assert.match(struct011.message, /Move to "Primitives" collection \(1 var\):/);
+  // Ambiguity section surfaces both options
+  assert.match(struct011.message, /Ambiguous[\s\S]*Letter Space 0/);
+  assert.match(struct011.message, /Primary: +→ Leading/);
+  assert.match(struct011.message, /Alternate: +→ Tracking/);
+  // No-mapping section has opacity-specific guidance, not the generic list
+  assert.match(struct011.message, /No Tailwind v4 mapping[\s\S]*Opacity 100%[\s\S]*class modifiers/);
+  // Footer explains the Figma mechanic and calls out the rename-vs-move distinction
+  assert.match(struct011.message, /How to apply each move in Figma/);
+  assert.match(struct011.message, /Right-click the source variable → "Move to/);
+  assert.match(struct011.message, /Use Figma's "Move to\.\.\." \(not "Rename"\)/);
   // Already-correct variable doesn't appear
   assert.doesNotMatch(struct011.message, /Color\/gold/);
-  // No leftover from the old format
-  assert.doesNotMatch(struct011.message, /Case \(kebab-case/);
-  assert.doesNotMatch(struct011.message, /did you mean/);
 });
 
 test('STRUCT011: variable case is always kebab-case, regardless of project naming config', () => {

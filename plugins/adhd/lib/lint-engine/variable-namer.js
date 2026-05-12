@@ -247,6 +247,46 @@ const TIER_COLLECTIONS = new Set([
   'primitives', 'semantic', 'tokens', 'base', 'theme',
 ]);
 
+// Leaf-name keywords that hint at a specific Tailwind v4 domain. When the
+// leaf hints at a DIFFERENT domain than the path's primary signal, we
+// surface the ambiguity instead of confidently picking one.
+// Example: "Type + Effects/Line-Height/Letter Space 0" — path says leading
+// (via Line-Height), leaf says letter-spacing (tracking). The variable
+// could be either; the designer has to decide.
+const LEAF_DOMAIN_HINTS = [
+  // The `spac(?:e|ing)` group covers both "letter space" (Figma designers
+  // often write it this way) and "letter spacing" / "letter-spacing" (CSS
+  // form). Anchoring with \b ensures we strip the full phrase on rename
+  // suggestion, not just the prefix — otherwise "Letter Space 0" loses
+  // "letter spac" and we suggest "Tracking/e-0".
+  { pattern: /\bletter[\s\-_]?spac(?:e|ing)\b/i, domain: 'tracking' },
+  { pattern: /\bline[\s\-_]?height\b/i, domain: 'leading'  },
+  { pattern: /\bfont[\s\-_]?size\b/i,   domain: 'text'     },
+  { pattern: /\bfont[\s\-_]?weight\b/i, domain: 'font-weight' },
+  { pattern: /\bfont[\s\-_]?family\b/i, domain: 'font'     },
+];
+
+function leafHint(leaf) {
+  for (const { pattern, domain } of LEAF_DOMAIN_HINTS) {
+    if (pattern.test(leaf)) return domain;
+  }
+  return null;
+}
+
+// Specific concepts Tailwind v4 doesn't expose as a token domain. Detecting
+// them lets the no-mapping message say "opacity is applied via class
+// modifiers" instead of just listing the canonical domain set.
+function detectKnownNonDomain(segments) {
+  const joined = segments.join(' ').toLowerCase();
+  if (/\bopacity\b/.test(joined)) {
+    return {
+      concept: 'opacity',
+      hint: 'Tailwind v4 has no "opacity" domain — opacity is applied via class modifiers (e.g. `bg-white/50`), not stored as variables. Consider deleting this variable if it isn\'t actively consumed by Tailwind utilities.',
+    };
+  }
+  return null;
+}
+
 function titleCaseDomain(d) {
   return d.split('-').map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join('');
 }
@@ -304,15 +344,48 @@ function suggestTargetName(name) {
     }
   }
   if (!targetDomain) {
+    // No path-based domain hint, but check for known non-Tailwind concepts
+    // (like opacity) so we can surface concept-specific guidance instead of
+    // the generic "expected one of: ...".
+    const knownConcept = detectKnownNonDomain(rest);
     return {
       name, kind: 'no-mapping',
-      reason: `No Tailwind v4 domain found in path. Expected one of: ${TAILWIND_DOMAINS.join(', ')}. Consider whether this variable maps to one of those domains, or if it should be removed.`,
+      reason: knownConcept
+        ? knownConcept.hint
+        : `No Tailwind v4 domain found in path. Expected one of: ${TAILWIND_DOMAINS.join(', ')}. Consider whether this variable maps to one of those domains, or if it should be removed.`,
     };
   }
   const collectionTitle = titleCaseDomain(targetDomain);
   const kept = rest.filter((_, i) => i !== domainIndex);
   const kebabRest = kept.map(s => toCase(s, 'kebab-case')).filter(Boolean).join('/');
   const target = kebabRest ? `${collectionTitle}/${kebabRest}` : collectionTitle;
+
+  // Detect ambiguity: the leaf's own keywords hint at a DIFFERENT domain
+  // than the path-derived one. Common case: a letter-spacing variable filed
+  // inside a "Line-Height" folder. Surface both options instead of
+  // confidently picking the wrong target.
+  const leaf = rest[rest.length - 1];
+  const hint = leafHint(leaf);
+  if (hint && hint !== targetDomain) {
+    const altTitle = titleCaseDomain(hint);
+    // Drop the leaf-keyword phrase from the alternate-collection rename so
+    // it doesn't repeat itself. For "Letter Space 0" moved to Tracking,
+    // the rename target inside Tracking should be just "0" — not
+    // "letter-space-0" which would be redundant with the collection name.
+    const stripped = leaf
+      .toLowerCase()
+      .replace(LEAF_DOMAIN_HINTS.find(h => h.domain === hint).pattern, '')
+      .trim();
+    const altLeaf = toCase(stripped, 'kebab-case') || toCase(leaf, 'kebab-case');
+    const keptForAlt = kept.slice(0, -1).map(s => toCase(s, 'kebab-case')).filter(Boolean);
+    const altPath = [...keptForAlt, altLeaf].filter(Boolean).join('/');
+    const alternate = altPath ? `${altTitle}/${altPath}` : altTitle;
+    return {
+      name, kind: 'ambiguous', target, alternate,
+      primaryReason: `path suggests ${targetDomain}`,
+      alternateReason: `leaf "${leaf}" suggests ${hint}`,
+    };
+  }
   return { name, kind: 'rename', target };
 }
 

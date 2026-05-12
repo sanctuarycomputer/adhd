@@ -237,11 +237,34 @@ test('suggestTargetName: bundled collection with domain hint in rest → MOVE to
   });
 });
 
-test('suggestTargetName: bundled collection with no domain hint anywhere → no-mapping', () => {
-  // "Type + Effects/Effects/Opacity 100%" — none of "Type+Effects", "Effects",
-  // or "Opacity 100%" maps to a Tailwind v4 domain. The engine surfaces the
-  // canonical list so the designer picks a destination.
+test('suggestTargetName: opacity-shaped names get a specific concept-aware hint', () => {
+  // Tailwind v4 has no "opacity" domain — opacity is applied via class
+  // modifiers (`bg-white/50`). The no-mapping message reflects that
+  // rather than just listing canonical domains.
   const r = suggestTargetName('Type + Effects/Effects/Opacity 100%');
+  assert.equal(r.kind, 'no-mapping');
+  assert.match(r.reason, /Tailwind v4 has no "opacity" domain/);
+  assert.match(r.reason, /class modifiers/);
+  // Doesn't repeat the generic "Expected one of: ..." list.
+  assert.doesNotMatch(r.reason, /Expected one of: color/);
+});
+
+test('suggestTargetName: leaf hint conflicts with path → ambiguous result', () => {
+  // The user's real case: "Type + Effects/Line-Height/Letter Space 0".
+  // Path says line-height (→ leading), leaf says "Letter Space" (→ tracking).
+  // The variable could be either; surface both options for the designer.
+  const r = suggestTargetName('Type + Effects/Line-Height/Letter Space 0');
+  assert.equal(r.kind, 'ambiguous');
+  assert.equal(r.target, 'Leading/letter-space-0');
+  assert.equal(r.alternate, 'Tracking/0');
+  assert.match(r.primaryReason, /path suggests leading/);
+  assert.match(r.alternateReason, /Letter Space.*suggests tracking/);
+});
+
+test('suggestTargetName: when no domain hint exists AND no opacity → generic no-mapping', () => {
+  // Fallback case for truly unmappable variables. Surfaces the canonical
+  // domain list as a menu.
+  const r = suggestTargetName('Foo/widget/thing');
   assert.equal(r.kind, 'no-mapping');
   assert.match(r.reason, /No Tailwind v4 domain found in path/);
   assert.match(r.reason, /Expected one of: color, spacing, text/);

@@ -158,23 +158,56 @@ function main() {
   if (suggestions.length > 0) {
     const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
     const scopedNodeId = isScoped ? designCtx.id : undefined;
-    const shown = suggestions.slice(0, 10);
-    const lines = shown.map(s => {
-      if (s.kind === 'rename') return `  • ${s.name}\n      → ${s.target}`;
-      if (s.kind === 'no-mapping') return `  • ${s.name}\n      ⚠ ${s.reason}`;
-      return `  • ${s.name}`;
-    });
-    const more = suggestions.length > 10 ? `\n\n  +${suggestions.length - 10} more` : '';
+
+    // Group renames by target collection — the action a designer takes per
+    // group is "create the collection if it doesn't exist, then Move To
+    // these vars into it." Much clearer than a flat list of 6 individually
+    // unrelated-looking rename lines.
+    const renames = suggestions.filter(s => s.kind === 'rename');
+    const ambiguous = suggestions.filter(s => s.kind === 'ambiguous');
+    const noMapping = suggestions.filter(s => s.kind === 'no-mapping');
+    const byTarget = new Map();
+    for (const s of renames) {
+      const collection = s.target.split('/')[0];
+      if (!byTarget.has(collection)) byTarget.set(collection, []);
+      byTarget.get(collection).push(s);
+    }
+    const sortedTargets = [...byTarget.keys()].sort();
+
+    const sections = [];
+    for (const collection of sortedTargets) {
+      const items = byTarget.get(collection);
+      const lines = items.map(s => `  • ${s.name}\n      → ${s.target}`);
+      sections.push(`→ Move to "${collection}" collection (${items.length} var${items.length === 1 ? '' : 's'}):\n${lines.join('\n')}`);
+    }
+    if (ambiguous.length > 0) {
+      const lines = ambiguous.map(s =>
+        `  • ${s.name}\n` +
+        `      ⚠ Ambiguous — ${s.primaryReason}, but ${s.alternateReason}. Pick based on actual usage:\n` +
+        `        Primary:    → ${s.target}\n` +
+        `        Alternate:  → ${s.alternate}`,
+      );
+      sections.push(`⚠ Ambiguous (${ambiguous.length}) — path and leaf disagree on the target domain:\n${lines.join('\n\n')}`);
+    }
+    if (noMapping.length > 0) {
+      const lines = noMapping.map(s => `  • ${s.name}\n      ⚠ ${s.reason}`);
+      sections.push(`⚠ No Tailwind v4 mapping (${noMapping.length}):\n${lines.join('\n\n')}`);
+    }
+
     structureViolations.push({
       rule: 'STRUCT011',
       severity: 'warning',
       nodeId: scopedNodeId,
       nodePath: 'Variables',
       message:
-        `${suggestions.length} variable(s) need renaming for Tailwind v4 alignment:\n\n` +
-        `${lines.join('\n\n')}${more}\n\n` +
-        `For each rename: right-click the variable in Figma → "Rename".\n` +
-        `Tip: you can also create the variable in the suggested collection and point old references at it via aliasing.`,
+        `${suggestions.length} variable-naming issue(s). Suggested restructure:\n\n` +
+        `${sections.join('\n\n')}\n\n` +
+        `How to apply each move in Figma:\n` +
+        `  1. Open the Variables panel; create any missing target collections.\n` +
+        `  2. Right-click the source variable → "Move to..." → pick the target collection. Figma auto-rewires existing references.\n` +
+        `  3. Inside the target, rename to drop redundant path segments (the variable's path within the new collection becomes its full name).\n` +
+        `\n` +
+        `Use Figma's "Move to..." (not "Rename") — Rename only works within the same collection, but most of these are moves across collections.`,
       deepLink: scopedNodeId
         ? 'https://figma.com/design/' + fileKey + '?node-id=' + scopedNodeId.replace(':', '-')
         : args['target-url'],
