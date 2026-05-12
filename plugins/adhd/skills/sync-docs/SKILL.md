@@ -86,17 +86,21 @@ test -e "$TARGET" && echo "EXISTS" || echo "FREE"
 
 If `EXISTS` and Phase 2 didn't already mark this as an existing install: prompt "Path `<TARGET>` already exists but is not an installer artifact. Pick a different route or abort."
 
-## Phase 6: Patch next.config.ts (only when `renderMode !== "everywhere"`)
+## Phase 6: Patch next.config.ts
 
-Skip this phase entirely if `renderMode` is `"everywhere"` — those files use plain `.tsx` and ship to prod, so no `pageExtensions` conditional is needed.
+Always run. The patcher emits up to two blocks depending on `renderMode`:
 
-For the two excluding modes, the patcher generates a different conditional based on `--render-mode`:
+- A `pageExtensions` conditional (skipped when `renderMode` is `"everywhere"` — those files ship to prod as plain `.tsx`, no gate needed).
+- An `outputFileTracingIncludes` entry that ships `globals.css` alongside the tokens-page function bundle (emitted whenever the route is deployed to a serverless runtime — i.e. `vercel-preview` or `everywhere`; not needed for pure `dev-only` since `next dev` runs locally with the project root as `cwd`).
+
+Without tracing, the runtime `fs.readFile` in the tokens page returns `null` on Vercel/serverless deploys (the CSS source isn't bundled with the function by default), and every token domain falls through to the empty state — even though `globals.css` is full of declarations.
 
 ```bash
 node plugins/adhd/lib/sync-docs/cli.js patch-next-config \
   --config "<next.config.path>" \
   --route-url "<routeUrl>" \
-  --render-mode "<dev-only|vercel-preview>"
+  --render-mode "<dev-only|vercel-preview|everywhere>" \
+  --css-entry "<cssEntry>"
 ```
 
 Exit codes:
@@ -106,23 +110,32 @@ Exit codes:
 
 **On exit code 3**, use `AskUserQuestion`: "Your next.config.ts sets pageExtensions to `<existing>`. How do you want to handle it? [Show me the manual patch and continue / Abort]."
 
-Automatic merging is NOT supported in v1. On "Show me the manual patch and continue," print the appropriate block for the chosen `renderMode` and continue with Phase 7:
+Automatic merging is NOT supported in v1. On "Show me the manual patch and continue," print the appropriate block(s) for the chosen `renderMode` and continue with Phase 7. Substitute `<routeUrl>` and `<cssEntry>` in the tracing block:
 
 ```ts
-// renderMode: "dev-only"
+// renderMode: "dev-only" — pageExtensions only (no tracing; runs locally via next dev)
 pageExtensions: process.env.NODE_ENV === 'production'
   ? ['ts', 'tsx']
   : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],
 
-// renderMode: "vercel-preview"
+// renderMode: "vercel-preview" — pageExtensions AND tracing
 pageExtensions:
   process.env.VERCEL_ENV === 'production' ||
   (!process.env.VERCEL && process.env.NODE_ENV === 'production')
     ? ['ts', 'tsx']
     : ['ts', 'tsx', 'design-system.ts', 'design-system.tsx'],
+// adhd:sync-docs — file-tracing for tokens route (so globals.css ships with the serverless function)
+outputFileTracingIncludes: {
+  '<routeUrl>/tokens/[domain]': ['./<cssEntry>'],
+},
+
+// renderMode: "everywhere" — tracing only
+outputFileTracingIncludes: {
+  '<routeUrl>/tokens/[domain]': ['./<cssEntry>'],
+},
 ```
 
-…and tell the user to merge it with their existing `pageExtensions` value by hand. On "Abort," exit with no further changes.
+Tell the user to merge into their existing config by hand. On "Abort," exit with no further changes.
 
 ## Phase 7: Write the page files
 

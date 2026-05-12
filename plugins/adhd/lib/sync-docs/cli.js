@@ -61,15 +61,17 @@ function main() {
   }
 
   if (cmd === 'patch-next-config') {
-    if (!args.config || !args['route-url']) { console.error('Usage: patch-next-config --config <path> --route-url <url> [--render-mode <dev-only|vercel-preview>]'); process.exit(2); }
+    if (!args.config || !args['route-url']) { console.error('Usage: patch-next-config --config <path> --route-url <url> [--render-mode <dev-only|vercel-preview|everywhere>] [--css-entry <path>]'); process.exit(2); }
     const renderMode = args['render-mode'] || 'dev-only';
+    const routeUrl = args['route-url'];
+    const cssEntry = args['css-entry'];
     const src = fs.readFileSync(args.config, 'utf8');
-    const r = patchNextConfig(src, { detectOnly: true });
+    const r = patchNextConfig(src, { detectOnly: true, renderMode, routeUrl, cssEntry });
     if (r && r.conflict) {
       console.error('next.config already sets pageExtensions: ' + r.existing);
       process.exit(3);
     }
-    const out = patchNextConfig(src, { renderMode });
+    const out = patchNextConfig(src, { renderMode, routeUrl, cssEntry });
     fs.writeFileSync(args.config, out);
     process.exit(0);
   }

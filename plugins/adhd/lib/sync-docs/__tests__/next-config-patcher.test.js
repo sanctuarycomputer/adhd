@@ -104,3 +104,67 @@ test('patchNextConfig throws on an unknown renderMode', () => {
     /Unknown renderMode: preview/,
   );
 });
+
+test('vercel-preview mode also emits outputFileTracingIncludes when routeUrl + cssEntry are passed', () => {
+  // Without tracing, Vercel/serverless deploys don't bundle globals.css with
+  // the tokens function, fs.readFile throws ENOENT, and the page shows empty
+  // states for every token domain. This was the user's reported bug.
+  const out = patchNextConfig(TS_MINIMAL, {
+    renderMode: 'vercel-preview',
+    routeUrl: '/-docs',
+    cssEntry: 'app/globals.css',
+  });
+  assert.match(out, /pageExtensions:/);
+  assert.match(out, /outputFileTracingIncludes:/);
+  assert.match(out, /"\/-docs\/tokens\/\[domain\]":\s*\["\.\/app\/globals\.css"\]/);
+});
+
+test('everywhere mode emits ONLY outputFileTracingIncludes (no pageExtensions gate)', () => {
+  // "everywhere" ships files as plain .tsx with no extension gate, but the
+  // tokens page still runs on the serverless function in prod — it still
+  // needs the CSS source traced.
+  const out = patchNextConfig(TS_MINIMAL, {
+    renderMode: 'everywhere',
+    routeUrl: '/-docs',
+    cssEntry: 'src/app/globals.css',
+  });
+  assert.match(out, /outputFileTracingIncludes:/);
+  assert.match(out, /"\/-docs\/tokens\/\[domain\]":\s*\["\.\/src\/app\/globals\.css"\]/);
+  // No pageExtensions block in this mode.
+  assert.doesNotMatch(out, /pageExtensions:/);
+});
+
+test('dev-only mode does NOT emit tracing (page runs locally; no serverless bundle to trace)', () => {
+  const out = patchNextConfig(TS_MINIMAL, {
+    renderMode: 'dev-only',
+    routeUrl: '/-docs',
+    cssEntry: 'app/globals.css',
+  });
+  assert.match(out, /pageExtensions:/);
+  assert.doesNotMatch(out, /outputFileTracingIncludes:/);
+});
+
+test('isPatched recognizes a tracing-only "everywhere" patch as already-patched', () => {
+  const out = patchNextConfig(TS_MINIMAL, {
+    renderMode: 'everywhere',
+    routeUrl: '/-docs',
+    cssEntry: 'app/globals.css',
+  });
+  assert.equal(isPatched(out), true);
+  // Re-running on the patched output is a no-op.
+  assert.equal(
+    patchNextConfig(out, { renderMode: 'everywhere', routeUrl: '/-docs', cssEntry: 'app/globals.css' }),
+    out,
+  );
+});
+
+test('tracing key uses the supplied routeUrl, not a hardcoded path', () => {
+  // Some users pick a different route URL (e.g. /design-system). The tracing
+  // key must match THEIR route, not the default.
+  const out = patchNextConfig(TS_MINIMAL, {
+    renderMode: 'vercel-preview',
+    routeUrl: '/design-system',
+    cssEntry: 'app/globals.css',
+  });
+  assert.match(out, /"\/design-system\/tokens\/\[domain\]"/);
+});
