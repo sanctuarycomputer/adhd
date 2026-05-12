@@ -73,7 +73,31 @@ Save both via `Bash` heredoc to:
 - `/tmp/adhd-pull-component/ctx.json`
 - `/tmp/adhd-pull-component/vars.json`
 
-Run the lint engine:
+### Fingerprint short-circuit (skip when nothing changed)
+
+Before running the lint engine, hash the fresh Figma extract + the pull-output-affecting config fields and compare to the stored fingerprint in `adhd.config.ts`. If it matches, the source state hasn't changed since the last successful pull — skip lint, diff, write, commit, everything.
+
+```bash
+node plugins/adhd/lib/pull-component/cli.js fingerprint-check \
+  --config adhd.config.ts \
+  --path <relative-path-from-Phase-2> \
+  --ctx /tmp/adhd-pull-component/ctx.json \
+  --vars /tmp/adhd-pull-component/vars.json
+```
+
+The command writes JSON to stdout: `{ current, stored, match }`. Parse it. If `match === true`:
+
+```
+✓ <path> matches last-pulled fingerprint (<current>). Last pulled <stored.pulledAt>. Nothing changed — skipping pull.
+```
+
+Exit normally (do NOT proceed to lint, diff, or any apply). The user has nothing to review and nothing committed.
+
+If `match === false` (no stored fingerprint, OR Figma/config changed), continue with the lint engine run below. The new fingerprint will be persisted in Phase 10.5 after a successful pull.
+
+The fingerprint is intentionally false-positive biased: any change to the Figma extract or to pull-affecting config fields (`naming`, `cssEntry`) flips it. This means occasional re-syncs when the regenerated code would have been identical — preferable to false negatives where a real change goes unsynced.
+
+### Run the lint engine
 
 ```bash
 mkdir -p /tmp/adhd-pull-component
@@ -612,6 +636,34 @@ Zero applied changes → no commit. Multiple axes → multiple commits.
 Component file: <react-path>
 Figma URL: <figma-url>
 ```
+
+## Phase 10.5: Persist fingerprint
+
+After a successful pull (any path that reaches Phase 10, including off-system escapes), write the fresh fingerprint + an ISO timestamp into `adhd.config.ts` so the next pull can short-circuit when nothing's changed.
+
+```bash
+node plugins/adhd/lib/pull-component/cli.js fingerprint-write \
+  --config adhd.config.ts \
+  --path <relative-path-from-Phase-2> \
+  --ctx /tmp/adhd-pull-component/ctx.json \
+  --vars /tmp/adhd-pull-component/vars.json
+```
+
+The command updates two fields inside `components: { '<path>': { ... } }`:
+
+```ts
+components: {
+  '<path>': {
+    figma: { url: '...' },
+    pulledAt: '2026-05-12T14:30:00.000Z',  // ISO from `new Date()`
+    fingerprint: 'a1b2c3d4',                // 8-hex-char SHA-256 prefix
+  },
+}
+```
+
+If `adhd.config.ts` already had values, they're replaced; if not, they're inserted before the closing brace with consistent indentation. The fingerprint is the Git-style short form (8 chars = 32 bits of fingerprint space, comfortably collision-free for the dozens-to-hundreds of components a typical project tracks, and looked up by path anyway so global collisions don't matter).
+
+This phase NEVER runs on abort — only on successful application.
 
 ## Phase 11: Cleanup
 

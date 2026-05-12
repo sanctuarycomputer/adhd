@@ -72,6 +72,7 @@ export default config;
     rawPath: 'components/design-system/logo/index.tsx',
     importPath: '@/components/design-system/logo',
     figmaUrl: 'x',
+    pulledAt: null,
   }]);
   assert.equal(r.cssEntry, 'app/globals.css');
 });
@@ -91,6 +92,26 @@ export default config;
   const button = r.components.find(c => c.slug === 'button');
   assert.equal(logo.figmaUrl, 'https://www.figma.com/design/abc?node-id=1-1');
   assert.equal(button.figmaUrl, null);
+});
+
+test('readConfig extracts pulledAt per component, falling back to null when absent', () => {
+  // pulledAt is the timestamp /adhd:pull-component records on a
+  // successful pull (alongside the fingerprint). The docs route shows
+  // it on each component page so designers know how fresh the code is.
+  const root = makeProject(`
+const config = {
+  components: {
+    "components/logo/index.tsx":   { figma: { url: "x" }, pulledAt: "2026-05-12T14:30:00.000Z", fingerprint: "a1b2c3d4" },
+    "components/button/index.tsx": { figma: { url: "y" } },
+  },
+};
+export default config;
+`);
+  const r = readConfig(root);
+  const logo = r.components.find(c => c.slug === 'logo');
+  const button = r.components.find(c => c.slug === 'button');
+  assert.equal(logo.pulledAt, '2026-05-12T14:30:00.000Z');
+  assert.equal(button.pulledAt, null);
 });
 
 test('readConfig throws if adhd.config.ts is missing', () => {

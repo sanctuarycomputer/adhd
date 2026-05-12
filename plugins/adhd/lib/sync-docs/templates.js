@@ -132,6 +132,7 @@ export type ComponentEntry = {
   slug: string;
   rawPath: string;
   figmaUrl: string | null;
+  pulledAt: string | null;
   Component: React.ComponentType<Record<string, unknown>> | null;
   props: Record<string, PropSchema>;
 };
@@ -140,6 +141,7 @@ type RawEntry = {
   slug: string;
   rawPath: string;
   figmaUrl: string | null;
+  pulledAt: string | null;
   module: Record<string, unknown>;
   props: Record<string, PropSchema>;
 };
@@ -161,6 +163,7 @@ export const components: ComponentEntry[] = ENTRIES.map(e => ({
   slug: e.slug,
   rawPath: e.rawPath,
   figmaUrl: e.figmaUrl,
+  pulledAt: e.pulledAt,
   Component: resolveComponent(e.module),
   props: e.props,
 }));
@@ -558,7 +561,7 @@ export default function ComponentPage() {
 
   if (!entry) return <NotInMap slug={slug} />;
 
-  const { rawPath, figmaUrl, Component, props } = entry;
+  const { rawPath, figmaUrl, pulledAt, Component, props } = entry;
 
   // Resolve current prop values from the URL. Values are constrained to the
   // three shapes the page knows how to source — string (for union + string
@@ -591,21 +594,28 @@ export default function ComponentPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-2xl font-medium flex items-center gap-2">
-        <span>{componentName}</span>
-        {figmaUrl && (
-          <a
-            href={figmaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center w-6 h-6 rounded text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            title="Open in Figma"
-            aria-label="Open in Figma"
-          >
-            ↗
-          </a>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-2xl font-medium flex items-center gap-2">
+          <span>{componentName}</span>
+          {figmaUrl && (
+            <a
+              href={figmaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center w-6 h-6 rounded text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              title="Open in Figma"
+              aria-label="Open in Figma"
+            >
+              ↗
+            </a>
+          )}
+        </h2>
+        {pulledAt && (
+          <p className="text-[11px] text-zinc-500">
+            Last pulled {new Date(pulledAt).toISOString().slice(0, 16).replace("T", " ")} UTC
+          </p>
         )}
-      </h2>
+      </div>
 
       <section className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
         <h3 className="mb-3 text-xs font-medium uppercase text-zinc-500">Props</h3>

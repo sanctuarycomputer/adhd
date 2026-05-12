@@ -95,14 +95,15 @@ For each path in the list, in order:
 
 3. Record the outcome for this component into `/tmp/adhd-pull-all/outcomes.json` (append-only). Outcome shape:
    ```json
-   { "path": "<path>", "status": "success" | "abort" | "cancel", "summary": "<one-line summary>", "error": "<abort reason if any>" }
+   { "path": "<path>", "status": "success" | "abort" | "cancel" | "unchanged", "summary": "<one-line summary>", "error": "<abort reason if any>" }
    ```
    - `success`: the per-component pull completed Phase 10 (final report).
+   - `unchanged`: the per-component pull's fingerprint short-circuit (pull-component Phase 2.5) matched the stored value — Figma + relevant config haven't changed since the last successful pull, no work was done. Recorded separately from `success` so the bulk summary surfaces how many were skipped vs how many were actively re-synced.
    - `abort`: any blocking error (STRUCT011, unbound without escape, file missing, etc.).
    - `cancel`: user said "no" / cancel on an in-flow prompt (treated as a halt — they explicitly stopped).
 
 4. **Decide whether to continue:**
-   - If `success` or `cancel`: continue to the next component. (`cancel` halts the inner per-component flow but is not treated as a bulk failure — the user made an explicit choice.)
+   - If `success`, `unchanged`, or `cancel`: continue to the next component. (`cancel` halts the inner per-component flow but is not treated as a bulk failure — the user made an explicit choice. `unchanged` is the fingerprint-skip case — also not a failure.)
    - If `abort`:
      - With `--continue-on-error`: record + continue.
      - Without (default): print `Halted on <path>. Re-run with --continue-on-error to push through subsequent components, or fix the issue and re-run /adhd:pull-component <path> directly.` Then break out of the loop and go to Phase 3.
@@ -117,12 +118,16 @@ Read `/tmp/adhd-pull-all/outcomes.json` and produce:
 Bulk pull report:
   ✓ components/design-system/logo/index.tsx  — 3 cells updated
   ✓ components/avatar/index.tsx              — no changes
+  ⊙ components/badge/index.tsx               — unchanged (fingerprint match, last pulled 2026-05-10T...)
+  ⊙ components/spinner/index.tsx             — unchanged (fingerprint match, last pulled 2026-05-11T...)
   ✗ components/button/index.tsx              — preflight: STRUCT011 (2 var-naming issues)
   ⏭ components/card/index.tsx                — skipped (earlier failure)
   ⏭ components/icon/index.tsx                — skipped (earlier failure)
 
-Summary: 2 succeeded, 1 failed, 2 skipped.
+Summary: 2 re-synced, 2 unchanged, 1 failed, 2 skipped.
 ```
+
+The `⊙` marker covers the fingerprint-short-circuit case — no work was done for that component because Figma + relevant config matched the stored fingerprint. Surface the `pulledAt` from `adhd.config.ts`'s component entry so designers can confirm what "last pulled" actually means.
 
 Append actionable next steps based on outcome:
 

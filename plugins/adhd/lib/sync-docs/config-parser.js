@@ -86,6 +86,19 @@ function importPathFor(p) {
   return '@/' + p.replace(/\.tsx?$/, '').replace(/\/index$/, '');
 }
 
+// Per-path `pulledAt` extractor. Mirrors parseFigmaUrlForPath: targeted
+// regex scoped to the value block that follows the path key. Returns
+// null when no pulledAt has been recorded yet (component was never
+// successfully pulled or pre-dates the fingerprint feature).
+function parsePulledAtForPath(src, p) {
+  const escapedPath = p.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+  const re = new RegExp(
+    '["\']' + escapedPath + '["\']\\s*:\\s*\\{[^}]*?(?:\\{[^}]*\\}[^}]*?)*?pulledAt\\s*:\\s*["\']([^"\']+)["\']',
+  );
+  const m = re.exec(src);
+  return m ? m[1] : null;
+}
+
 // Top-level parser: reads adhd.config.ts at projectRoot, returns the data the
 // installer needs. Throws if the file is missing; the consumer should run
 // `/adhd:config` first.
@@ -97,6 +110,7 @@ function readConfig(projectRoot) {
     rawPath,
     importPath: importPathFor(rawPath),
     figmaUrl: parseFigmaUrlForPath(src, rawPath),
+    pulledAt: parsePulledAtForPath(src, rawPath),
   }));
   return {
     components,
@@ -104,4 +118,4 @@ function readConfig(projectRoot) {
   };
 }
 
-module.exports = { readConfig, parseComponents, parseCssEntry, parseFigmaUrlForPath, slugFor, importPathFor };
+module.exports = { readConfig, parseComponents, parseCssEntry, parseFigmaUrlForPath, parsePulledAtForPath, slugFor, importPathFor };
