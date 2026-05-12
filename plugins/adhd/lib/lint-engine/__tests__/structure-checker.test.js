@@ -149,9 +149,51 @@ test('STRUCT001: still flags a frame with mixed shapes + non-shape children (nee
   assert.ok(violations.find(v => v.rule === 'STRUCT001'));
 });
 
-test('STRUCT003: flags a fill with raw hex (no boundVariables)', () => {
+test('STRUCT003: flags a fill with raw hex (no boundVariables) and names the color', () => {
+  // The user's case: a layer with #FFFFFF in the Figma fills panel, no variable
+  // bound. The previous generic copy ("Fill is a raw color") was easy to skim
+  // past when many violations fired at once; now the message includes the hex.
   const node = makeFrame({
-    fills: [{ type: 'SOLID', color: { r: 0.37, g: 0.23, b: 0.93 } }],
+    fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const v = violations.find(x => x.rule === 'STRUCT003');
+  assert.ok(v);
+  assert.match(v.message, /#FFFFFF/);
+  assert.match(v.message, /bind it to a color variable or apply a paint style/);
+});
+
+test('STRUCT003: does NOT fire on a layer bound to a paint style (legacy design-token mechanism)', () => {
+  // Paint styles pre-date variables but are still valid design tokens. A layer
+  // with a non-empty fillStyleId is bound — STRUCT003 shouldn't ask the
+  // designer to migrate to a variable just for the lint to pass.
+  const node = makeFrame({
+    fillStyleId: 'S:abc123,1:0',
+    fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT003').length, 0);
+});
+
+test('STRUCT003: flags __MIXED__ fills (per-range mixed paints — could hide raw values)', () => {
+  // Figma returns `figma.mixed` for `node.fills` on TEXT with multiple paint
+  // segments. The serializer coerces that Symbol to "__MIXED__" so it survives
+  // JSON.stringify (Symbols don't). Without this rule firing, the violation
+  // would silently disappear from the report — which is exactly what the user
+  // hit on their Logo Component Set.
+  const node = makeFrame({ fills: '__MIXED__' });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const v = violations.find(x => x.rule === 'STRUCT003');
+  assert.ok(v);
+  assert.match(v.message, /mixed across ranges/);
+});
+
+test('STRUCT003: a MIXED fillStyleId still falls through to the fills check', () => {
+  // Some ranges styled, others not. We can't trust the style binding covers
+  // every range, so the fills check still runs and catches any raw paint.
+  const node = makeFrame({
+    fillStyleId: '__MIXED__',
+    fills: [{ type: 'SOLID', color: { r: 1, g: 0, b: 0 } }],
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   assert.ok(violations.find(v => v.rule === 'STRUCT003'));

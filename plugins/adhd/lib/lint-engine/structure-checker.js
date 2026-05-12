@@ -34,6 +34,35 @@ function isVisiblePaint(p) {
   return p && p.visible !== false;
 }
 
+// Convert a Figma SOLID paint's normalized color (r/g/b each in 0..1) to
+// a #RRGGBB hex literal — used in diagnostic messages so the designer
+// knows exactly which color is raw, not just "some fill somewhere."
+function paintToHex(paint) {
+  if (!paint || !paint.color) return '?';
+  const to255 = (c) => Math.round(Math.max(0, Math.min(1, c)) * 255);
+  const hex = [paint.color.r, paint.color.g, paint.color.b]
+    .map(to255)
+    .map(n => n.toString(16).padStart(2, '0'))
+    .join('');
+  return '#' + hex.toUpperCase();
+}
+
+// Sentinel the serializer uses for fields where Figma returned `figma.mixed`.
+// JSON.stringify drops Symbols silently, so the serializer coerces them to
+// this marker string before assignment — otherwise per-range mixed paints
+// would disappear from the lint surface entirely.
+const MIXED = '__MIXED__';
+
+// True if the node is FULLY bound to a paint STYLE (Figma's legacy design-
+// token mechanism, distinct from variable bindings). Paint styles are valid
+// design tokens, so STRUCT003 shouldn't fire on style-bound layers. A MIXED
+// style id means SOME ranges are styled and some aren't — fall through to
+// the fills check so unbound ranges get caught.
+function hasPaintStyleBinding(node, kind) {
+  const id = node[kind];
+  return typeof id === 'string' && id.length > 0 && id !== MIXED;
+}
+
 function deepLink(fileKey, nodeId) {
   return 'https://figma.com/design/' + fileKey + '?node-id=' + nodeId.replace(':', '-');
 }
@@ -90,27 +119,40 @@ function visit(node, ctx, parentPath, parent) {
     }
   }
 
-  // STRUCT003: visible solid colors use variables. Paints with `visible: false`
-  // don't render and are excluded — Figma keeps invisible paint entries on a node
-  // when the user has hidden them in the UI; enforcing variable bindings on
-  // unseen paints is busywork. COMPONENT_SET wrappers are also skipped — they're
-  // organizational scaffolding that doesn't render in instances. Figma's editor
-  // chrome (the dashed-purple Component Set outline at #9747FF) shows up in the
-  // wrapper's `strokes` array as a real SOLID entry; firing STRUCT003 on it would
-  // ask the designer to bind a color they never added.
-  if (node.type !== 'COMPONENT_SET' && Array.isArray(node.fills)) {
-    for (const fill of node.fills) {
-      if (fill.type === 'SOLID' && isVisiblePaint(fill) && !fill.boundVariables?.color) {
-        push('STRUCT003', 'error', 'Fill is a raw color; use a color variable.');
-        break;
+  // STRUCT003: visible solid colors use variables OR paint styles. Paints with
+  // `visible: false` don't render and are excluded. COMPONENT_SET wrappers are
+  // also skipped — they're organizational scaffolding and Figma's editor chrome
+  // (the dashed-purple outline at #9747FF) lives in the wrapper's `strokes`.
+  // Layers bound to a paint STYLE (legacy mechanism — `fillStyleId` /
+  // `strokeStyleId`) are valid design tokens too; we don't ask the designer to
+  // migrate them.
+  if (node.type !== 'COMPONENT_SET' && !hasPaintStyleBinding(node, 'fillStyleId')) {
+    if (node.fills === MIXED) {
+      // Multi-range mixed paints — fall through from the serializer's sentinel.
+      // Often a TEXT layer with per-character coloring; could be hiding raw values.
+      push('STRUCT003', 'error',
+        'Fills are mixed across ranges — bind each range to a color variable, or apply a paint style to the layer.');
+    } else if (Array.isArray(node.fills)) {
+      for (const fill of node.fills) {
+        if (fill.type === 'SOLID' && isVisiblePaint(fill) && !fill.boundVariables?.color) {
+          push('STRUCT003', 'error',
+            `Fill is a raw color (${paintToHex(fill)}); bind it to a color variable or apply a paint style.`);
+          break;
+        }
       }
     }
   }
-  if (node.type !== 'COMPONENT_SET' && Array.isArray(node.strokes)) {
-    for (const stroke of node.strokes) {
-      if (stroke.type === 'SOLID' && isVisiblePaint(stroke) && !stroke.boundVariables?.color) {
-        push('STRUCT003', 'error', 'Stroke is a raw color; use a color variable.');
-        break;
+  if (node.type !== 'COMPONENT_SET' && !hasPaintStyleBinding(node, 'strokeStyleId')) {
+    if (node.strokes === MIXED) {
+      push('STRUCT003', 'error',
+        'Strokes are mixed across ranges — bind each range to a color variable, or apply a paint style to the layer.');
+    } else if (Array.isArray(node.strokes)) {
+      for (const stroke of node.strokes) {
+        if (stroke.type === 'SOLID' && isVisiblePaint(stroke) && !stroke.boundVariables?.color) {
+          push('STRUCT003', 'error',
+            `Stroke is a raw color (${paintToHex(stroke)}); bind it to a color variable or apply a paint style.`);
+          break;
+        }
       }
     }
   }

@@ -41,12 +41,15 @@ Construct a JS string for `mcp__plugin_figma_figma__use_figma` that:
    - `id`, `name`, `type`
    - `layoutMode`, `paddingTop`, `paddingRight`, `paddingBottom`, `paddingLeft`, `itemSpacing`, `cornerRadius`, `topLeftRadius`, `topRightRadius`, `bottomLeftRadius`, `bottomRightRadius`
    - `fills`, `strokes`, `effects`, `boundVariables`
+   - `fillStyleId`, `strokeStyleId` — paint-style bindings (Figma's legacy design-token mechanism, distinct from variable bindings). The lint engine uses these to recognize style-bound layers and skip the raw-color rule on them.
    - `componentPropertyDefinitions` — **only** when `n.type === 'COMPONENT_SET' || (n.type === 'COMPONENT' && n.parent?.type !== 'COMPONENT_SET')`. Accessing it on a variant COMPONENT (a child of a COMPONENT_SET) throws.
    - `variantProperties` — only on COMPONENT children of a COMPONENT_SET.
    - `textStyleId`, `effectStyleId`
    - For TEXT: `characters`, `fontSize`, `fontName`
    - For FRAME: `wasInstance`
    - `children` — recursively `serializeNode`-mapped.
+
+   **`figma.mixed` handling.** Several fields return the `figma.mixed` Symbol when a node has per-range variation (most commonly `node.fills` on TEXT with multiple colored spans, `node.fontSize` on multi-size text, `node.fillStyleId` / `node.strokeStyleId` when only some ranges have a style applied). `JSON.stringify` drops Symbols silently — which means a multi-color TEXT layer with raw whites would have its `fills` quietly disappear from the serialized output, and STRUCT003 would never fire on it. Before assigning each potentially-mixed field, coerce: `value === figma.mixed ? "__MIXED__" : value`. The lint engine recognizes the `"__MIXED__"` sentinel and reports it as a STRUCT003 violation with a "mixed paints — bind each range to a variable, or apply a paint style" message, so the violation surfaces instead of disappearing.
 2. Branches on a `nodeId` parameter (passed via the `inputs` object on `use_figma`):
    - **Whole-file** (no `nodeId`): walk `figma.root.children` (pages); for each page, find children whose type is `COMPONENT_SET`, or `COMPONENT` (top-level only — i.e. parent is the page, not nested), or `FRAME` (top-level). Serialize each. Return `{ mode: 'whole-file', pages: [{ id, name, nodes: [...serialized...] }, ...] }`.
    - **Scoped** (`nodeId` provided): `await figma.getNodeByIdAsync(nodeId)`; if missing, return `{ error: 'Node not found' }`; otherwise `serializeNode(node)` and return it directly (no `mode` field).
