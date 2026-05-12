@@ -50,6 +50,7 @@ const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
 const { buildVariableSuggestions } = require('./variable-namer');
 const { checkBindings } = require('./binding-checker');
+const { detectTailwindDuplicates } = require('./tailwind-duplicate-detector');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -239,6 +240,44 @@ function main() {
       deepLink: scopedNodeId
         ? 'https://figma.com/design/' + fileKey + '?node-id=' + scopedNodeId.replace(':', '-')
         : args['target-url'],
+    });
+  }
+
+  // STRUCT013 — Figma variable duplicates a Tailwind v4 default.
+  //
+  // Surfaces when a designer has both the canonical Tailwind variable
+  // (e.g. `Color/zinc-500`) AND a same-value duplicate sitting alongside.
+  // Strict match — name AND value must align — so semantic vars like
+  // `Color/MyZinc` (same value, different intent) are NOT flagged.
+  //
+  // The fix is "consolidate": rebind every layer using the duplicate to
+  // the canonical Tailwind variable, then delete the duplicate. The
+  // /adhd:lint --fix flow walks each candidate through AskUserQuestion
+  // before applying — never auto-rewires.
+  const duplicates = detectTailwindDuplicates(varDefs, tailwindDefaults);
+  for (const dup of duplicates) {
+    // varIdMap is { id: name }; invert to find the duplicate's Figma ID
+    // (used by --fix to rebind layers). Absent when the SKILL hasn't
+    // emitted varIdMap — STRUCT013 still surfaces, just without an ID
+    // hint for the migration script.
+    let figmaVarId = null;
+    for (const [id, name] of Object.entries(varIdMap || {})) {
+      if (name === dup.figmaName) { figmaVarId = id; break; }
+    }
+    structureViolations.push({
+      rule: 'STRUCT013',
+      severity: 'warning',
+      nodeId: undefined, // file-level concern; doesn't annotate a layer
+      nodePath: 'Variables',
+      message:
+        `Figma variable "${dup.figmaName}" (= ${dup.value}) duplicates Tailwind default \`${dup.tailwindCssVar}\`. ` +
+        `Same value, same canonical name — consolidating removes the duplicate without changing what gets rendered.\n\n` +
+        `To apply: run \`/adhd:lint --fix\`. The flow walks each candidate via prompt, then for each "Yes" it rebinds every layer that uses "${dup.figmaName}" to \`${dup.tailwindCssVar}\` and deletes the duplicate.`,
+      deepLink: args['target-url'],
+      // Extra fields consumed by --fix (ignored by the report formatter):
+      figmaVarName: dup.figmaName,
+      figmaVarId,
+      tailwindCssVar: dup.tailwindCssVar,
     });
   }
 

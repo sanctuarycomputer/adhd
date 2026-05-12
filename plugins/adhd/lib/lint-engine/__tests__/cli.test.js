@@ -403,6 +403,57 @@ test('STRUCT012: same-domain binding is silent', () => {
   assert.equal(summary.structure.filter(v => v.rule === 'STRUCT012').length, 0);
 });
 
+test('STRUCT013: surfaces Figma variables that duplicate Tailwind defaults (strict match)', () => {
+  // Designer pushed the full Tailwind palette to Figma, then left their
+  // legacy `Color/white` sitting alongside the canonical `--color-white`.
+  // Same name, same value → flag for consolidation. A coincidental value
+  // match on a differently-named variable (`Color/Background`) is NOT
+  // flagged — semantic intent is respected.
+  //
+  // We use the white/black defaults here rather than a zinc shade because
+  // Tailwind's color palette ships as oklch() in tailwind-defaults.css —
+  // a hex fixture wouldn't string-match. The user's real Figma files
+  // typically resolve all variables to a consistent format (Figma
+  // converts oklch to hex for the resolved value); a fully realistic
+  // fixture would mock that resolution.
+  const varDefs = tmp('vars.json', {
+    'Color/white':      '#fff',      // dupe — same name + value as Tailwind default
+    'Color/Background': '#fff',      // semantic — value matches but name doesn't, no fire
+    'Color/brand':      '#5e3aee',   // not a Tailwind default at all
+    'Spacing/default':  '0.25rem',   // dupe of --spacing
+  });
+  const idMap = tmp('varidmap.json', {
+    'VAR:white':   'Color/white',
+    'VAR:spacing': 'Spacing/default',
+  });
+  const ctx = tmp('ctx.json', { id: '5:1', name: 'X', type: 'FRAME', layoutMode: 'VERTICAL' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--var-id-map', idMap, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'X',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct013 = summary.structure.filter(v => v.rule === 'STRUCT013');
+  // Only `Color/white` fires — `Color/Background` has the same value but
+  // a different name (semantic intent respected), `Color/brand` isn't a
+  // Tailwind default at all, and `Spacing/default` normalizes to
+  // "spacing-default" which doesn't align with `--spacing`'s canonical
+  // form (strict name match).
+  assert.equal(struct013.length, 1);
+  const v = struct013[0];
+  assert.equal(v.severity, 'warning');
+  assert.equal(v.figmaVarName, 'Color/white');
+  assert.equal(v.figmaVarId, 'VAR:white');
+  assert.equal(v.tailwindCssVar, '--color-white');
+  assert.match(v.message, /duplicates Tailwind default `--color-white`/);
+  assert.match(v.message, /\/adhd:lint --fix/);
+});
+
 test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {
   const varDefs = tmp('vars.json', { 'Primitives/color/BrandPrimary': '#000' });
   const ctx = tmp('ctx.json', { mode: 'whole-file', pages: [] });

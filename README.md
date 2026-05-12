@@ -29,7 +29,7 @@ After install, nine slash commands are available:
 | Command | Args | Direction | What it does |
 |---|---|---|---|
 | `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
-| `/adhd:lint` | `[<figma-url>] [--annotate]` | read-only by default | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices. With `--annotate`, also writes Figma annotations on each offending node in a "lint" category. |
+| `/adhd:lint` | `[<figma-url>] [--annotate] [--fix]` | read-only by default | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices. With `--annotate`, also writes Figma annotations on each offending node in a "lint" category. With `--fix`, walks STRUCT013 Tailwind-duplicate candidates per-prompt and consolidates approved ones (rebinds bindings to the canonical Tailwind variable, then deletes the duplicate). |
 | `/adhd:push-tokens` | `[--dry-run]` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP. `--dry-run` previews what would be added or overwritten without writing. |
 | `/adhd:pull-tokens` | `[--dry-run]` | Figma → code | Pulls Figma variables + named styles into globals.css. `--dry-run` previews without writing. |
 | `/adhd:push-component` | `<path> [--max-variants <n>] [--annotate]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. `--annotate` annotates preflight violations on Figma nodes. |

@@ -1,7 +1,7 @@
 ---
-description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only by default; with --annotate, also writes Figma annotations on each offending node in a 'lint' category. Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
+description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only by default; with --annotate, also writes Figma annotations on each offending node in a 'lint' category. With --fix, walks STRUCT013 Tailwind-duplicate candidates and applies approved consolidations (rebind + delete). Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
 disable-model-invocation: true
-argument-hint: "[<figma-url-with-node-id>] [--annotate]"
+argument-hint: "[<figma-url-with-node-id>] [--annotate] [--fix]"
 allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
@@ -10,7 +10,7 @@ allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figm
 Validate that a Figma file (or a single frame/component/page) is ready for code translation. Reports two classes of issue:
 
 - **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
-- **Structure issues** — STRUCT001–STRUCT012 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, etc.).
+- **Structure issues** — STRUCT001–STRUCT013 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, Tailwind-default duplicates, etc.).
 
 Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
@@ -24,9 +24,9 @@ Extract `figma.url` (required) and `naming` (optional, defaults to `kebab-case`)
 
 ## Phase 2: Resolve target
 
-Branch on `$ARGUMENTS`:
+Branch on `$ARGUMENTS`. The arguments can include a URL plus flags (`--annotate`, `--fix`) in any order; pull flags out first, then look at what remains.
 
-- **Empty argument → whole-file mode.** Skip target resolution. The extract script (Phase 3) will return ALL pages and ALL top-level lintable nodes (COMPONENT_SET, top-level COMPONENT, top-level FRAME) on each page. Set `target = "Whole file"` and `targetUrl = <figma.url from config>`.
+- **Empty (or flags only) → whole-file mode.** Skip target resolution. The extract script (Phase 3) will return ALL pages and ALL top-level lintable nodes (COMPONENT_SET, top-level COMPONENT, top-level FRAME) on each page. Set `target = "Whole file"` and `targetUrl = <figma.url from config>`.
 - **URL provided → scoped mode.**
   - Extract the file key (segment after `/design/`).
   - If it doesn't match the file key from `adhd.config.ts`, abort with: "URL points at file <X>, but adhd.config.ts is configured for file <Y>. Pass a URL from the configured file or run /adhd:config to update."
@@ -251,6 +251,153 @@ On "Yes": run Phase 6 inline (the distill step + the `use_figma` script) and pri
 On "No": exit normally with no annotation work done.
 
 If there are zero `nodeId`-bearing violations (e.g. only whole-file violations like `pageGrouping`), skip the prompt — there's nothing to annotate.
+
+## Phase 8: Optional — consolidate Tailwind duplicates (`--fix`)
+
+If the user passed `--fix`, walk every STRUCT013 violation in `/tmp/adhd-lint/stdout.json` and offer to consolidate each one. Each STRUCT013 entry has `figmaVarName`, `figmaVarId`, and `tailwindCssVar` fields that drive the rebind.
+
+**Strict-match guarantee.** STRUCT013 only fires when the Figma variable's normalized name AND value both match a Tailwind v4 default — semantic variables like `Color/MyZinc` (different name, coincidental value match) are never surfaced. The `--fix` flow inherits that precision; it can't accidentally migrate a semantic variable.
+
+If `--fix` was NOT passed, skip this phase. If `--fix` was passed but there are no STRUCT013 violations, print `No Tailwind duplicates to consolidate.` and continue.
+
+### Pre-flight: the canonical must exist in Figma
+
+`--fix` rebinds layers from the duplicate to the canonical Tailwind variable. For that to work, the canonical variable has to actually exist in the Figma file (i.e. the user has already run `/adhd:push-tokens` to populate the Tailwind defaults). Before prompting, check the canonical names against `/tmp/adhd-lint/varidmap.json`:
+
+```bash
+node -e '
+const fs = require("fs");
+const idMap = JSON.parse(fs.readFileSync("/tmp/adhd-lint/varidmap.json", "utf8"));
+const summary = JSON.parse(fs.readFileSync("/tmp/adhd-lint/stdout.json", "utf8"));
+const struct013 = (summary.structure ?? []).filter(v => v.rule === "STRUCT013");
+const nameToId = Object.fromEntries(Object.entries(idMap).map(([id, name]) => [name, id]));
+// Expected canonical Figma name = the tailwindCssVar with `--` stripped,
+// matched against any Figma variable whose normalized name aligns. The
+// quick-and-dirty form: look for an exact match on the slashed equivalent
+// (e.g. "Color/white" for "--color-white"). Designers who pushed via
+// /adhd:push-tokens get this naming by default.
+const out = struct013.map(v => {
+  const canonical = v.tailwindCssVar.replace(/^--/, "").replace(/^([a-z]+)-/, "$1/");
+  const canonicalId = nameToId[canonical] ?? null;
+  return { ...v, canonicalFigmaName: canonical, canonicalFigmaId: canonicalId };
+});
+fs.writeFileSync("/tmp/adhd-lint/struct013-resolved.json", JSON.stringify(out, null, 2));
+console.log(out.filter(x => x.canonicalFigmaId).length + "/" + out.length);
+'
+```
+
+If the printed count shows fewer resolved than total (e.g. `2/4`), at least one canonical isn't in Figma yet. Print:
+
+```
+⚠ <N> STRUCT013 candidates can't be auto-fixed yet — the canonical Tailwind
+variable isn't in Figma. Run /adhd:push-tokens first (it'll add the missing
+canonicals), then re-run /adhd:lint --fix.
+
+Remaining <M> candidate(s) with canonicals present will be offered for
+consolidation now.
+```
+
+Continue with the resolved subset.
+
+### Per-candidate prompts
+
+For each resolved candidate, use `AskUserQuestion`:
+
+```
+Question: "Consolidate `<figmaVarName>` into Tailwind default `<tailwindCssVar>`? Every layer that uses `<figmaVarName>` will be rebound to the canonical, and the duplicate will be deleted from Figma."
+Header: "Consolidate?"
+Options:
+  - "Yes — rebind + delete"
+  - "No — skip this one"
+  - "Yes to all remaining"
+  - "Cancel — stop"
+```
+
+If "Yes to all remaining," skip further prompts and queue every remaining candidate. If "Cancel," exit the loop. Collect the approved set into `/tmp/adhd-lint/fix-actions.json` as `[{ duplicateId, canonicalId, duplicateName, canonicalName }, ...]`.
+
+If the approved set is empty, print `Nothing to consolidate.` and return.
+
+### Apply via use_figma
+
+Substitute `__ACTIONS__` with the JSON contents of `/tmp/adhd-lint/fix-actions.json` and call `mcp__plugin_figma_figma__use_figma`:
+
+```js
+const ACTIONS = /* substituted */;
+
+// For each consolidation: walk every page, rebind every layer that
+// references the duplicate variable to the canonical, then delete the
+// duplicate. Atomicity matters — if the rebind fails partway, we'd be
+// left with broken bindings. We deliberately scope per-variable so a
+// failure on one consolidation doesn't taint the others.
+const results = [];
+for (const action of ACTIONS) {
+  const { duplicateId, canonicalId, duplicateName, canonicalName } = action;
+  const dupVar = await figma.variables.getVariableByIdAsync(duplicateId);
+  const canVar = await figma.variables.getVariableByIdAsync(canonicalId);
+  if (!dupVar || !canVar) {
+    results.push({ duplicateName, status: "skipped", reason: "variable not found" });
+    continue;
+  }
+
+  let rebound = 0;
+  for (const page of figma.root.children) {
+    await figma.setCurrentPageAsync(page);
+    const nodes = page.findAll(() => true);
+    for (const node of nodes) {
+      if (!node.boundVariables) continue;
+      // Top-level scalar bindings (letterSpacing, padding*, *Radius, etc.)
+      for (const [prop, alias] of Object.entries(node.boundVariables)) {
+        if (prop === "fills" || prop === "strokes" || prop === "effects") continue;
+        if (alias && alias.id === duplicateId) {
+          node.setBoundVariable(prop, canVar);
+          rebound++;
+        }
+      }
+      // Per-paint color bindings on fills + strokes.
+      for (const kind of ["fills", "strokes"]) {
+        const arr = node[kind];
+        if (!Array.isArray(arr)) continue;
+        const next = arr.map((paint) => {
+          if (paint?.boundVariables?.color?.id === duplicateId) {
+            rebound++;
+            return figma.variables.setBoundVariableForPaint(paint, "color", canVar);
+          }
+          return paint;
+        });
+        node[kind] = next;
+      }
+    }
+  }
+
+  // Delete the duplicate. Will fail if it's still referenced anywhere we
+  // missed (effect colors, text-range bindings, etc.) — caller surfaces
+  // the error and the variable stays alive.
+  try {
+    dupVar.remove();
+    results.push({ duplicateName, canonicalName, rebound, status: "ok" });
+  } catch (e) {
+    results.push({ duplicateName, canonicalName, rebound, status: "rebound-only", error: String(e) });
+  }
+}
+
+return { results };
+```
+
+### Report
+
+Echo each result line:
+
+```
+✓ Consolidated `<duplicateName>` → `<canonicalName>` (<rebound> layer(s) rebound, duplicate deleted)
+```
+
+Or, on `rebound-only`:
+
+```
+⚠ Rebound `<duplicateName>` → `<canonicalName>` (<rebound> layer(s)) but could not delete the duplicate: <error>. It's no longer referenced by any visible layer; you can delete it manually if you confirm nothing else uses it.
+```
+
+Then exit normally.
 
 ## Common errors
 
