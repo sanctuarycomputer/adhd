@@ -180,22 +180,36 @@ Read the report. Parse out error count and warning count.
 
 The preflight CLI also writes a JSON sidecar with the engine's full structured output at `/tmp/adhd-push-component/preflight-report.json` (same path as the report, `.md` → `.json`). Phase 10.5 uses this when `--annotate` is set.
 
-## Phase 10.5: Optional — annotate offending nodes in Figma (`--annotate`)
+## Phase 10.5: Annotate offending nodes in Figma
 
-If the user passed `--annotate` to `/adhd:push-component` AND the preflight surfaced any node-bound violations, push them to Figma as annotations using the **same flow described in `/adhd:lint` Phase 6**.
+Two paths into this phase, both producing the same `use_figma` annotation work described in `/adhd:lint` Phase 6:
 
-Inputs:
-- Engine stdout: `/tmp/adhd-push-component/preflight-report.json`
-- Distill to `/tmp/adhd-push-component/violations.json` (filter for `nodeId`-bearing entries) using the same `node -e` snippet as lint Phase 6, just with the push-component paths substituted.
-- Run the same `use_figma` script (the ADHD lint category + per-node replace logic).
-
-After it returns, print:
+**Path A — `--annotate` was passed.** Run the annotation script unconditionally. After it returns, print:
 
 ```
 ✓ Annotated <updated> Figma node(s) in the "ADHD lint" category. Cleared <cleared> stale annotation(s).
 ```
 
-Annotating happens AFTER the preflight CLI exits but BEFORE Phase 11's decide-or-rollback. That way the designer sees the annotations even when push aborts on errors. Without `--annotate`, skip silently.
+**Path B — `--annotate` was NOT passed, AND preflight produced node-bound errors that will abort the push.** Use `AskUserQuestion` to offer it retroactively:
+
+```
+Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'ADHD lint' category to fix in-context."
+Header: "Annotate?"
+Options:
+  - "Yes, annotate them in Figma"
+  - "No, skip"
+```
+
+On "Yes": run the same annotation script and print the result line.
+On "No": skip silently.
+
+For Path B, skip the prompt if (a) preflight is clean (no errors blocking the push), or (b) no violation has a `nodeId`.
+
+Inputs (both paths):
+- Engine stdout: `/tmp/adhd-push-component/preflight-report.json`
+- Distill to `/tmp/adhd-push-component/violations.json` using the same `node -e` snippet as lint Phase 6.
+
+Phase 10.5 runs AFTER the preflight CLI exits but BEFORE Phase 11's decide-or-rollback — designers see annotations even when push aborts.
 
 ## Phase 11: Decide and finalize OR roll back
 

@@ -193,6 +193,26 @@ No node-bound violations to annotate (whole-file violations like pageGrouping ar
 
 The "ADHD lint" category gives designers a one-click filter in Figma's annotations panel and lets us cleanly own/replace our own annotations without touching designer-authored ones. The category persists in the file — even after the user uninstalls ADHD, the annotations remain as plain Figma annotations the designer can edit or delete.
 
+## Phase 7: Offer to annotate when `--annotate` wasn't passed
+
+If `--annotate` was passed, this phase is a no-op (Phase 6 already ran).
+
+If `--annotate` was NOT passed AND the lint produced at least one violation with a `nodeId` (count it from `/tmp/adhd-lint/stdout.json` using the same `node -e` snippet as Phase 6 — count of items in the distilled violations array), use `AskUserQuestion`:
+
+```
+Question: "Push these <N> violation(s) to Figma as annotations? They'll appear on the offending nodes in an 'ADHD lint' category that designers can filter on."
+Header: "Annotate?"
+Options:
+  - "Yes, annotate them in Figma"
+  - "No, skip"
+```
+
+On "Yes": run Phase 6 inline (the distill step + the `use_figma` script) and print the result line.
+
+On "No": exit normally with no annotation work done.
+
+If there are zero `nodeId`-bearing violations (e.g. only whole-file violations like `pageGrouping`), skip the prompt — there's nothing to annotate.
+
 ## Common errors
 
 | Error | Fix-up guidance |

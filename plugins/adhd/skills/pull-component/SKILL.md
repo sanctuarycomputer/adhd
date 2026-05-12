@@ -94,15 +94,31 @@ Use the globals.css path from `config.cssEntry` if set, otherwise auto-detect: `
 
 Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Scan for STRUCT003/004/005 (variable-binding errors). Other rules' violations are noted for the final report but don't block.
 
-### Optional — annotate offending nodes in Figma (`--annotate`)
+### Annotate offending nodes in Figma
 
-If the user passed `--annotate` to `/adhd:pull-component`, push the preflight violations to Figma as annotations using the **same flow described in `/adhd:lint` Phase 6**:
+Two paths, both producing the same `use_figma` annotation work described in `/adhd:lint` Phase 6:
 
+**Path A — `--annotate` was passed.** Run the annotation script unconditionally.
+
+**Path B — `--annotate` was NOT passed, AND there are variable-binding errors (STRUCT003/004/005) that will block the pull.** Use `AskUserQuestion` to offer it retroactively:
+
+```
+Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'ADHD lint' category to fix in-context."
+Header: "Annotate?"
+Options:
+  - "Yes, annotate them in Figma"
+  - "No, skip"
+```
+
+On "Yes": run the annotation script. On "No": skip silently.
+
+For Path B, skip the prompt if no violation has a `nodeId` (no actionable annotations to write).
+
+Inputs (both paths):
 - Engine stdout: `/tmp/adhd-pull-component/stdout.json`
-- Distill to `/tmp/adhd-pull-component/violations.json` (filter for `nodeId`-bearing entries) using the same `node -e` snippet as lint Phase 6, with the pull-component paths substituted.
-- Run the same `use_figma` script (the ADHD lint category + per-node replace logic).
+- Distill to `/tmp/adhd-pull-component/violations.json` using the same `node -e` snippet as lint Phase 6.
 
-Annotate BEFORE evaluating the abort condition below, so the designer sees the annotations even when the pull aborts. Without `--annotate`, skip silently.
+Either path runs BEFORE the abort/escape evaluation below, so the designer sees the annotations regardless of whether the pull continues.
 
 **If variable-binding errors exist:**
 
