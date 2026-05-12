@@ -311,6 +311,98 @@ test('Tailwind-default variables are NEVER reported as missing in code', () => {
   assert.equal(missing.filter(v => v.token === 'color/black').length, 0);
 });
 
+test('STRUCT011 per-layer: with --var-id-map, fires once per layer using the bad var (drops aggregate)', () => {
+  // The user-visible upgrade — annotations land on the layer that actually
+  // uses each bad variable, not lumped onto the scope root. Designers walk
+  // the annotated layers one-by-one instead of cross-referencing a single
+  // multiline message against the layer tree.
+  const varDefs = tmp('vars.json', { 'Tracking/BadName': '0.05em' });
+  const ctx = tmp('ctx.json', {
+    id: '5:1', name: 'Page', type: 'FRAME',
+    children: [
+      { id: '5:2', name: 'A', type: 'TEXT',
+        boundVariables: { letterSpacing: { id: 'VAR:bad' } } },
+      { id: '5:3', name: 'B', type: 'TEXT',
+        boundVariables: { letterSpacing: { id: 'VAR:bad' } } },
+    ],
+  });
+  const idMap = tmp('varidmap.json', { 'VAR:bad': 'Tracking/BadName' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--var-id-map', idMap, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'Page',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct011 = summary.structure.filter(v => v.rule === 'STRUCT011');
+  // Two layers each get their own violation — no aggregate.
+  assert.equal(struct011.length, 2);
+  const ids = struct011.map(v => v.nodeId).sort();
+  assert.deepEqual(ids, ['5:2', '5:3']);
+  // Per-layer message format
+  assert.match(struct011[0].message, /Layer uses "Tracking\/BadName"/);
+  assert.match(struct011[0].message, /Move to "Tracking" collection/);
+});
+
+test('STRUCT012: cross-domain binding (Spacing var → letterSpacing) fires per-layer', () => {
+  // Designer's `Spacing/4` variable (correctly named for its domain) is
+  // bound to letter-spacing — semantically wrong, but STRUCT011 stays quiet
+  // because the name itself is fine. STRUCT012 catches it.
+  const varDefs = tmp('vars.json', { 'Spacing/4': '1rem' });
+  const ctx = tmp('ctx.json', {
+    id: '5:1', name: 'Title', type: 'TEXT',
+    boundVariables: { letterSpacing: { id: 'VAR:spacing4' } },
+  });
+  const idMap = tmp('varidmap.json', { 'VAR:spacing4': 'Spacing/4' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--var-id-map', idMap, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'Title',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 1, 'STRUCT012 is severity=error; cli exits 1');
+  const summary = JSON.parse(result.stdout);
+  const struct012 = summary.structure.filter(v => v.rule === 'STRUCT012');
+  assert.equal(struct012.length, 1);
+  assert.equal(struct012[0].nodeId, '5:1');
+  assert.equal(struct012[0].severity, 'error');
+  assert.match(struct012[0].message, /Spacing\/4/);
+  assert.match(struct012[0].message, /spacing variable/);
+  assert.match(struct012[0].message, /tracking variable/);
+  // No STRUCT011 — the name itself is fine.
+  assert.equal(summary.structure.filter(v => v.rule === 'STRUCT011').length, 0);
+});
+
+test('STRUCT012: same-domain binding is silent', () => {
+  // Tracking variable bound to letterSpacing is fine — no violations.
+  const varDefs = tmp('vars.json', { 'Tracking/normal': '0' });
+  const ctx = tmp('ctx.json', {
+    id: '5:1', name: 'Title', type: 'TEXT',
+    boundVariables: { letterSpacing: { id: 'VAR:trackingNormal' } },
+  });
+  const idMap = tmp('varidmap.json', { 'VAR:trackingNormal': 'Tracking/normal' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--var-id-map', idMap, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'Title',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.structure.filter(v => v.rule === 'STRUCT012').length, 0);
+});
+
 test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {
   const varDefs = tmp('vars.json', { 'Primitives/color/BrandPrimary': '#000' });
   const ctx = tmp('ctx.json', { mode: 'whole-file', pages: [] });

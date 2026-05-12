@@ -49,6 +49,7 @@ function loadTailwindDefaultPrimitives() {
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
 const { buildVariableSuggestions } = require('./variable-namer');
+const { checkBindings } = require('./binding-checker');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -106,6 +107,15 @@ function main() {
   const namingConvention = readNamingConvention(args['config']);
   const fileKey = extractFileKey(args['target-url']);
 
+  // Optional: serializer-produced { '<VariableID>': '<collection>/<name>' }
+  // map. Required for per-layer STRUCT011 annotations and STRUCT012
+  // cross-domain detection; absent in older SKILL versions, in which case
+  // we fall back to the legacy aggregated STRUCT011 emission.
+  let varIdMap = {};
+  if (args['var-id-map']) {
+    try { varIdMap = readJson(args['var-id-map']); } catch { varIdMap = {}; }
+  }
+
   const userTheme = parseTheme(cssText);
   const tailwindDefaults = loadTailwindDefaultPrimitives();
   // User's @theme wins on key collision (override always beats default).
@@ -136,33 +146,53 @@ function main() {
     structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
   }
 
-  // STRUCT011 — variable-name compliance. For each variable, produce ONE
-  // concrete rename target that combines case + domain concerns into a
-  // single actionable suggestion. This is the upgrade from the old
-  // two-section emission, which forced designers to reconcile contradictory
-  // hints ("rename Font-Size to font-size" + "did you mean text?") on
-  // their own — too much cognitive load when 10+ variables are flagged.
+  // STRUCT011 (variable naming) + STRUCT012 (cross-domain bindings).
   //
-  // The new emission shows: "Type + Effects/Font-Size/Body → Text/body".
-  // One line, complete target. The designer creates the new variable in
-  // the right collection (or renames in place) and moves on.
+  // Both rules need to know which LAYER uses each variable so the annotation
+  // lands on the offender instead of the scope root — designers asked for
+  // this so they can walk a list of annotations and fix them one by one
+  // without hunting through the layer tree. The binding-checker walks the
+  // node tree and emits one violation per (layer, variable) pair.
+  //
+  // STRUCT012 catches the cross-domain case STRUCT011 misses: a `Spacing/4`
+  // variable (well-named for its domain) bound to letter-spacing. The
+  // variable's name is fine, but the binding crosses Tailwind's token-domain
+  // boundary. We infer each variable's intended domain from its name and
+  // compare to the property's expected domain.
   //
   // Variable names are ALWAYS checked against kebab-case for the leaves,
   // regardless of the project's `naming` config (which is for component
   // identifiers, not CSS custom properties).
   //
-  // In whole-file mode there's no scope root, so nodeId is omitted —
-  // violation still appears in the report but doesn't annotate.
+  // Fallback: when the SKILL didn't emit a varIdMap (older versions), we
+  // can't bridge per-node bindings to variable names, so STRUCT011 falls
+  // back to the legacy aggregated emission and STRUCT012 stays silent.
   const varKeys = Object.keys(varDefs || {});
   const suggestions = buildVariableSuggestions(varKeys);
-  if (suggestions.length > 0) {
+  const badSuggestionsByName = {};
+  for (const s of suggestions) badSuggestionsByName[s.name] = s;
+  const hasIdMap = Object.keys(varIdMap).length > 0;
+
+  if (hasIdMap) {
+    const bindingViolations = [];
+    if (designCtx && designCtx.mode === 'whole-file' && Array.isArray(designCtx.pages)) {
+      for (const page of designCtx.pages) {
+        for (const node of page.nodes) {
+          const v = checkBindings(node, { fileKey, varIdMap, badSuggestionsByName });
+          for (const x of v) x._page = page.name;
+          bindingViolations.push(...v);
+        }
+      }
+    } else if (designCtx) {
+      bindingViolations.push(...checkBindings(designCtx, { fileKey, varIdMap, badSuggestionsByName }));
+    }
+    structureViolations.push(...bindingViolations);
+  } else if (suggestions.length > 0) {
+    // Legacy aggregated STRUCT011 emission, kept as a graceful fallback
+    // when the SKILL hasn't been upgraded to emit varIdMap. Pre-existing
+    // behavior — single violation on the scope root listing every bad name.
     const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
     const scopedNodeId = isScoped ? designCtx.id : undefined;
-
-    // Group renames by target collection — the action a designer takes per
-    // group is "create the collection if it doesn't exist, then Move To
-    // these vars into it." Much clearer than a flat list of 6 individually
-    // unrelated-looking rename lines.
     const renames = suggestions.filter(s => s.kind === 'rename');
     const ambiguous = suggestions.filter(s => s.kind === 'ambiguous');
     const noMapping = suggestions.filter(s => s.kind === 'no-mapping');
@@ -173,7 +203,6 @@ function main() {
       byTarget.get(collection).push(s);
     }
     const sortedTargets = [...byTarget.keys()].sort();
-
     const sections = [];
     for (const collection of sortedTargets) {
       const items = byTarget.get(collection);
@@ -193,7 +222,6 @@ function main() {
       const lines = noMapping.map(s => `  • ${s.name}\n      ⚠ ${s.reason}`);
       sections.push(`⚠ No Tailwind v4 mapping (${noMapping.length}):\n${lines.join('\n\n')}`);
     }
-
     structureViolations.push({
       rule: 'STRUCT011',
       severity: 'warning',

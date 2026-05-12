@@ -10,7 +10,7 @@ allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figm
 Validate that a Figma file (or a single frame/component/page) is ready for code translation. Reports two classes of issue:
 
 - **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
-- **Structure issues** — STRUCT001–STRUCT010 best-practice violations (auto-layout, naming, variant properties, etc.).
+- **Structure issues** — STRUCT001–STRUCT012 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, etc.).
 
 Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
@@ -53,14 +53,17 @@ Construct a JS string for `mcp__plugin_figma_figma__use_figma` that:
 2. Branches on a `nodeId` parameter (passed via the `inputs` object on `use_figma`):
    - **Whole-file** (no `nodeId`): walk `figma.root.children` (pages); for each page, find children whose type is `COMPONENT_SET`, or `COMPONENT` (top-level only — i.e. parent is the page, not nested), or `FRAME` (top-level). Serialize each. Return `{ mode: 'whole-file', pages: [{ id, name, nodes: [...serialized...] }, ...] }`.
    - **Scoped** (`nodeId` provided): `await figma.getNodeByIdAsync(nodeId)`; if missing, return `{ error: 'Node not found' }`; otherwise `serializeNode(node)` and return it directly (no `mode` field).
-3. Also collects the variables referenced by the target subtree(s). Walk every `boundVariables` entry across the serialized nodes, dedupe by variable id, look each up via `figma.variables.getVariableByIdAsync`, and return a sibling map `{ vars: { '<collection>/<name>': <resolvedValueForActiveMode> } }`. Use the "primary" mode of each variable's collection. (This is the same shape `get_variable_defs` would have produced from the local MCP.)
+3. Also collects the variables referenced by the target subtree(s). Walk every `boundVariables` entry across the serialized nodes, dedupe by variable id, look each up via `figma.variables.getVariableByIdAsync`, and return two sibling maps:
+   - `vars: { '<collection>/<name>': <resolvedValueForActiveMode> }` — the variable definitions, keyed by name. Same shape `get_variable_defs` would have produced from the local MCP. Use the "primary" mode of each variable's collection.
+   - `varIdMap: { '<VariableID>': '<collection>/<name>' }` — Figma variable ID → name lookup, built from the same dedupe pass. Per-layer lint rules (STRUCT011's per-layer annotations, STRUCT012's cross-domain check) need this to bridge node-level `boundVariables` (which reference variables by ID) to the variable names the engine reasons about. Without it, those rules can't fire.
 
-   The `use_figma` invocation returns a single payload; split it into `{ ctx, vars }` after.
+   The `use_figma` invocation returns a single payload; split it into `{ ctx, vars, varIdMap }` after.
 
 Save the response to `/tmp/adhd-lint/`:
 
 - `/tmp/adhd-lint/ctx.json` — the design-context payload (whole-file shape OR a single serialized subtree).
 - `/tmp/adhd-lint/vars.json` — the `vars` map.
+- `/tmp/adhd-lint/varidmap.json` — the `varIdMap` lookup.
 
 The `Write` tool creates the parent dir on demand. (No `mkdir` needed.)
 
@@ -73,6 +76,7 @@ Use the `Bash` tool. Redirect stdout (the engine's JSON summary) to a temp file 
 ```bash
 node plugins/adhd/lib/lint-engine/cli.js \
   --variable-defs /tmp/adhd-lint/vars.json \
+  --var-id-map /tmp/adhd-lint/varidmap.json \
   --design-context /tmp/adhd-lint/ctx.json \
   --globals-css <path-from-config-or-auto-detect> \
   --config adhd.config.ts \
