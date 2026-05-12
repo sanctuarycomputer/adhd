@@ -1,7 +1,7 @@
 ---
 description: "Pull a Figma Component Set into a React component source file. Inverse of /adhd:push-component. Updates only design-token lookup tables and union type members — function body, JSX, hooks, handlers, and imports are never modified. Reads adhd.config.ts and uses the mapping at components.<path>.figma.url. Pre-flight validates the Figma source using the same lint engine /adhd:lint uses; structural violations abort the pull."
 disable-model-invocation: true
-argument-hint: "<react-path | figma-url> [--allow-unbound]"
+argument-hint: "<react-path | figma-url> [--allow-unbound] [--annotate]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
@@ -84,12 +84,25 @@ node plugins/adhd/lib/lint-engine/cli.js \
   --config adhd.config.ts \
   --target "PullComponent Preflight" \
   --target-url "<figma-url>" \
-  --output /tmp/adhd-pull-component/preflight.md
+  --output /tmp/adhd-pull-component/preflight.md \
+  > /tmp/adhd-pull-component/stdout.json
 ```
+
+The stdout redirect captures the engine's JSON summary for Phase 2.6's optional `--annotate` step.
 
 Use the globals.css path from `config.cssEntry` if set, otherwise auto-detect: `example/app/globals.css` → `app/globals.css` → `src/app/globals.css`.
 
 Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Scan for STRUCT003/004/005 (variable-binding errors). Other rules' violations are noted for the final report but don't block.
+
+### Optional — annotate offending nodes in Figma (`--annotate`)
+
+If the user passed `--annotate` to `/adhd:pull-component`, push the preflight violations to Figma as annotations using the **same flow described in `/adhd:lint` Phase 6**:
+
+- Engine stdout: `/tmp/adhd-pull-component/stdout.json`
+- Distill to `/tmp/adhd-pull-component/violations.json` (filter for `nodeId`-bearing entries) using the same `node -e` snippet as lint Phase 6, with the pull-component paths substituted.
+- Run the same `use_figma` script (the ADHD lint category + per-node replace logic).
+
+Annotate BEFORE evaluating the abort condition below, so the designer sees the annotations even when the pull aborts. Without `--annotate`, skip silently.
 
 **If variable-binding errors exist:**
 

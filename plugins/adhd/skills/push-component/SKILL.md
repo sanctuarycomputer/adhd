@@ -1,7 +1,7 @@
 ---
 description: "Push a React component to the configured Figma file as a structured Component Set. Reads adhd.config.ts. Parses the component's variant axes from its TypeScript prop unions, generates a temp Next.js preview route, auto-starts the dev server if needed (and tears it down after), captures via generate_figma_design, wraps the captured frames into a Component Set with variant properties, rebinds raw values to existing design-system variables, and runs the same lint engine /adhd:lint uses as a preflight check before finalizing."
 disable-model-invocation: true
-argument-hint: "<component-path> [--max-variants <n>]"
+argument-hint: "<component-path> [--max-variants <n>] [--annotate]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma mcp__plugin_figma_figma__generate_figma_design
 ---
 
@@ -177,6 +177,25 @@ node plugins/adhd/lib/push-component/cli.js preflight \
 ```
 
 Read the report. Parse out error count and warning count.
+
+The preflight CLI also writes a JSON sidecar with the engine's full structured output at `/tmp/adhd-push-component/preflight-report.json` (same path as the report, `.md` → `.json`). Phase 10.5 uses this when `--annotate` is set.
+
+## Phase 10.5: Optional — annotate offending nodes in Figma (`--annotate`)
+
+If the user passed `--annotate` to `/adhd:push-component` AND the preflight surfaced any node-bound violations, push them to Figma as annotations using the **same flow described in `/adhd:lint` Phase 6**.
+
+Inputs:
+- Engine stdout: `/tmp/adhd-push-component/preflight-report.json`
+- Distill to `/tmp/adhd-push-component/violations.json` (filter for `nodeId`-bearing entries) using the same `node -e` snippet as lint Phase 6, just with the push-component paths substituted.
+- Run the same `use_figma` script (the ADHD lint category + per-node replace logic).
+
+After it returns, print:
+
+```
+✓ Annotated <updated> Figma node(s) in the "ADHD lint" category. Cleared <cleared> stale annotation(s).
+```
+
+Annotating happens AFTER the preflight CLI exits but BEFORE Phase 11's decide-or-rollback. That way the designer sees the annotations even when push aborts on errors. Without `--annotate`, skip silently.
 
 ## Phase 11: Decide and finalize OR roll back
 

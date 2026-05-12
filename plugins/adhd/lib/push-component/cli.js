@@ -413,6 +413,9 @@ function main() {
     // symmetric-pipeline assertion — same code path as /adhd:lint.
     const lintCli = path.resolve(__dirname, '..', 'lint-engine', 'cli.js');
     const { spawnSync } = require('node:child_process');
+    // Capture stdout (the engine's JSON summary including per-violation nodeIds)
+    // instead of inheriting, so the skill can pass it to the annotation script
+    // when --annotate is set. Stderr still inherits — engine warnings stay visible.
     const result = spawnSync('node', [
       lintCli,
       '--design-context', args['design-context'],
@@ -422,7 +425,12 @@ function main() {
       '--target', 'PushComponent Preflight',
       '--target-url', 'about:blank',
       '--output', args.output,
-    ], { encoding: 'utf8', stdio: 'inherit' });
+    ], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
+    // Sidecar JSON next to the markdown report.
+    const sidecar = args.output.replace(/\.md$/, '.json');
+    fs.writeFileSync(sidecar, result.stdout ?? '');
+    // Echo stdout to the parent process too, preserving prior behavior.
+    if (result.stdout) process.stdout.write(result.stdout);
     process.exit(result.status ?? 1);
   }
 

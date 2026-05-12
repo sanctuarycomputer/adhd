@@ -203,4 +203,13 @@ test('preflight subcommand produces a lint report', () => {
   assert.equal(result.status, 0, result.stderr);
   const report = fs.readFileSync(out, 'utf8');
   assert.match(report, /ADHD/);
+
+  // The preflight CLI also writes a JSON sidecar next to the markdown report
+  // (containing the engine's full structured output with per-violation nodeIds).
+  // This is what /adhd:push-component reads when --annotate is set.
+  const sidecar = out.replace(/\.md$/, '.json');
+  assert.ok(fs.existsSync(sidecar), 'expected JSON sidecar next to report');
+  const parsed = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
+  assert.ok(Array.isArray(parsed.structure));
+  assert.ok(Array.isArray(parsed.variable));
 });

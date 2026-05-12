@@ -29,11 +29,11 @@ After install, seven slash commands are available:
 | Command | Args | Direction | What it does |
 |---|---|---|---|
 | `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
-| `/adhd:lint` | `[<figma-url>]` | read-only | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices |
+| `/adhd:lint` | `[<figma-url>] [--annotate]` | read-only by default | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices. With `--annotate`, also writes Figma annotations on each offending node in an "ADHD lint" category. |
 | `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
-| `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
-| `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched) |
+| `/adhd:push-component` | `<path> [--max-variants <n>] [--annotate]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. `--annotate` annotates preflight violations on Figma nodes. |
+| `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound] [--annotate]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched). `--annotate` annotates preflight violations on Figma nodes. |
 | `/adhd:sync-docs` | — | install | Generates a design-system docs route in your Next.js consumer app. Tokens read live from globals.css; components are statically imported from adhd.config.ts at setup time — re-run after editing the components map. Excluded from production builds by default. |
 
 Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
@@ -85,6 +85,17 @@ Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` wi
 ```
 
 The scoped report covers the same rules (STRUCT001–010 + variable mismatches), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
+
+### Annotate violations in Figma (`--annotate`)
+
+By default `/adhd:lint` (and the preflight inside `/adhd:push-component` / `/adhd:pull-component`) is read-only — it writes a local markdown report and exits. Pass `--annotate` to also push each violation to Figma as a node-bound annotation in a dedicated **"ADHD lint"** category (red). Designers see them on the layers panel, and a re-run with `--annotate` cleans up stale ADHD-category annotations automatically (designer-authored annotations and other categories are never touched).
+
+```
+/adhd:lint --annotate                                                            # whole file
+/adhd:lint https://www.figma.com/design/<KEY>?node-id=91-18 --annotate           # scoped
+/adhd:push-component app/components/avatar/index.tsx --annotate                  # preflight
+/adhd:pull-component https://www.figma.com/design/<KEY>?node-id=91-18 --annotate # preflight
+```
 
 ### Push a component
 
