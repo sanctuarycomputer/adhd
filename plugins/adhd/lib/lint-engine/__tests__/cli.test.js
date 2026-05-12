@@ -166,17 +166,15 @@ test('cli with structure errors but no variable issues exits 1', () => {
   assert.ok(summary.errors >= 1);
 });
 
-test('STRUCT011: flags Figma variables whose names violate the naming convention', () => {
-  // Design system uses kebab-case (set in adhd.config.ts), but Figma has
-  // `Primitives/color/BrandPrimary` and `Primitives/radius/MD`. The rule
-  // aggregates both into ONE STRUCT011 violation on the scoped target's
-  // nodeId so designers see a single annotation on the frame rather than
-  // two near-identical entries. The collection prefix ("Primitives") is
-  // left alone — Figma convention treats collection names as PascalCase.
+test('STRUCT011: flags Figma variables whose names violate case OR Tailwind domain expectations', () => {
+  // Mix of three issue types in one frame — STRUCT011 aggregates them into a
+  // single annotation with separate "Case" and "Tailwind v4 domain" sections.
   const varDefs = tmp('vars.json', {
-    'Primitives/color/BrandPrimary': '#000',
-    'Primitives/radius/MD': '8px',
-    'Primitives/color/text/default': '#222', // compliant — shouldn't appear in the message
+    'Primitives/color/BrandPrimary': '#000',       // case violation (kebab-case project)
+    'Primitives/colur/brand-500':    '#111',       // domain typo (Levenshtein)
+    'Primitives/space/sm':           '0.5rem',     // domain synonym
+    'Primitives/widget/foo':         '?',          // unknown domain
+    'Primitives/color/text/default': '#222',       // compliant — shouldn't appear
   });
   const ctx = tmp('ctx.json', {
     id: '5:42', name: 'Logo', type: 'FRAME', layoutMode: 'VERTICAL',
@@ -200,12 +198,17 @@ test('STRUCT011: flags Figma variables whose names violate the naming convention
   const struct011 = summary.structure.find(v => v.rule === 'STRUCT011');
   assert.ok(struct011, 'expected a STRUCT011 violation');
   assert.equal(struct011.severity, 'warning');
-  // Anchored to the scoped frame for annotation.
   assert.equal(struct011.nodeId, '5:42');
-  // Aggregated message lists both offenders + their suggested kebab forms.
-  assert.match(struct011.message, /2 Figma variable\(s\) don't match the kebab-case convention/);
+  // Header counts ALL issues (1 case + 3 domain = 4).
+  assert.match(struct011.message, /4 variable-naming issue\(s\)/);
+  // Case section
+  assert.match(struct011.message, /Case \(kebab-case\):/);
   assert.match(struct011.message, /Primitives\/color\/BrandPrimary +→ +Primitives\/color\/brand-primary/);
-  assert.match(struct011.message, /Primitives\/radius\/MD +→ +Primitives\/radius\/md/);
+  // Domain section with all three "did you mean?" flavours
+  assert.match(struct011.message, /Tailwind v4 domain:/);
+  assert.match(struct011.message, /Primitives\/colur\/brand-500.*did you mean "color".*typo/);
+  assert.match(struct011.message, /Primitives\/space\/sm.*did you mean "spacing".*Tailwind v4 prefix/);
+  assert.match(struct011.message, /Primitives\/widget\/foo.*unknown domain "widget".*expected one of: color, spacing/);
   // Compliant variable is NOT listed.
   assert.doesNotMatch(struct011.message, /text\/default/);
 });

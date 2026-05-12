@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const { parseTheme } = require('./theme-parser');
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
-const { checkVariableNames } = require('./variable-namer');
+const { checkVariableNames, checkVariableDomains, TAILWIND_DOMAINS } = require('./variable-namer');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -103,26 +103,49 @@ function main() {
     structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
   }
 
-  // STRUCT011 — variable-name compliance. Aggregated into a SINGLE violation
-  // per lint run (rather than per-variable) so the annotation on the scoped
-  // frame is one tidy block instead of N near-identical entries. In whole-file
-  // mode there's no scope root, so we omit nodeId — the violation still
-  // appears in the report but doesn't annotate.
-  const badVarNames = checkVariableNames(Object.keys(varDefs || {}), namingConvention);
-  if (badVarNames.length > 0) {
+  // STRUCT011 — variable-name compliance. Combines TWO concerns into one
+  // aggregated violation so the designer sees a single "fix your variable
+  // names" block per lint run:
+  //   - Case: name doesn't follow the project's namingConvention
+  //     (kebab/Pascal/camel).
+  //   - Domain: first segment after the collection doesn't map to a Tailwind v4
+  //     token-domain prefix (color/spacing/text/font/etc.). Suggests a synonym
+  //     or typo correction via the "did you mean?" heuristic.
+  // In whole-file mode there's no scope root, so we omit nodeId — the
+  // violation still appears in the report but doesn't annotate.
+  const varKeys = Object.keys(varDefs || {});
+  const badCase = checkVariableNames(varKeys, namingConvention);
+  const badDomain = checkVariableDomains(varKeys);
+  if (badCase.length > 0 || badDomain.length > 0) {
     const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
     const scopedNodeId = isScoped ? designCtx.id : undefined;
-    const shown = badVarNames.slice(0, 8);
-    const lines = shown.map(v => `  • ${v.name}  →  ${v.suggestion}`);
-    const more = badVarNames.length > 8 ? `\n  +${badVarNames.length - 8} more` : '';
+    const sections = [];
+    if (badCase.length > 0) {
+      const shown = badCase.slice(0, 8);
+      const lines = shown.map(v => `  • ${v.name}  →  ${v.suggestion}`);
+      const more = badCase.length > 8 ? `\n  +${badCase.length - 8} more` : '';
+      sections.push(`Case (${namingConvention}):\n${lines.join('\n')}${more}`);
+    }
+    if (badDomain.length > 0) {
+      const shown = badDomain.slice(0, 8);
+      const lines = shown.map(v => {
+        const c = v.classification;
+        if (c.kind === 'synonym') return `  • ${v.name}  —  did you mean "${c.suggestion}"? (Tailwind v4 prefix)`;
+        if (c.kind === 'typo')    return `  • ${v.name}  —  did you mean "${c.suggestion}"? (looks like a typo)`;
+        return `  • ${v.name}  —  unknown domain "${v.domainSegment}"; expected one of: ${TAILWIND_DOMAINS.join(', ')}`;
+      });
+      const more = badDomain.length > 8 ? `\n  +${badDomain.length - 8} more` : '';
+      sections.push(`Tailwind v4 domain:\n${lines.join('\n')}${more}`);
+    }
+    const total = badCase.length + badDomain.length;
     structureViolations.push({
       rule: 'STRUCT011',
       severity: 'warning',
       nodeId: scopedNodeId,
       nodePath: 'Variables',
       message:
-        `${badVarNames.length} Figma variable(s) don't match the ${namingConvention} convention:\n` +
-        `${lines.join('\n')}${more}\n` +
+        `${total} variable-naming issue(s):\n` +
+        `${sections.join('\n\n')}\n\n` +
         `Rename them in Figma (right-click the variable → "Rename") to match.`,
       deepLink: scopedNodeId
         ? 'https://figma.com/design/' + fileKey + '?node-id=' + scopedNodeId.replace(':', '-')
