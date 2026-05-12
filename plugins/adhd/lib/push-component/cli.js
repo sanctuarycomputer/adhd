@@ -33,7 +33,7 @@ function printUsage() {
   cli.js parse <component-path> --output <manifest.json> [--import-path <path>] [--max-variants <n>]
   cli.js generate-preview --manifest <manifest.json> --output <preview.tsx>
   cli.js consolidation-script --manifest <manifest.json> --captured-page-id <id> --reverse-index <ri.json> --output <script.js>
-  cli.js preflight --design-context <ctx.json> --variable-defs <vars.json> --globals-css <path> --config <path> --output <report.md>`);
+  cli.js preflight --design-context <ctx.json> --variable-defs <vars.json> --globals-css <path> --config <path> --output <report.md> [--var-id-map <path>]`);
 }
 
 function inferImportPath(componentPath) {
@@ -416,7 +416,7 @@ function main() {
     // Capture stdout (the engine's JSON summary including per-violation nodeIds)
     // instead of inheriting, so the skill can pass it to the annotation script
     // when --annotate is set. Stderr still inherits — engine warnings stay visible.
-    const result = spawnSync('node', [
+    const lintArgs = [
       lintCli,
       '--design-context', args['design-context'],
       '--variable-defs', args['variable-defs'],
@@ -425,7 +425,15 @@ function main() {
       '--target', 'PushComponent Preflight',
       '--target-url', 'about:blank',
       '--output', args.output,
-    ], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
+    ];
+    // Forward --var-id-map when provided — required for STRUCT011 per-layer,
+    // STRUCT012, STRUCT015, and STRUCT016 to fire. Older callers that don't
+    // pass it get the legacy aggregated emissions; newer callers (the SKILL
+    // after the fingerprint commit) always pass it.
+    if (args['var-id-map']) {
+      lintArgs.push('--var-id-map', args['var-id-map']);
+    }
+    const result = spawnSync('node', lintArgs, { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
     // Sidecar JSON next to the markdown report.
     const sidecar = args.output.replace(/\.md$/, '.json');
     fs.writeFileSync(sidecar, result.stdout ?? '');
