@@ -131,7 +131,7 @@ export type PropSchema = {
 export type ComponentEntry = {
   slug: string;
   rawPath: string;
-  Component: React.ComponentType<any> | null;
+  Component: React.ComponentType<Record<string, unknown>> | null;
   props: Record<string, PropSchema>;
 };
 
@@ -145,10 +145,10 @@ type RawEntry = {
 // Resolve the renderable function: prefer the default export, then the
 // first exported function. Keeps user components working without forcing
 // a particular export style.
-function resolveComponent(mod: Record<string, unknown>): React.ComponentType<any> | null {
-  if (typeof mod.default === "function") return mod.default as React.ComponentType<any>;
+function resolveComponent(mod: Record<string, unknown>): React.ComponentType<Record<string, unknown>> | null {
+  if (typeof mod.default === "function") return mod.default as React.ComponentType<Record<string, unknown>>;
   for (const v of Object.values(mod)) {
-    if (typeof v === "function") return v as React.ComponentType<any>;
+    if (typeof v === "function") return v as React.ComponentType<Record<string, unknown>>;
   }
   return null;
 }
@@ -556,8 +556,11 @@ export default function ComponentPage() {
 
   const { rawPath, Component, props } = entry;
 
-  // Resolve current prop values from the URL.
-  const current: Record<string, any> = {};
+  // Resolve current prop values from the URL. Values are constrained to the
+  // three shapes the page knows how to source — string (for union + string
+  // schemas), boolean, and number. Anything else is omitted.
+  type PropValue = string | boolean | number;
+  const current: Record<string, PropValue> = {};
   for (const [name, def] of Object.entries(props) as Array<[string, PropSchema]>) {
     const v = sp.get(name);
     if (v == null) continue;
@@ -586,7 +589,10 @@ export default function ComponentPage() {
           <div className="flex flex-col gap-2">
             {Object.entries(props).map(([name, def]) => {
               if (def.type === "union" && def.values) {
-                return <PropToggle key={name} name={name} kind="union" values={def.values} value={current[name] ?? def.values[0]} />;
+                // For unions, current[name] is always a string (validated at
+                // load time against def.values). The cast narrows from PropValue.
+                const v = (current[name] as string | undefined) ?? def.values[0];
+                return <PropToggle key={name} name={name} kind="union" values={def.values} value={v} />;
               }
               if (def.type === "boolean") {
                 return <PropToggle key={name} name={name} kind="boolean" value={String(current[name] ?? false)} />;

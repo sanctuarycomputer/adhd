@@ -120,6 +120,18 @@ test('COMPONENT_MAP_TSX resolves a renderable function via default-then-named fa
   assert.match(COMPONENT_MAP_TSX, /mod\.default/);
 });
 
+test('no template contains an explicit `any` type — consumer builds with no-explicit-any pass', () => {
+  // Generated docs files are read by the consumer's TypeScript compiler.
+  // If their ESLint config enables @typescript-eslint/no-explicit-any (the
+  // typical strict setup), even one `any` in our templates breaks their build.
+  // The templates use Record<string, unknown> + targeted casts instead.
+  for (const [name, content] of Object.entries({ LAYOUT_TSX, INDEX_PAGE_TSX, TOKENS_PAGE_TSX, COMPONENT_PAGE_TSX, COMPONENT_MAP_TSX })) {
+    // Word-boundary check: catches `: any`, `as any`, `Foo<any>`, etc. but not
+    // identifiers that happen to contain "any" (e.g. "Company", "many").
+    assert.doesNotMatch(content, /\bany\b/, `${name} contains an explicit \`any\` — consumers with no-explicit-any will fail to build`);
+  }
+});
+
 test('none of the templates contain "ADHD" outside the marker', () => {
   // Two filename-style exceptions are allowed:
   //   1. `adhd.config.ts` — the consumer's own config artifact.
