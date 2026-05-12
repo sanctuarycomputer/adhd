@@ -49,6 +49,33 @@ test('does not emit violations for variables that match', () => {
   assert.equal(matches.length, 0);
 });
 
+test('Figma\'s raw {r,g,b,a} object compares equal to code\'s #hex (regression for the "primary" false-conflict)', () => {
+  // The user's reactor file kept reporting STRUCT016 on color/primary:
+  // "code #0a0a0a vs figma #0a0a0a — same value." Root cause was two
+  // bugs stacked: (1) the figma side arrives as {r:0.039,g:0.039,b:0.039,a:1}
+  // (Figma's raw color form, channels 0..1), and (2) inferDomain was
+  // receiving the COLLECTION-STRIPPED token ("primary"), so it returned
+  // "unknown" instead of "color" — meaning valuesMatch dispatched to
+  // the strict-equality default branch and never normalized the rgb
+  // object to hex.
+  const violations = categorizeVariables(
+    { 'color/primary': { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    { primitives: { '--color-primary': '#0a0a0a' }, exposure: {}, light: {}, dark: {} },
+  );
+  assert.equal(violations.length, 0);
+});
+
+test('Capitalized Figma collection names still resolve their domain ("Color/primary" → color)', () => {
+  // Designer's collection is "Color" (capital C). Pre-fix, inferDomain
+  // was case-sensitive and missed this — domain came back "unknown" and
+  // the conflict surfaced even when values matched.
+  const violations = categorizeVariables(
+    { 'Color/primary': { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    { primitives: { '--color-primary': '#0a0a0a' }, exposure: {}, light: {}, dark: {} },
+  );
+  assert.equal(violations.length, 0);
+});
+
 test('treats hex case as semantically identical', () => {
   const violations = categorizeVariables(
     { 'Primitives/color/x': '#5E3AEE' },
