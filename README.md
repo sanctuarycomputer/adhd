@@ -24,7 +24,7 @@ Then install ADHD itself:
 
 All three commands are persistent — Claude Code remembers the marketplaces and the enabled plugins across sessions. Run them once per machine.
 
-After install, seven slash commands are available:
+After install, nine slash commands are available:
 
 | Command | Args | Direction | What it does |
 |---|---|---|---|
@@ -33,7 +33,9 @@ After install, seven slash commands are available:
 | `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>] [--annotate]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. `--annotate` annotates preflight violations on Figma nodes. |
+| `/adhd:push-all-components` | `[--continue-on-error] [--max-variants <n>] [--annotate]` | code → Figma | Bulk version of `push-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. |
 | `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound] [--annotate]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched). `--annotate` annotates preflight violations on Figma nodes. |
+| `/adhd:pull-all-components` | `[--continue-on-error] [--allow-unbound] [--annotate]` | Figma → code | Bulk version of `pull-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. |
 | `/adhd:sync-docs` | — | install | Generates a design-system docs route in your Next.js consumer app. Tokens read live from globals.css; components are statically imported from adhd.config.ts at setup time — re-run after editing the components map. Excluded from production builds by default. |
 
 Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
