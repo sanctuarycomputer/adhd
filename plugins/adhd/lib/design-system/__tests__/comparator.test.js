@@ -205,4 +205,46 @@ test('valuesEqual: still flags real value differences after normalization', () =
   assert.equal(r.same.length, 0);
 });
 
+test('codeOnly: filters out Tailwind-default-origin tokens (additive policy)', () => {
+  // Pushing the full Tailwind palette into Figma is rarely intended — both
+  // sides assume the defaults implicitly. The comparator drops
+  // Tailwind-default-origin tokens from codeOnly so push doesn't create
+  // hundreds of redundant variables. User-authored tokens at the same path
+  // keep the flag cleared during parse and DO surface.
+  const code = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
+      { domain: 'color', path: 'brand',     values: { default: { type: 'literal', value: '#5e3aee' } }, fromTailwindDefault: false },
+    ],
+    styles: { effects: [] },
+  };
+  const figma = { tokens: [], styles: { effects: [] } };
+  const diff = compareDesignSystems(code, figma);
+  // Only the user-authored token surfaces in codeOnly.
+  assert.equal(diff.codeOnly.length, 1);
+  assert.equal(diff.codeOnly[0].path, 'brand');
+});
+
+test('Tailwind-default-origin token with a Figma value mismatch still surfaces as conflict', () => {
+  // The filter is codeOnly-specific. If Figma has a different value for a
+  // Tailwind default (designer overrode `--color-zinc-500`), that's real
+  // state and stays in `conflict`.
+  const code = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
+    ],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#888888' } } },
+    ],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.codeOnly.length, 0);
+  assert.equal(diff.conflict.length, 1);
+  assert.equal(diff.conflict[0].path, 'zinc/500');
+});
+
 

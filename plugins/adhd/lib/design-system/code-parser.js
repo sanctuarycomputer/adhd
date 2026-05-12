@@ -191,6 +191,81 @@ function valueFromString(raw) {
   return { type: 'literal', value: trimmed };
 }
 
+// Convert a CSS length string ("0.625rem", "16px", "1.5") to pixels.
+// rem/em use a 16px base — Tailwind v4's default and the figma-write-
+// actions's convention. Returns null if the input isn't a simple length.
+function lengthToPx(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  const m = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const unit = m[2] || '';
+  if (unit === 'rem' || unit === 'em') return n * 16;
+  return n;
+}
+
+// Try to resolve a CSS value expression to a literal `<N>px` string by
+// looking up referenced variables in `rawVars`. Handles the patterns
+// designers actually write in `@theme inline {}`:
+//
+//   var(--name)                          → resolve --name (recursive)
+//   calc(var(--name) ± Npx | ± Nrem)     → arithmetic
+//   calc(var(--name) * N | / N)          → arithmetic
+//   plain literals ("0.5rem", "8px")     → returned as `<N>px`
+//
+// Returns null when the expression contains anything more elaborate (two
+// vars, nested calcs, percentage math, etc.) — caller falls back to the
+// existing behavior (skipping the override). Recursion is bounded by
+// `depth` to prevent cycles in pathological aliases.
+function resolveToPxLiteral(raw, rawVars, depth = 0) {
+  if (depth > 8) return null;
+  const s = String(raw || '').trim();
+  if (!s) return null;
+
+  // Plain literal — already a length.
+  const direct = lengthToPx(s);
+  if (direct != null) return direct + 'px';
+
+  // var(--name) alone.
+  const varOnly = /^var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,[^)]*)?\)$/.exec(s);
+  if (varOnly) {
+    const target = rawVars.get(varOnly[1]);
+    if (target == null) return null;
+    return resolveToPxLiteral(target, rawVars, depth + 1);
+  }
+
+  // calc(<var-or-num> <op> <var-or-num>) — restricted form.
+  const calc = /^calc\(\s*(.+?)\s*\)$/.exec(s);
+  if (calc) {
+    const inner = calc[1];
+    // Two operands separated by + - * /. Operators must have surrounding
+    // whitespace per the CSS spec (calc(8px+4px) is invalid).
+    const opSplit = /^(.+?)\s+([+\-*/])\s+(.+)$/.exec(inner);
+    if (!opSplit) return null;
+    const [, lhsRaw, op, rhsRaw] = opSplit;
+    const lhs = resolveToPxLiteral(lhsRaw, rawVars, depth + 1);
+    const rhs = resolveToPxLiteral(rhsRaw, rawVars, depth + 1);
+    // For * and /, one side is a plain number (no unit). For +/-, both
+    // must resolve to lengths.
+    const lhsNum = lhs ? lengthToPx(lhs) : lengthToPx(lhsRaw);
+    const rhsNum = rhs ? lengthToPx(rhs) : lengthToPx(rhsRaw);
+    if (lhsNum == null || rhsNum == null) return null;
+    let val;
+    switch (op) {
+      case '+': val = lhsNum + rhsNum; break;
+      case '-': val = lhsNum - rhsNum; break;
+      case '*': val = lhsNum * rhsNum; break;
+      case '/': val = rhsNum === 0 ? null : lhsNum / rhsNum; break;
+      default:  return null;
+    }
+    if (val == null || !Number.isFinite(val)) return null;
+    return val + 'px';
+  }
+
+  return null;
+}
+
 function findExtractedDarkBlocks(css) {
   // Extract @media (prefers-color-scheme: dark) { :root { ... } } bodies
   const out = [];
@@ -340,8 +415,15 @@ function parseCodeDesignSystem(css, opts = {}) {
   }
 
   const tokens = new Map(); // domain+path → token
+  // Every `--name: rawValue` declaration we see, regardless of domain.
+  // Powers `@theme inline {}` expression resolution: when a designer writes
+  // `--radius-sm: calc(var(--radius) - 4px)`, we need to look up --radius's
+  // literal to compute the resolved 6px and override the Tailwind default.
+  // Storing raw strings (not parsed values) keeps the resolver simple.
+  const rawVars = new Map();
 
-  const upsert = (cssVar, mode, valueRaw) => {
+  const upsert = (cssVar, mode, valueRaw, meta) => {
+    rawVars.set(cssVar, valueRaw);
     const path = pathFromCssVar(cssVar);
     const domain = inferDomain(cssVar);
     if (domain === 'unknown') return;
@@ -349,7 +431,21 @@ function parseCodeDesignSystem(css, opts = {}) {
     if (!tokens.has(key)) {
       tokens.set(key, { domain, path, values: {}, cssVar });
     }
-    tokens.get(key).values[mode] = valueFromString(valueRaw);
+    const tok = tokens.get(key);
+    tok.values[mode] = valueFromString(valueRaw);
+    // Origin marker — set ONLY when the token first lands (so a later
+    // user-globals upsert clears it back to "authored"). The comparator
+    // uses this to exclude pure-default tokens from codeOnly: pushing the
+    // entire Tailwind palette into Figma is rarely what the user wants,
+    // and the additive policy lets implicit defaults stay implicit on
+    // both sides. Tokens in `same` or `conflict` still surface — those
+    // are real state.
+    if (meta && meta.fromTailwindDefault) {
+      if (!('fromTailwindDefault' in tok)) tok.fromTailwindDefault = true;
+    } else {
+      // Any user-authored upsert overrides the default flag.
+      tok.fromTailwindDefault = false;
+    }
   };
 
   // 0. Tailwind defaults (optional). Merged FIRST so that user's globals.css
@@ -358,7 +454,7 @@ function parseCodeDesignSystem(css, opts = {}) {
     const body = loadTailwindDefaultsBody();
     const entries = parseEntries(body);
     for (const [cssVar, raw] of Object.entries(entries)) {
-      upsert(cssVar, 'default', raw);
+      upsert(cssVar, 'default', raw, { fromTailwindDefault: true });
     }
     // Tailwind v4 doesn't ship explicit `--spacing-N` or `--radius-{none,full}`
     // variables — most utility classes derive from --spacing at build time
@@ -368,6 +464,7 @@ function parseCodeDesignSystem(css, opts = {}) {
     for (const t of synthetic) {
       const key = t.domain + ':' + t.path;
       if (!tokens.has(key)) {
+        t.fromTailwindDefault = true;
         tokens.set(key, t);
       }
     }
@@ -455,7 +552,18 @@ function parseCodeDesignSystem(css, opts = {}) {
           target: refMatch[1].replace(/^--/, ''),
         });
       }
-      // else ignore (raw values in @theme inline are unusual)
+      // @theme inline can ALSO carry value overrides — most often as
+      // calc()/var() expressions that resolve to a concrete length at
+      // runtime (e.g. `--radius-sm: calc(var(--radius) - 4px)`). Without
+      // this resolution step, the parser would silently fall back to the
+      // Tailwind default for --radius-sm, producing false conflicts
+      // against Figma's resolved value. We try to resolve every inline
+      // entry to a literal `<N>px` string and override the default; if
+      // the expression is too complex, we leave the default alone.
+      const resolved = resolveToPxLiteral(raw, rawVars);
+      if (resolved != null) {
+        upsert(cssVar, 'default', resolved);
+      }
     }
     themeOpenRe2.lastIndex = i + 1;
   }

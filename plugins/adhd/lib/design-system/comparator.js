@@ -130,6 +130,15 @@ function compareDesignSystems(code, figma) {
     }
   }
 
+  // Filter Tailwind-default-origin tokens out of codeOnly. Pushing the
+  // entire Tailwind palette into Figma is rarely the user's intent — the
+  // tokens are implicit on both sides (Tailwind ships them; Figma users
+  // assume them). User-authored tokens at the same path keep the flag
+  // cleared during parse, so genuine overrides DO push. Tokens that
+  // surface in `same` or `conflict` are unaffected — those reflect real
+  // state on the Figma side already.
+  const filteredCodeOnly = codeOnly.filter(t => t.fromTailwindDefault !== true);
+
   // ── Effect styles ──────────────────────────────────────────────────────
   // Diff by name only. Each side may not have styles at all (older callers).
   // The full effect-payload comparison is intentionally not attempted: Figma
@@ -148,7 +157,7 @@ function compareDesignSystems(code, figma) {
     },
   };
 
-  return { same, conflict, codeOnly, figmaOnly, styles };
+  return { same, conflict, codeOnly: filteredCodeOnly, figmaOnly, styles };
 }
 
 module.exports = { compareDesignSystems, valuesEqual };

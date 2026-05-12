@@ -66,6 +66,62 @@ test('var(--x) references become aliases', () => {
   assert.deepEqual(t.values.dark,  { type: 'alias', target: 'gold/900' });
 });
 
+test('@theme inline with calc(var(--X) ± Npx) resolves to a literal override against the Tailwind default', () => {
+  // The real-world shadcn/Tailwind v4 pattern: `--radius` lives in :root,
+  // and the four canonical radius variants derive from it via calc().
+  // Without the resolver, the parser silently fell back to Tailwind's
+  // `--radius-sm: 0.25rem` defaults, which mismatch Figma's resolved
+  // 6/8/10/14px values and produced spurious conflicts on every push.
+  const ds = parseCodeDesignSystem(`
+    :root { --radius: 0.625rem; }
+    @theme inline {
+      --radius-sm: calc(var(--radius) - 4px);
+      --radius-md: calc(var(--radius) - 2px);
+      --radius-lg: var(--radius);
+      --radius-xl: calc(var(--radius) + 4px);
+    }
+  `, { includeTailwindDefaults: true });
+  const byPath = (p) => ds.tokens.find(t => t.domain === 'radius' && t.path === p);
+  // 0.625rem = 10px; the four overrides resolve to 6 / 8 / 10 / 14px.
+  assert.equal(byPath('sm').values.default.value, '6px');
+  assert.equal(byPath('md').values.default.value, '8px');
+  assert.equal(byPath('lg').values.default.value, '10px');
+  assert.equal(byPath('xl').values.default.value, '14px');
+  // After a user override the Tailwind-default marker is cleared, so the
+  // override pushes into Figma (it's authored intent, not implicit default).
+  assert.equal(byPath('sm').fromTailwindDefault, false);
+});
+
+test('@theme inline: calc with multiplier resolves (var * N)', () => {
+  // Tailwind's own pattern for the spacing scale: `--spacing-N: calc(var(--spacing) * N)`.
+  const ds = parseCodeDesignSystem(`
+    :root { --gap: 0.5rem; }
+    @theme inline {
+      --spacing-double: calc(var(--gap) * 2);
+    }
+  `);
+  const t = ds.tokens.find(x => x.domain === 'spacing' && x.path === 'double');
+  // 0.5rem * 2 = 16px
+  assert.equal(t.values.default.value, '16px');
+});
+
+test('@theme inline: unresolvable expression leaves Tailwind default in place', () => {
+  // The resolver only handles patterns it can confidently reduce to a
+  // literal length. A var that's not defined anywhere can't be resolved
+  // → leave the override out and keep the Tailwind default. The diff
+  // surfaces the conflict only if the runtime value diverges (which we
+  // can't know from text alone).
+  const ds = parseCodeDesignSystem(`
+    @theme inline {
+      --radius-sm: calc(var(--never-defined) + 4px);
+    }
+  `, { includeTailwindDefaults: true });
+  const t = ds.tokens.find(x => x.domain === 'radius' && x.path === 'sm');
+  // Falls back to Tailwind's `--radius-sm: 0.25rem` default literal.
+  assert.equal(t.values.default.value, '0.25rem');
+  assert.equal(t.fromTailwindDefault, true);
+});
+
 test('@theme inline entries land in ds.exposure, not ds.tokens', () => {
   const ds = parseCodeDesignSystem(`
     :root { --brand-surface: var(--color-gold-100); }

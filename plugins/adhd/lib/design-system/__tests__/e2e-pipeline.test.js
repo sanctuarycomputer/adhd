@@ -57,17 +57,35 @@ test('e2e: push against synced figma produces zero create-variable actions', () 
   assert.equal(countKind(actions, 'create-effect-style'), 0);
 });
 
-test('e2e: empty figma — push produces create-variable actions for every variable token', () => {
+test('e2e: empty figma — push produces create-variable actions ONLY for user-authored tokens', () => {
+  // After the Tailwind-defaults floor fix: codeOnly no longer surfaces
+  // tokens that came from `tailwind-defaults.css` or the synthetic utility
+  // scale. The user's example/globals.css authors ~18 tokens of its own
+  // (custom colors, the chart palette, --radius and friends, sidebar
+  // semantics, font families); those are what push should create. Earlier
+  // behavior — flooding 400+ create-variable actions into Figma to bake
+  // in the full Tailwind palette — was a comparator bug, not a feature.
   const { diff, actions } = pipeline('figma-empty.json', { direction: 'push' });
   assert.equal(diff.same.length, 0);
   assert.equal(diff.conflict.length, 0);
   assert.equal(diff.figmaOnly.length, 0);
-  assert.ok(diff.codeOnly.length > 400, `expected hundreds of codeOnly, got ${diff.codeOnly.length}`);
-  // codeOnly with non-shadow domains → create-variable; shadows → create-effect-style.
+  assert.ok(diff.codeOnly.length > 0 && diff.codeOnly.length < 100,
+    `expected a focused set of user-authored codeOnly tokens, got ${diff.codeOnly.length}`);
+  // Every codeOnly entry must be user-authored — no Tailwind-default
+  // tokens leak through the filter.
+  for (const t of diff.codeOnly) {
+    assert.notEqual(t.fromTailwindDefault, true,
+      `Tailwind-default token leaked into codeOnly: ${t.domain}:${t.path}`);
+  }
   const nonShadowCodeOnly = diff.codeOnly.filter(t => t.domain !== 'shadow').length;
   assert.equal(countKind(actions, 'create-variable'), nonShadowCodeOnly,
     'create-variable count should equal non-shadow codeOnly count');
-  assert.ok(countKind(actions, 'create-effect-style') > 0, 'expected some effect-style creates for shadows');
+  // example/globals.css doesn't author its own shadow tokens — it inherits
+  // them from Tailwind, which the floor filter excludes from codeOnly. A
+  // project that DID author custom shadows would see create-effect-style
+  // actions; users who want the full Tailwind shadow palette in Figma can
+  // re-declare them explicitly in `@theme {}`.
+  assert.equal(countKind(actions, 'create-effect-style'), 0);
 });
 
 test('e2e: empty figma — pull is a no-op (nothing in figma to pull)', () => {
