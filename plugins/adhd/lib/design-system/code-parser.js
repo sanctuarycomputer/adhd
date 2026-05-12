@@ -583,4 +583,4 @@ function parseCodeDesignSystem(css, opts = {}) {
   return { tokens: tokenList, exposure, styles };
 }
 
-module.exports = { parseCodeDesignSystem, pathFromCssVar, inferDomain };
+module.exports = { parseCodeDesignSystem, pathFromCssVar, inferDomain, synthesizeTailwindUtilityScale };

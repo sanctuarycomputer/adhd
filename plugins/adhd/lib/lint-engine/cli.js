@@ -20,6 +20,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseTheme } = require('./theme-parser');
+const { synthesizeTailwindUtilityScale } = require('../design-system/code-parser');
 
 // Tailwind v4 ships a full default @theme: --color-white, --color-black,
 // --color-red-500, --spacing, the --text-* / --leading-* scales, etc.
@@ -44,7 +45,19 @@ function loadTailwindDefaultPrimitives() {
   const normalized = css
     .replace(/@theme\s+default\s+inline\s*\{/g, '@theme inline {')
     .replace(/@theme\s+default\s*\{/g, '@theme {');
-  return parseTheme(normalized).primitives;
+  const parsed = parseTheme(normalized).primitives;
+  // Tailwind v4 doesn't ship explicit `--spacing-N` / `--radius-{none,full}`
+  // / `--opacity-N` variables in the @theme block — most utility classes
+  // derive from `--spacing` at build time (`p-4` → `calc(var(--spacing) * 4)`).
+  // The design-system code-parser synthesizes these for push/pull-tokens; the
+  // lint engine needs the same view or it falsely flags `spacing/0`,
+  // `radius/full`, `opacity-50`, etc. as missing from code.
+  for (const t of synthesizeTailwindUtilityScale()) {
+    if (!(t.cssVar in parsed)) {
+      parsed[t.cssVar] = t.values.default.value;
+    }
+  }
+  return parsed;
 }
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');

@@ -65,6 +65,36 @@ test('Figma\'s raw {r,g,b,a} object compares equal to code\'s #hex (regression f
   assert.equal(violations.length, 0);
 });
 
+test('synthesized Tailwind scale (spacing/0, radius/full, etc.) is recognized via the cli\'s default-loader, not just the @theme parser', () => {
+  // Regression for the user-reported false STRUCT015 on spacing/0:
+  // Tailwind v4 doesn\'t ship explicit `--spacing-N` variables in its
+  // @theme block — it has `--spacing: 0.25rem` and synthesizes the rest
+  // at build time. The lint engine's loadTailwindDefaultPrimitives must
+  // call synthesizeTailwindUtilityScale to mirror that, or else `spacing/0`
+  // (a perfectly canonical Tailwind path) shows up as missing-in-code.
+  //
+  // This test runs against the categorizer with a manually-built theme
+  // that mirrors what the cli's loader produces — guards the join point
+  // between the two modules.
+  const { synthesizeTailwindUtilityScale } = require('../../design-system/code-parser');
+  const primitives = {};
+  for (const t of synthesizeTailwindUtilityScale()) {
+    primitives[t.cssVar] = t.values.default.value;
+  }
+  const theme = { primitives, exposure: {}, light: {}, dark: {} };
+
+  // Canonical Tailwind paths match the synthesized scale → no violations.
+  assert.equal(categorizeVariables({ 'spacing/0': 0 }, theme).length, 0);
+  assert.equal(categorizeVariables({ 'spacing/4': 16 }, theme).length, 0);
+  assert.equal(categorizeVariables({ 'radius/full': '9999px' }, theme).length, 0);
+
+  // Non-canonical paths still flag as missing (correct — `spacing/space/0`
+  // isn\'t a Tailwind path; the designer needs to rename).
+  const v = categorizeVariables({ 'spacing/space/0': 0 }, theme);
+  assert.equal(v.length, 1);
+  assert.equal(v[0].status, 'missing');
+});
+
 test('shadcn pattern: --color-primary aliases --primary in :root, figma rgb-object resolves through the alias chain', () => {
   // Pre-fix, the categorizer found `--color-primary: var(--primary)` in
   // the @theme inline exposure layer, compared its raw `var(--primary)`
