@@ -215,6 +215,7 @@ export default function DesignSystemDocsLayout({ children }: { children: React.R
         <Link href={\`__ROUTE_PATH__\`} className="block mb-6">
           <h1 className="text-sm font-medium">Design System</h1>
           <p className="text-[10px] text-zinc-500">Internal — not indexed</p>
+          <p className="text-[10px] text-zinc-500 mt-1">Last built __SYNC_AT__</p>
         </Link>
 
         <nav className="flex flex-col gap-4 text-sm">

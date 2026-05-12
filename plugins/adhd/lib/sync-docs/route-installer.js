@@ -122,12 +122,24 @@ function installRoute(projectRoot, opts) {
   // `tokens/[domain]/page.*` to the docs root where `layout.*` lives.
   const layoutModule = prodExcluded ? '../../layout.design-system' : '../../layout';
 
+  // Sync timestamp baked into the layout's sidebar header. UTC, no locale
+  // dependency, format YYYY-MM-DD HH:MM UTC. Designers reading the docs
+  // route see "Last built 2026-05-11 03:14 UTC" — a clear signal of
+  // whether what they're looking at is fresh or stale.
+  const syncAt = (() => {
+    const d = opts.now instanceof Date ? opts.now : new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+           `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+  })();
+
   // Per-template placeholder substitution.
   for (const t of targets) {
     t.body = t.body
       .replace(/__ROUTE_PATH__/g, routeUrl)
       .replace(/__CSS_ENTRY__/g, cssEntry)
-      .replace(/__LAYOUT_MODULE__/g, layoutModule);
+      .replace(/__LAYOUT_MODULE__/g, layoutModule)
+      .replace(/__SYNC_AT__/g, syncAt);
   }
 
   // Remove stale marker-bearing files from previous template layouts (e.g. the

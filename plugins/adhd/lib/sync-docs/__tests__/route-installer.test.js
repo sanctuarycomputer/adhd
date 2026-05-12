@@ -227,6 +227,25 @@ test('componentMap.tsx handles a missing component source file (empty props bake
   assert.match(body, /props: \{\}/);
 });
 
+test('layout bakes a UTC "Last built" timestamp in the sidebar header', () => {
+  const root = makeTempProject();
+  writeLogoFixture(root);
+  installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
+    components: SAMPLE_COMPONENTS, cssEntry: 'app/globals.css',
+    // Injected Date for deterministic snapshot — production runs use `new Date()`.
+    now: new Date(Date.UTC(2026, 4, 11, 3, 14)), // 2026-05-11 03:14 UTC
+  });
+  const layout = fs.readFileSync(
+    path.join(root, 'app', '(design-system)', '-docs', 'layout.design-system.tsx'),
+    'utf8',
+  );
+  // Format: YYYY-MM-DD HH:MM UTC, baked verbatim
+  assert.match(layout, /Last built 2026-05-11 03:14 UTC/);
+  // Placeholder fully substituted
+  assert.doesNotMatch(layout, /__SYNC_AT__/);
+});
+
 test('layout sidebar links use absolute hrefs derived from the route segment', () => {
   const root = makeTempProject();
   writeLogoFixture(root);
