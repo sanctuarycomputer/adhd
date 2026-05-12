@@ -239,10 +239,11 @@ Question: "`<figmaName>` is bound in this component but doesn't exist in code's 
 Header: "Variable missing"
 Options:
   - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
+  - "Annotate only — don't sync this variable"
   - "Abort the pull"
 ```
 
-If "Abort," stop and emit the abort message (below). If "Add," record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array.
+If "Abort," stop and emit the abort message (below). If "Add," record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array. If "Annotate only," record nothing — the pull proceeds with the binding referencing a variable that doesn't exist in code; the lint annotation in Figma stays visible so the designer can fix later. (Tip: this is the right pick when the designer plans to address the missing variable in a separate `/adhd:pull-tokens` run rather than inline.)
 
 **If STRUCT016 violations exist (layer binds variable whose value differs from code's):**
 
@@ -253,11 +254,11 @@ Question: "`<figmaName>` differs between Figma and code:\n  code:  <local-normal
 Header: "Value conflict"
 Options:
   - "Take Figma's value (update globals.css)"
-  - "Keep code's value (component renders with code's value; Figma stays divergent)"
+  - "Annotate only — don't sync this variable"
   - "Abort the pull"
 ```
 
-If "Abort," same path as STRUCT015 abort. If "Keep code," record nothing (pull continues with code's value — Figma drift is separate). If "Take Figma," record `{ figmaName, value: figma-normalized }` to `actions-input`.
+If "Abort," same path as STRUCT015 abort. If "Annotate only," record nothing — the pull continues with code's value as-is and the Figma annotation stays in place so the designer can decide later (run `/adhd:pull-tokens` to take Figma's value, or `/adhd:push-tokens` to push code's value to Figma). If "Take Figma," record `{ figmaName, value: figma-normalized }` to `actions-input`.
 
 ### Build + apply the write actions
 

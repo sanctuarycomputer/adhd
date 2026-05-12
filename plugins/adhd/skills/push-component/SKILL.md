@@ -233,9 +233,11 @@ Question: "`<figmaName>` is bound by this push but doesn't exist in code's desig
 Header: "Variable missing"
 Options:
   - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
-  - "Skip — leave the binding referencing a missing variable (component renders broken until fixed)"
+  - "Annotate only — don't sync this variable"
   - "Abort the push (roll back)"
 ```
+
+"Annotate only" finalizes the push with the binding referencing a variable that doesn't exist in code — the component will render broken until the designer addresses it. The Figma annotation stays in place to surface the issue.
 
 For each unique STRUCT016 variable:
 
@@ -245,11 +247,13 @@ Header: "Value conflict"
 Options:
   - "Take code's value (update Figma to match code)"
   - "Take Figma's value (write to globals.css; alias-aware)"
-  - "Skip — leave both sides divergent"
+  - "Annotate only — don't sync this variable"
   - "Abort the push (roll back)"
 ```
 
-Record each non-skip / non-abort choice into one of two arrays:
+"Annotate only" finalizes the push leaving both sides divergent — Figma keeps its value, code keeps its value, the lint annotation in Figma surfaces the conflict for later reconciliation (run `/adhd:pull-tokens` or `/adhd:push-tokens` when ready).
+
+Record each pick (other than "Annotate only" / "Abort") into one of two arrays:
 - `code-side-actions`: every "Add to globals.css" and "Take Figma's value" pick. Same shape as `/adhd:pull-component`'s actions — feed into `lib/pull-component/cli.js resolve-actions` per entry to get alias-aware `set-primitive` / `set-semantic` actions, concatenate into one list.
 - `figma-side-actions`: every "Take code's value" pick. Shape: `{ figmaVarId, mode, value, valueDomain }` (need the Figma variable id; look it up by inverting `/tmp/adhd-push-component/varidmap.json` — same map the lint engine produced).
 
