@@ -65,6 +65,45 @@ test('Figma\'s raw {r,g,b,a} object compares equal to code\'s #hex (regression f
   assert.equal(violations.length, 0);
 });
 
+test('shadcn pattern: --color-primary aliases --primary in :root, figma rgb-object resolves through the alias chain', () => {
+  // Pre-fix, the categorizer found `--color-primary: var(--primary)` in
+  // the @theme inline exposure layer, compared its raw `var(--primary)`
+  // string against Figma\'s `{r,g,b,a}` object, normalizeColor threw on
+  // the alias string, valuesMatch caught and returned false, and STRUCT016
+  // fired as a "false-positive" conflict on every shadcn setup. Fix:
+  // resolve the local alias through the :root layer and compare against
+  // the literal `--primary` value.
+  const css = `
+    :root { --primary: #0a0a0a; }
+    @theme inline { --color-primary: var(--primary); }
+  `;
+  const { parseTheme } = require('../theme-parser');
+  const theme = parseTheme(css);
+  const v = categorizeVariables(
+    { 'color/primary': { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    theme,
+  );
+  assert.equal(v.length, 0);
+});
+
+test('shadcn pattern: real value drift through an alias still surfaces as conflict', () => {
+  // Sanity check: the alias-resolution fix doesn\'t mask actual drift.
+  // If figma\'s value resolves to a different color than the alias chain
+  // points to, STRUCT016 must still fire.
+  const css = `
+    :root { --primary: #0a0a0a; }
+    @theme inline { --color-primary: var(--primary); }
+  `;
+  const { parseTheme } = require('../theme-parser');
+  const theme = parseTheme(css);
+  const v = categorizeVariables(
+    { 'color/primary': { r: 1, g: 0, b: 0, a: 1 } },  // real red, not the black alias target
+    theme,
+  );
+  assert.equal(v.length, 1);
+  assert.equal(v[0].status, 'conflict');
+});
+
 test('Capitalized Figma collection names still resolve their domain ("Color/primary" → color)', () => {
   // Designer's collection is "Color" (capital C). Pre-fix, inferDomain
   // was case-sensitive and missed this — domain came back "unknown" and

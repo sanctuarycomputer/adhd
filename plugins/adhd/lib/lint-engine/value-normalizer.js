@@ -46,8 +46,16 @@ function normalizeColor(input) {
 }
 
 function normalizeDimension(input) {
+  // The SKILL's serializer emits Figma's raw `valuesByMode` shape
+  // unchanged — for spacing / radius / line-height variables that's
+  // typically a bare number (`6` for 6px, `0` for 0px, `1.5` for a
+  // unitless line-height ratio). Accept both forms so the comparator
+  // doesn't crash mid-run on the first numeric value it encounters.
+  if (typeof input === 'number') {
+    return Number.isInteger(input) ? input + 'px' : String(input);
+  }
   if (typeof input !== 'string') {
-    throw new TypeError('normalizeDimension: expected string, got ' + typeof input);
+    throw new TypeError('normalizeDimension: expected string or number, got ' + typeof input);
   }
   const trimmed = input.trim();
   const remMatch = /^(-?[\d.]+)rem$/i.exec(trimmed);
