@@ -86,6 +86,22 @@ function deepLink(fileKey, nodeId) {
   return 'https://figma.com/design/' + fileKey + '?node-id=' + nodeId.replace(':', '-');
 }
 
+// Pretty-print a value for a STRUCT016 conflict message. Figma's raw
+// `{r,g,b,a}` and resolved hex strings both need a compact human
+// form so designers can eyeball the drift at a glance.
+function formatValue(v) {
+  if (v == null) return '(none)';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  if (v && typeof v === 'object' && 'r' in v && 'g' in v && 'b' in v) {
+    const to2 = (n) => Math.round(Math.max(0, Math.min(1, Number(n))) * 255).toString(16).padStart(2, '0');
+    let hex = '#' + to2(v.r) + to2(v.g) + to2(v.b);
+    if (v.a !== undefined && Number(v.a) < 1) hex += to2(v.a);
+    return hex;
+  }
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
 function formatPerLayerSuggestion(varName, suggestion, prop) {
   if (suggestion.kind === 'rename') {
     const targetCollection = suggestion.target.split('/')[0];
@@ -131,6 +147,15 @@ function checkBindings(rootNode, opts) {
   const out = [];
   const varIdMap = opts.varIdMap || {};
   const badSuggestions = opts.badSuggestionsByName || {};
+  // STRUCT015 / STRUCT016 — per-layer errors for layers binding to
+  // Figma variables that either don't exist in code's design system
+  // (missing) or have a different value in code than in Figma
+  // (conflict). Both block pulls: missing means the generated code
+  // would reference a CSS variable that doesn't exist; conflict means
+  // the rendered output drifts from what the designer saw in Figma.
+  // Callers build these from the variable-categorizer's output.
+  const missingVarNames = opts.missingVarNames instanceof Set ? opts.missingVarNames : new Set(opts.missingVarNames || []);
+  const conflicts = opts.conflictsByName || {};
   const fileKey = opts.fileKey;
 
   walk(rootNode, '', (node, nodePath) => {
@@ -168,6 +193,22 @@ function checkBindings(rootNode, opts) {
             `domains to share a value, create a ${expectedDomain} variable that ` +
             `aliases the same primitive.`);
         }
+      }
+
+      if (missingVarNames.has(varName)) {
+        push('STRUCT015', 'error', varName,
+          `Layer binds "${varName}" (to ${prop}), but that variable doesn't exist in code's design system. ` +
+          `Pulling this component would generate code referencing a CSS variable globals.css never declares — rendering breaks at runtime.\n\n` +
+          `Fix in Figma: rebind the layer to a variable that IS in code, OR run /adhd:pull-tokens first to add this variable to globals.css. The pull-tokens flow shows the missing variable in its summary so you can choose whether to take it on.`);
+      }
+
+      const conflict = conflicts[varName];
+      if (conflict) {
+        push('STRUCT016', 'error', varName,
+          `Layer binds "${varName}" (to ${prop}), and that variable's value differs between code and Figma.\n` +
+          `  code:  ${formatValue(conflict.local)}\n` +
+          `  figma: ${formatValue(conflict.figma)}\n\n` +
+          `Pulling this component now would render with code's value — visual drift from what the designer sees in Figma. Reconcile first: run /adhd:pull-tokens to take Figma's value, or /adhd:push-tokens to send code's value back to Figma. Then re-run the pull.`);
       }
     };
 

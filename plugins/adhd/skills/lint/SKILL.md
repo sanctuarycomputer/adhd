@@ -10,7 +10,7 @@ allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figm
 Validate that a Figma file (or a single frame/component/page) is ready for code translation. Reports two classes of issue:
 
 - **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
-- **Structure issues** — STRUCT001–STRUCT014 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, Tailwind-default duplicates, alias-equivalent collection duplicates, etc.).
+- **Structure issues** — STRUCT001–STRUCT016 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, Tailwind-default duplicates, alias-equivalent collection duplicates, layers binding variables missing from code, layers binding variables whose values differ between code and Figma, etc.).
 
 Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 

@@ -176,17 +176,51 @@ function main() {
   const hasIdMap = Object.keys(varIdMap).length > 0;
 
   if (hasIdMap) {
+    // Bridge the variable-categorizer's file-level missing/conflict
+    // findings into per-layer STRUCT015/STRUCT016 errors. The
+    // categorizer says "this variable is missing in code" at the file
+    // level; the binding-checker says "this specific layer binds that
+    // variable" — together, designers get an annotation right where
+    // they need to act.
+    //
+    // Figma collection names appear once in the categorizer's
+    // `token` field (collection-stripped) but the SKILL's vars.json
+    // keys include the collection. Build the set both ways so the
+    // binding-checker matches whichever form varIdMap emits.
+    const missingVarNames = new Set();
+    const conflictsByName = {};
+    for (const v of variableViolations) {
+      // Split by status: only `missing` entries go into missingVarNames,
+      // only `conflict` entries seed conflictsByName. Crossing them
+      // would over-fire STRUCT015 on every conflicting variable too.
+      if (v.status === 'missing') {
+        missingVarNames.add(v.token); // collection-stripped form
+      } else if (v.status === 'conflict') {
+        conflictsByName[v.token] = { local: v.local, figma: v.figma, mode: v.mode };
+      }
+    }
+    // Re-key with collection prefixes too: walk varIdMap values, for
+    // each, also test the collection-stripped form against the set.
+    // The binding-checker is the single consumer — instead of doing
+    // two-form lookups everywhere, pre-expand the sets here.
+    for (const fullName of Object.values(varIdMap)) {
+      const stripped = fullName.split('/').slice(1).join('/');
+      if (missingVarNames.has(stripped)) missingVarNames.add(fullName);
+      if (conflictsByName[stripped]) conflictsByName[fullName] = conflictsByName[stripped];
+    }
+
     const bindingViolations = [];
+    const opts = { fileKey, varIdMap, badSuggestionsByName, missingVarNames, conflictsByName };
     if (designCtx && designCtx.mode === 'whole-file' && Array.isArray(designCtx.pages)) {
       for (const page of designCtx.pages) {
         for (const node of page.nodes) {
-          const v = checkBindings(node, { fileKey, varIdMap, badSuggestionsByName });
+          const v = checkBindings(node, opts);
           for (const x of v) x._page = page.name;
           bindingViolations.push(...v);
         }
       }
     } else if (designCtx) {
-      bindingViolations.push(...checkBindings(designCtx, { fileKey, varIdMap, badSuggestionsByName }));
+      bindingViolations.push(...checkBindings(designCtx, opts));
     }
     structureViolations.push(...bindingViolations);
   } else if (suggestions.length > 0) {

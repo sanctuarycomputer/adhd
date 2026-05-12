@@ -6,8 +6,21 @@ const HEX_8 = /^#([0-9a-f]{8})$/i;
 const RGB_RE = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i;
 
 function normalizeColor(input) {
+  // Figma's raw color form — `{r, g, b, a}` with each channel 0..1. The
+  // SKILL's serializer emits values straight from
+  // `variable.valuesByMode[mode]` without converting; without this
+  // branch, a Figma `#0a0a0a` color compared against code's `#0a0a0a`
+  // hex falsely conflicts because the figma side is `{r:0.039,...}`.
+  if (input && typeof input === 'object' && 'r' in input && 'g' in input && 'b' in input) {
+    const to2 = (n) => Math.round(Math.max(0, Math.min(1, Number(n))) * 255).toString(16).padStart(2, '0');
+    let hex = '#' + to2(input.r) + to2(input.g) + to2(input.b);
+    if (input.a !== undefined && Number(input.a) < 1) {
+      hex += to2(input.a);
+    }
+    return hex.toLowerCase();
+  }
   if (typeof input !== 'string') {
-    throw new TypeError('normalizeColor: expected string, got ' + typeof input);
+    throw new TypeError('normalizeColor: expected string or color object, got ' + typeof input);
   }
   const trimmed = input.trim();
 

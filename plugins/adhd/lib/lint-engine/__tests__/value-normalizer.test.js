@@ -41,6 +41,25 @@ test('valuesMatch dispatches on domain', () => {
   assert.equal(valuesMatch('1.5', '1.5', 'typography'), true);
 });
 
+test('normalizeColor accepts Figma\'s raw {r,g,b,a} object form (channels 0..1)', () => {
+  // Real scenario from the user's reactor file: the SKILL\'s serializer
+  // emits color variable values straight from variable.valuesByMode, so
+  // figma side arrives as `{r:0.039, g:0.039, b:0.039, a:1}` while code
+  // is `#0a0a0a`. Without this branch the comparator falsely flagged
+  // these as conflicts.
+  assert.equal(normalizeColor({ r: 0.039, g: 0.039, b: 0.039, a: 1 }), '#0a0a0a');
+  assert.equal(normalizeColor({ r: 0, g: 0, b: 0 }), '#000000');
+  assert.equal(normalizeColor({ r: 1, g: 1, b: 1 }), '#ffffff');
+  // Alpha < 1 surfaces in the hex.
+  assert.equal(normalizeColor({ r: 1, g: 0, b: 0, a: 0.5 }), '#ff000080');
+});
+
+test('valuesMatch resolves hex-vs-RGB-object as equal (the "primary" false-conflict fix)', () => {
+  assert.equal(valuesMatch({ r: 0.039, g: 0.039, b: 0.039, a: 1 }, '#0a0a0a', 'color'), true);
+  // Truly different colors still conflict.
+  assert.equal(valuesMatch({ r: 1, g: 0, b: 0, a: 1 }, '#000000', 'color'), false);
+});
+
 test('valuesMatch deep-equals shadow objects', () => {
   const a = { offsetX: '0px', offsetY: '4px', blur: '8px', spread: '0px', color: '#000000' };
   const b = { offsetX: '0px', offsetY: '4px', blur: '8px', spread: '0px', color: '#000000' };

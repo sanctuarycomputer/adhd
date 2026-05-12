@@ -88,7 +88,7 @@ Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` wi
 /adhd:lint https://www.figma.com/design/PBCAkpPnvGXWrz6H7qfH3V/ADHD-Reference?node-id=91-18
 ```
 
-The scoped report covers the same rules (STRUCT001–014 + variable mismatches), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
+The scoped report covers the same rules (STRUCT001–016 + variable mismatches), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
 
 ### Annotate violations in Figma (`--annotate`)
 

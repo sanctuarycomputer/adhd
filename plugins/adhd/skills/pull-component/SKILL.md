@@ -116,10 +116,12 @@ The stdout redirect captures the engine's JSON summary for Phase 2.6's optional 
 
 Use the globals.css path from `config.cssEntry` if set, otherwise auto-detect: `example/app/globals.css` → `app/globals.css` → `src/app/globals.css`.
 
-Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Two classes of violation block the pull:
+Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Four classes of violation block the pull:
 
 - **STRUCT003/004/005** — variable-binding errors (layer uses raw color, typography, or effect that isn't bound to a variable or paint style). The `--allow-unbound` escape applies here; without it, abort.
 - **STRUCT011** — variable-naming non-compliance (case violation OR Tailwind v4 domain mismatch). No escape — the designer fixes the names in Figma before the pull can proceed. Rationale: if Figma variables have non-conventional names, the pulled code's lookup tables would either reference broken names or drift from the design system. Better to fix the source than carry forward bad names into generated code.
+- **STRUCT015** — layer binds a Figma variable that doesn't exist in code's design system. No escape. Pulling would generate code referencing a CSS variable globals.css never declares — broken rendering at runtime. The designer either rebinds the layer to a variable that IS in code, or runs `/adhd:pull-tokens` to add the missing variable first.
+- **STRUCT016** — layer binds a Figma variable whose value in Figma differs from code's. No escape. Pulling would render with code's value, drifting from what the designer sees in Figma. Reconcile via `/adhd:pull-tokens` (take Figma's value) or `/adhd:push-tokens` (send code's value back to Figma), then re-run.
 
 Other rules' violations are noted for the final report but don't block.
 
@@ -129,7 +131,7 @@ Two paths, both producing the same `use_figma` annotation work described in `/ad
 
 **Path A — `--annotate` was passed.** Run the annotation script unconditionally.
 
-**Path B — `--annotate` was NOT passed, AND there are blocking violations (STRUCT003/004/005 binding errors, OR STRUCT011 variable-naming non-compliance).** Use `AskUserQuestion` to offer annotation retroactively:
+**Path B — `--annotate` was NOT passed, AND there are blocking violations (STRUCT003/004/005 binding errors, STRUCT011 variable-naming non-compliance, STRUCT015 variable-missing-in-code, or STRUCT016 variable-value-conflict).** Use `AskUserQuestion` to offer annotation retroactively:
 
 ```
 Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'lint' category to fix in-context."
@@ -207,6 +209,44 @@ would land in your code's lookup tables and drift on the next push.
 ```
 
 If BOTH STRUCT011 AND variable-binding errors are present, surface STRUCT011 first (it's the more fundamental fix — bind-errors might be tolerable with `--allow-unbound`, but bad names always need fixing first).
+
+**If STRUCT015 violations exist (layer binds variable that doesn't exist in code):**
+
+Abort unconditionally — no escape. STRUCT015 reports per-layer: "layer X binds Figma variable Y, but Y isn't in code's design system." Pulling now would generate code that references a CSS variable globals.css never declares — runtime rendering breaks. The designer's two paths forward are equally valid:
+
+1. **Rebind the layer** to a variable that DOES exist in code. Right-click the layer's property in Figma → "Apply variable" → pick a real one.
+2. **Adopt the missing variable into code** by running `/adhd:pull-tokens`. Its summary lists every missing variable so the designer chooses whether to bring it in.
+
+Read each STRUCT015 message verbatim from the preflight report (they already name the layer + variable + suggested fix) and print under a banner:
+
+```
+✗ Cannot pull — <N> layer(s) bind Figma variables that don't exist in code's design system:
+
+<paste each STRUCT015 message verbatim>
+
+Pulling now would generate code referencing CSS variables that globals.css
+never declares — runtime rendering breaks. Either rebind each layer to a
+real variable in Figma, or run /adhd:pull-tokens to add the missing
+variables to code, then re-run /adhd:pull-component.
+```
+
+**If STRUCT016 violations exist (layer binds variable with value-conflict between code and Figma):**
+
+Abort unconditionally — no escape. STRUCT016 fires per-layer when a bound variable has different resolved values on each side. Pulling renders with code's value, so the component looks different in production than in Figma. Reconcile first:
+
+```
+✗ Cannot pull — <N> layer(s) bind variables whose values differ between Figma and code:
+
+<paste each STRUCT016 message verbatim>
+
+The pulled component would render with code's values, drifting from what
+the designer sees in Figma. Pick a direction:
+  • /adhd:pull-tokens — take Figma's values, write them into code
+  • /adhd:push-tokens — send code's values back to Figma
+Reconcile first, then re-run /adhd:pull-component.
+```
+
+Priority when multiple block-classes are present: STRUCT011 first (variable names), then STRUCT015 (missing), then STRUCT016 (conflicts), then STRUCT003/004/005 (raw values). Most fundamental first — bad names break naming downstream, missing vars break rendering, conflicts cause visual drift, raw values can be escaped.
 
 ## Phase 2.7: Opportunistic variable discovery
 

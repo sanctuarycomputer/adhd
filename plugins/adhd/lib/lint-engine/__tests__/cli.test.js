@@ -454,6 +454,57 @@ test('STRUCT013: surfaces Figma variables that duplicate Tailwind defaults (stri
   assert.match(v.message, /\/adhd:lint --fix/);
 });
 
+test('STRUCT015 + STRUCT016: per-layer errors when a layer binds a missing/conflicting Figma variable', () => {
+  // The user's main complaint: a component binds Figma variables like
+  // "Font-Size/Body" that don't exist in code, but lint reported
+  // "ready for code translation" because the variable issues weren't
+  // tied to specific layers. Now they ARE tied to layers AND surface
+  // as blocking errors.
+  const varDefs = tmp('vars.json', {
+    'Type + Effects/Font-Size/Body': '16px',  // not in code → STRUCT015
+    'Radius/sm': '6px',                        // value differs → STRUCT016
+  });
+  const idMap = tmp('varidmap.json', {
+    'VAR:fontBody': 'Type + Effects/Font-Size/Body',
+    'VAR:radiusSm': 'Radius/sm',
+  });
+  const ctx = tmp('ctx.json', {
+    id: '5:1', name: 'Card', type: 'FRAME', layoutMode: 'VERTICAL',
+    cornerRadius: 6,
+    boundVariables: { cornerRadius: { id: 'VAR:radiusSm' } },
+    children: [
+      {
+        id: '5:2', name: 'Title', type: 'TEXT',
+        boundVariables: { fontSize: { id: 'VAR:fontBody' } },
+      },
+    ],
+  });
+  const cssPath = tmp('globals.css', `@theme { --radius-sm: 0.25rem; } :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--var-id-map', idMap, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'Card',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 1, 'errors should exit 1: stderr=' + result.stderr);
+  const summary = JSON.parse(result.stdout);
+  const struct015 = summary.structure.filter(v => v.rule === 'STRUCT015');
+  const struct016 = summary.structure.filter(v => v.rule === 'STRUCT016');
+  // STRUCT015 fires on the Title layer (binds fontSize → Font-Size/Body, not in code).
+  assert.equal(struct015.length, 1);
+  assert.equal(struct015[0].severity, 'error');
+  assert.equal(struct015[0].nodeId, '5:2');
+  assert.match(struct015[0].message, /doesn't exist in code's design system/);
+  // STRUCT016 fires on the Card layer (binds cornerRadius → Radius/sm; code 0.25rem vs figma 6px).
+  assert.equal(struct016.length, 1);
+  assert.equal(struct016[0].severity, 'error');
+  assert.equal(struct016[0].nodeId, '5:1');
+  assert.match(struct016[0].message, /value differs between code and Figma/);
+});
+
 test('STRUCT014: surfaces alias-equivalent collections side by side (Color vs color, Space vs spacing)', () => {
   // Real scenario from the user's reactor file: prior pushes created
   // lowercase `color`/`spacing` collections alongside designer's existing

@@ -210,6 +210,82 @@ test('STRUCT011 + STRUCT012 can both fire for the same (node, binding)', () => {
   assert.deepEqual(rules, ['STRUCT011', 'STRUCT012']);
 });
 
+test('STRUCT015: layer binding a variable missing from code → error', () => {
+  // The user's core complaint: a Figma component binds `Font-Size/Body`
+  // but code's globals.css has no such variable. Pulling now would
+  // generate code that references --font-size-body, which Tailwind
+  // would resolve to nothing → broken rendering. Lint must block.
+  const root = {
+    id: '1:1', name: 'Title', type: 'TEXT',
+    boundVariables: { fontSize: { id: 'VAR:fontBody' } },
+  };
+  const result = checkBindings(root, OPTS({
+    varIdMap: { 'VAR:fontBody': 'Type + Effects/Font-Size/Body' },
+    missingVarNames: new Set(['Type + Effects/Font-Size/Body']),
+  }));
+  assert.equal(result.length, 1);
+  assert.equal(result[0].rule, 'STRUCT015');
+  assert.equal(result[0].severity, 'error');
+  assert.equal(result[0].nodeId, '1:1');
+  assert.match(result[0].message, /doesn't exist in code's design system/);
+  assert.match(result[0].message, /\/adhd:pull-tokens/);
+});
+
+test('STRUCT015: variable present in code does NOT fire', () => {
+  const root = {
+    id: '1:1', name: 'Title', type: 'TEXT',
+    boundVariables: { fontSize: { id: 'VAR:textSm' } },
+  };
+  const result = checkBindings(root, OPTS({
+    varIdMap: { 'VAR:textSm': 'text/sm' },
+    missingVarNames: new Set(['text/foo']), // text/sm not in missing set
+  }));
+  assert.equal(result.filter(v => v.rule === 'STRUCT015').length, 0);
+});
+
+test('STRUCT016: layer binding a variable with value conflict → error showing both values', () => {
+  // Designer's Figma sm = 6px, code's --radius-sm = 4px. Pulling would
+  // render with 4px — visual drift from what's in Figma.
+  const root = {
+    id: '1:1', name: 'Card', type: 'FRAME',
+    boundVariables: { cornerRadius: { id: 'VAR:radiusSm' } },
+  };
+  const result = checkBindings(root, OPTS({
+    varIdMap: { 'VAR:radiusSm': 'Radius/sm' },
+    conflictsByName: {
+      'Radius/sm': { local: '0.25rem', figma: '6px', mode: undefined },
+    },
+  }));
+  const v = result.find(x => x.rule === 'STRUCT016');
+  assert.ok(v);
+  assert.equal(v.severity, 'error');
+  assert.equal(v.nodeId, '1:1');
+  assert.match(v.message, /code: +0\.25rem/);
+  assert.match(v.message, /figma: +6px/);
+  assert.match(v.message, /\/adhd:pull-tokens.*\/adhd:push-tokens/s);
+});
+
+test('STRUCT016: format-mismatch values (hex vs RGB object) format the message readably', () => {
+  // The "primary" case: Figma's raw color is `{r: 0.039, ...}`, code's
+  // is `#0a0a0a`. The category itself shouldn't fire (value-normalizer
+  // recognizes both as the same color), but if it does fire elsewhere
+  // the message shouldn't dump a JSON object on the designer.
+  const root = {
+    id: '1:1', name: 'Hero', type: 'FRAME',
+    fills: [{ type: 'SOLID', boundVariables: { color: { id: 'VAR:p' } } }],
+  };
+  const result = checkBindings(root, OPTS({
+    varIdMap: { 'VAR:p': 'Color/primary' },
+    conflictsByName: {
+      'Color/primary': { local: '#0a0a0a', figma: { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    },
+  }));
+  const v = result.find(x => x.rule === 'STRUCT016');
+  assert.ok(v);
+  // Figma value renders as a hex color, not a `{"r":0.039,...}` blob.
+  assert.match(v.message, /figma: +#0a0a0a/);
+});
+
 test('PROPERTY_TO_DOMAIN: covers the expected property set', () => {
   // Sanity check — if someone removes a property mapping by accident the
   // STRUCT012 check silently goes quiet for that property. Lock the
