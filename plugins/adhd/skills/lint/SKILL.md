@@ -1,5 +1,5 @@
 ---
-description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only by default; with --annotate, also writes Figma annotations on each offending node in an 'ADHD lint' category. Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
+description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only by default; with --annotate, also writes Figma annotations on each offending node in a 'lint' category. Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
 disable-model-invocation: true
 argument-hint: "[<figma-url-with-node-id>] [--annotate]"
 allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
@@ -12,7 +12,7 @@ Validate that a Figma file (or a single frame/component/page) is ready for code 
 - **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
 - **Structure issues** — STRUCT001–STRUCT010 best-practice violations (auto-layout, naming, variant properties, etc.).
 
-Output: a markdown report saved to `adhd-lint-report.md` (gitignored), plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
+Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
@@ -75,7 +75,7 @@ node plugins/adhd/lib/lint-engine/cli.js \
   --config adhd.config.ts \
   --target "<target-label>" \
   --target-url "<target-url>" \
-  --output adhd-lint-report.md \
+  --output /tmp/adhd-lint/report.md \
   > /tmp/adhd-lint/stdout.json
 ```
 
@@ -85,7 +85,7 @@ Globals path resolution: if `adhd.config.ts` has `cssEntry`, use it. Otherwise a
 
 ## Phase 5: Present results
 
-Read `adhd-lint-report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
+Read `/tmp/adhd-lint/report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
 
 - **Whole-file mode:**
   - Exit 0 with zero violations: "✓ No issues found across all <N> top-level nodes on <P> pages."
@@ -96,11 +96,11 @@ Read `adhd-lint-report.md` with the `Read` tool and echo it to the user verbatim
   - Exit 0 with warnings only: "⚠ <W> warnings (see report). Frame is ready for code translation."
   - Exit 1: "✗ <E> errors, <W> warnings. Frame has issues that should be resolved before code translation."
 
-Mention the report file path: "Full report: `adhd-lint-report.md` (paste-ready for Figma comments / Slack)."
+Mention the report file path: "Full report: `/tmp/adhd-lint/report.md` (paste-ready for Figma comments / Slack)."
 
 ## Phase 6: Optional — annotate offending nodes in Figma (`--annotate`)
 
-If the user passed `--annotate` (the only flag this skill accepts), push each violation to Figma as an annotation on its `nodeId`. ADHD owns a dedicated annotation category named **"ADHD lint"** (red); designer-authored annotations and any other categories are left untouched.
+If the user passed `--annotate` (the only flag this skill accepts), push each violation to Figma as an annotation on its `nodeId`. ADHD owns a dedicated annotation category named **"lint"** (orange); designer-authored annotations and any other categories are left untouched.
 
 If `--annotate` was NOT passed, skip this phase.
 
@@ -124,10 +124,10 @@ Pass the violations array to `mcp__plugin_figma_figma__use_figma` with `skillNam
 
 ```js
 const VIOLATIONS = /* substituted: contents of /tmp/adhd-lint/violations.json */;
-const CATEGORY_LABEL = "ADHD lint";
-const CATEGORY_COLOR = "red";
+const CATEGORY_LABEL = "lint";
+const CATEGORY_COLOR = "orange";
 
-// 1) Ensure the ADHD lint category exists (idempotent across runs).
+// 1) Ensure the lint category exists (idempotent across runs).
 const cats = await figma.annotations.getAnnotationCategoriesAsync();
 let cat = cats.find(c => c.label === CATEGORY_LABEL);
 if (!cat) {
@@ -180,7 +180,7 @@ return { categoryId: cat.id, categoryLabel: cat.label, updated, cleared, totalVi
 After the script returns, print one line:
 
 ```
-✓ Annotated <updated> Figma node(s) in the "ADHD lint" category. Cleared <cleared> stale annotation(s).
+✓ Annotated <updated> Figma node(s) in the "lint" category. Cleared <cleared> stale annotation(s).
 ```
 
 If `updated === 0 && cleared === 0`, print:
@@ -191,7 +191,7 @@ No node-bound violations to annotate (whole-file violations like pageGrouping ar
 
 ### Why a dedicated category
 
-The "ADHD lint" category gives designers a one-click filter in Figma's annotations panel and lets us cleanly own/replace our own annotations without touching designer-authored ones. The category persists in the file — even after the user uninstalls ADHD, the annotations remain as plain Figma annotations the designer can edit or delete.
+The "lint" category gives designers a one-click filter in Figma's annotations panel and lets us cleanly own/replace our own annotations without touching designer-authored ones. The category persists in the file — even after the user uninstalls ADHD, the annotations remain as plain Figma annotations the designer can edit or delete.
 
 ## Phase 7: Offer to annotate when `--annotate` wasn't passed
 
@@ -200,7 +200,7 @@ If `--annotate` was passed, this phase is a no-op (Phase 6 already ran).
 If `--annotate` was NOT passed AND the lint produced at least one violation with a `nodeId` (count it from `/tmp/adhd-lint/stdout.json` using the same `node -e` snippet as Phase 6 — count of items in the distilled violations array), use `AskUserQuestion`:
 
 ```
-Question: "Push these <N> violation(s) to Figma as annotations? They'll appear on the offending nodes in an 'ADHD lint' category that designers can filter on."
+Question: "Push these <N> violation(s) to Figma as annotations? They'll appear on the offending nodes in a 'lint' category that designers can filter on."
 Header: "Annotate?"
 Options:
   - "Yes, annotate them in Figma"

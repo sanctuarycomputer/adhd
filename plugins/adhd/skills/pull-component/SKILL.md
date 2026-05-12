@@ -103,7 +103,7 @@ Two paths, both producing the same `use_figma` annotation work described in `/ad
 **Path B — `--annotate` was NOT passed, AND there are variable-binding errors (STRUCT003/004/005) that will block the pull.** Use `AskUserQuestion` to offer it retroactively:
 
 ```
-Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'ADHD lint' category to fix in-context."
+Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'lint' category to fix in-context."
 Header: "Annotate?"
 Options:
   - "Yes, annotate them in Figma"

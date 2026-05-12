@@ -187,13 +187,13 @@ Two paths into this phase, both producing the same `use_figma` annotation work d
 **Path A — `--annotate` was passed.** Run the annotation script unconditionally. After it returns, print:
 
 ```
-✓ Annotated <updated> Figma node(s) in the "ADHD lint" category. Cleared <cleared> stale annotation(s).
+✓ Annotated <updated> Figma node(s) in the "lint" category. Cleared <cleared> stale annotation(s).
 ```
 
 **Path B — `--annotate` was NOT passed, AND preflight produced node-bound errors that will abort the push.** Use `AskUserQuestion` to offer it retroactively:
 
 ```
-Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'ADHD lint' category to fix in-context."
+Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'lint' category to fix in-context."
 Header: "Annotate?"
 Options:
   - "Yes, annotate them in Figma"

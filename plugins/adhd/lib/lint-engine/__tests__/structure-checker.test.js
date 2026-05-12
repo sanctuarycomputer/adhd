@@ -51,6 +51,54 @@ test('STRUCT001: does NOT flag a frame holding a single shape primitive (icon/lo
   }
 });
 
+test('STRUCT001: does NOT flag a frame whose subtree is shape-only through nested containers', () => {
+  // The user's real-world case: a Logo Component Set whose outer frame holds
+  // "light" and "dark" sub-frames, each containing only vector paths. The whole
+  // outer frame rasterizes to a single SVG — flexbox doesn't apply, even though
+  // the immediate children are FRAMEs (not shapes) themselves.
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      {
+        id: '1:2', name: 'light', type: 'FRAME', layoutMode: 'NONE',
+        children: [
+          { id: '1:3', name: 'path-1', type: 'VECTOR' },
+          { id: '1:4', name: 'path-2', type: 'VECTOR' },
+        ],
+      },
+      {
+        id: '1:5', name: 'dark', type: 'COMPONENT', layoutMode: 'NONE',
+        children: [
+          { id: '1:6', name: 'path-1', type: 'VECTOR' },
+          { id: '1:7', name: 'mask', type: 'BOOLEAN_OPERATION' },
+        ],
+      },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  // STRUCT001 must not fire on the OUTER frame (it's a shape-only composition).
+  const outerStruct001 = violations.find(v => v.rule === 'STRUCT001' && v.nodeId === node.id);
+  assert.equal(outerStruct001, undefined, 'outer frame should be exempt — entire subtree is shape-only');
+});
+
+test('STRUCT001: still flags a deeply-nested frame if a leaf is non-shape (TEXT)', () => {
+  // One TEXT leaf anywhere in the subtree breaks the shape-only predicate.
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      {
+        id: '1:2', name: 'badge', type: 'FRAME', layoutMode: 'NONE',
+        children: [
+          { id: '1:3', name: 'path', type: 'VECTOR' },
+          { id: '1:4', name: 'label', type: 'TEXT' },
+        ],
+      },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT001'));
+});
+
 test('STRUCT001: does NOT flag a frame whose children are all shape primitives (multi-path SVG)', () => {
   // Real-world case: a Logo Component Set variant that's a composite of multiple
   // vector paths (e.g. a wordmark with separate paths per letter, or a mark with

@@ -2,13 +2,32 @@
 
 const AUTO_NAME_RE = /^(Frame|Group|Rectangle|Ellipse|Vector|Line|Star|Polygon)\s+\d+$/;
 
-// Shape primitives that don't benefit from auto-layout. A frame whose
-// children are ALL of these types is exempt from STRUCT001 — the frame is
-// going to be rasterized to a single SVG (multi-path icons, logos,
-// illustrations, decorative shapes), so flexbox doesn't apply.
+// Shape primitives that don't benefit from auto-layout (the leaves of a
+// shape-only subtree).
 const SHAPE_PRIMITIVE_TYPES = new Set([
   'VECTOR', 'BOOLEAN_OPERATION', 'ELLIPSE', 'RECTANGLE', 'STAR', 'POLYGON', 'LINE',
 ]);
+
+// Container types that the shape-only check is willing to recurse into. A
+// frame containing nested frames/groups/components that themselves contain
+// only shape primitives is still going to rasterize to a single SVG, so
+// flexbox doesn't apply to the outer container either. Mixed content (text,
+// other layouts) anywhere in the subtree breaks the exemption.
+const SHAPE_SUBTREE_CONTAINER_TYPES = new Set([
+  'FRAME', 'GROUP', 'COMPONENT', 'INSTANCE',
+]);
+
+// True iff `node` is a shape primitive OR a container with at least one
+// child whose entire subtree is shape-only. Empty containers DON'T count —
+// an empty FRAME is a placeholder, not a shape; the outer frame still needs
+// auto-layout to handle it. Anything else (TEXT, COMPONENT_SET as a child,
+// etc.) breaks the predicate.
+function isShapeOnlySubtree(node) {
+  if (SHAPE_PRIMITIVE_TYPES.has(node.type)) return true;
+  if (!SHAPE_SUBTREE_CONTAINER_TYPES.has(node.type)) return false;
+  if (!Array.isArray(node.children) || node.children.length === 0) return false;
+  return node.children.every(isShapeOnlySubtree);
+}
 
 // Paints are "visible" by default; only treat as hidden when explicitly false.
 function isVisiblePaint(p) {
@@ -42,15 +61,16 @@ function visit(node, ctx, parentPath, parent) {
   };
 
   // STRUCT001: auto-layout required.
-  // Exempt: a frame whose children are ALL shape primitives. Covers the icon /
-  // logo / illustration case — single Vector, multi-path Vector compositions,
-  // boolean operations, decorative rectangles, etc. These rasterize to a single
-  // SVG; flexbox doesn't apply. Mixed-content frames (text + shape, frame +
-  // shape, etc.) still fire — those want auto-layout for padding and alignment.
+  // Exempt: a frame whose entire subtree is shape-only. Covers icon / logo /
+  // illustration cases including nested compositions — a frame containing
+  // "light" and "dark" sub-frames, each holding only vector paths, still
+  // rasterizes to one SVG and doesn't want flexbox at the outer level.
+  // Mixed-content subtrees (text, instances of layout components, anything
+  // that isn't a shape or shape-only container) still fire.
   if ((node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE') &&
       Array.isArray(node.children) && node.children.length > 0 &&
       node.layoutMode === 'NONE') {
-    const allShapes = node.children.every(c => SHAPE_PRIMITIVE_TYPES.has(c.type));
+    const allShapes = node.children.every(isShapeOnlySubtree);
     if (!allShapes) {
       push('STRUCT001', 'error', 'Frame has children but auto-layout is not enabled.');
     }
