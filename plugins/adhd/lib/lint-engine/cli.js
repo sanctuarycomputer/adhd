@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const { parseTheme } = require('./theme-parser');
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
+const { checkVariableNames } = require('./variable-namer');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -100,6 +101,33 @@ function main() {
     }
   } else {
     structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
+  }
+
+  // STRUCT011 — variable-name compliance. Aggregated into a SINGLE violation
+  // per lint run (rather than per-variable) so the annotation on the scoped
+  // frame is one tidy block instead of N near-identical entries. In whole-file
+  // mode there's no scope root, so we omit nodeId — the violation still
+  // appears in the report but doesn't annotate.
+  const badVarNames = checkVariableNames(Object.keys(varDefs || {}), namingConvention);
+  if (badVarNames.length > 0) {
+    const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
+    const scopedNodeId = isScoped ? designCtx.id : undefined;
+    const shown = badVarNames.slice(0, 8);
+    const lines = shown.map(v => `  • ${v.name}  →  ${v.suggestion}`);
+    const more = badVarNames.length > 8 ? `\n  +${badVarNames.length - 8} more` : '';
+    structureViolations.push({
+      rule: 'STRUCT011',
+      severity: 'warning',
+      nodeId: scopedNodeId,
+      nodePath: 'Variables',
+      message:
+        `${badVarNames.length} Figma variable(s) don't match the ${namingConvention} convention:\n` +
+        `${lines.join('\n')}${more}\n` +
+        `Rename them in Figma (right-click the variable → "Rename") to match.`,
+      deepLink: scopedNodeId
+        ? 'https://figma.com/design/' + fileKey + '?node-id=' + scopedNodeId.replace(':', '-')
+        : args['target-url'],
+    });
   }
 
   const meta = {

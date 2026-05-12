@@ -165,3 +165,73 @@ test('cli with structure errors but no variable issues exits 1', () => {
   assert.equal(summary.variable.length, 0);
   assert.ok(summary.errors >= 1);
 });
+
+test('STRUCT011: flags Figma variables whose names violate the naming convention', () => {
+  // Design system uses kebab-case (set in adhd.config.ts), but Figma has
+  // `Primitives/color/BrandPrimary` and `Primitives/radius/MD`. The rule
+  // aggregates both into ONE STRUCT011 violation on the scoped target's
+  // nodeId so designers see a single annotation on the frame rather than
+  // two near-identical entries. The collection prefix ("Primitives") is
+  // left alone — Figma convention treats collection names as PascalCase.
+  const varDefs = tmp('vars.json', {
+    'Primitives/color/BrandPrimary': '#000',
+    'Primitives/radius/MD': '8px',
+    'Primitives/color/text/default': '#222', // compliant — shouldn't appear in the message
+  });
+  const ctx = tmp('ctx.json', {
+    id: '5:42', name: 'Logo', type: 'FRAME', layoutMode: 'VERTICAL',
+  });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI,
+    '--variable-defs', varDefs,
+    '--design-context', ctx,
+    '--globals-css', cssPath,
+    '--config', configPath,
+    '--target', 'Logo',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-42',
+    '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct011 = summary.structure.find(v => v.rule === 'STRUCT011');
+  assert.ok(struct011, 'expected a STRUCT011 violation');
+  assert.equal(struct011.severity, 'warning');
+  // Anchored to the scoped frame for annotation.
+  assert.equal(struct011.nodeId, '5:42');
+  // Aggregated message lists both offenders + their suggested kebab forms.
+  assert.match(struct011.message, /2 Figma variable\(s\) don't match the kebab-case convention/);
+  assert.match(struct011.message, /Primitives\/color\/BrandPrimary +→ +Primitives\/color\/brand-primary/);
+  assert.match(struct011.message, /Primitives\/radius\/MD +→ +Primitives\/radius\/md/);
+  // Compliant variable is NOT listed.
+  assert.doesNotMatch(struct011.message, /text\/default/);
+});
+
+test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {
+  const varDefs = tmp('vars.json', { 'Primitives/color/BrandPrimary': '#000' });
+  const ctx = tmp('ctx.json', { mode: 'whole-file', pages: [] });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI,
+    '--variable-defs', varDefs,
+    '--design-context', ctx,
+    '--globals-css', cssPath,
+    '--config', configPath,
+    '--target', 'Whole file',
+    '--target-url', 'https://figma.com/design/abc/Test',
+    '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct011 = summary.structure.find(v => v.rule === 'STRUCT011');
+  assert.ok(struct011);
+  // No nodeId — the violation appears in the report but doesn't annotate
+  // anywhere (the annotation flow filters out items without nodeIds).
+  assert.equal(struct011.nodeId, undefined);
+});

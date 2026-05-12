@@ -165,10 +165,15 @@ for (const id of allTargetIds) {
   const node = await figma.getNodeByIdAsync(id);
   if (!node || !("annotations" in node)) continue;
   const keep = (node.annotations ?? []).filter(a => a.categoryId !== cat.id);
-  const fresh = (byNode.get(id) ?? []).map(v => ({
-    label: `${v.code}: ${v.message}`,
-    categoryId: cat.id,
-  }));
+  const fresh = (byNode.get(id) ?? []).map(v => {
+    // labelMarkdown renders newlines and bullet lists (used by STRUCT011's
+    // aggregated variable-naming message); label collapses them to spaces.
+    // Prefer labelMarkdown when the message contains a newline.
+    const text = `${v.code}: ${v.message}`;
+    return text.includes("\n")
+      ? { labelMarkdown: text, categoryId: cat.id }
+      : { label: text, categoryId: cat.id };
+  });
   const hadAdhd = touchedIds.has(id);
   node.annotations = [...keep, ...fresh];
   if (fresh.length > 0) updated++;
