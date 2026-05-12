@@ -130,6 +130,56 @@ test('preview (pull): flips the direction labels', () => {
   assert.match(result.stdout, /code-only \(left untouched per additive policy\): 1 entry/);
 });
 
+test('compare --include-tailwind: keeps Tailwind-default-origin tokens in codeOnly', () => {
+  // Verifies the seed-mode flag plumbing. With --include-tailwind, the
+  // comparator should NOT filter origin-tagged tokens.
+  const css = tmp('globals.css', `@theme { --color-brand: #5e3aee; }`);
+  // Use an empty figma extract so everything that's in code becomes codeOnly.
+  const figma = tmp('figma.json', { collections: [], effectStyles: [], textStyles: [] });
+  const outA = path.join(os.tmpdir(), 'diff-default-' + Date.now() + '.json');
+  const outB = path.join(os.tmpdir(), 'diff-seed-' + Date.now() + '.json');
+
+  const defaultRun = spawnSync('node', [CLI, 'compare', '--code', css, '--figma', figma, '--output', outA], { encoding: 'utf8' });
+  assert.equal(defaultRun.status, 0);
+  const diffDefault = JSON.parse(fs.readFileSync(outA, 'utf8'));
+
+  const seedRun = spawnSync('node', [CLI, 'compare', '--code', css, '--figma', figma, '--output', outB, '--include-tailwind'], { encoding: 'utf8' });
+  assert.equal(seedRun.status, 0);
+  const diffSeed = JSON.parse(fs.readFileSync(outB, 'utf8'));
+
+  // Seed mode has dramatically more codeOnly entries — the full Tailwind palette.
+  assert.ok(diffSeed.codeOnly.length > diffDefault.codeOnly.length * 5,
+    `expected seed codeOnly (${diffSeed.codeOnly.length}) >> default codeOnly (${diffDefault.codeOnly.length})`);
+  // Default mode never includes a token tagged fromTailwindDefault.
+  for (const t of diffDefault.codeOnly) {
+    assert.notEqual(t.fromTailwindDefault, true);
+  }
+  // Seed mode DOES include them.
+  assert.ok(diffSeed.codeOnly.some(t => t.fromTailwindDefault === true));
+});
+
+test('preview: buckets additions by domain when there are many entries', () => {
+  // Above the flat-list threshold (25), the preview groups by domain
+  // with a sample-of-each rather than a hundreds-line dump.
+  const codeOnly = [];
+  for (let i = 0; i < 40; i++) {
+    codeOnly.push({ domain: 'color', path: `zinc/${i}`, values: { default: `#000${i}` } });
+  }
+  for (let i = 0; i < 30; i++) {
+    codeOnly.push({ domain: 'spacing', path: `${i}`, values: { default: `${i}px` } });
+  }
+  const diff = tmp('diff.json', { same: [], conflict: [], codeOnly, figmaOnly: [] });
+
+  const result = spawnSync('node', [CLI, 'preview', '--diff', diff, '--direction', 'push'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Would add to Figma \(70 entries across 2 domains\)/);
+  assert.match(result.stdout, /\bCOLOR \(40\)/);
+  assert.match(result.stdout, /\bSPACING \(30\)/);
+  // Each bucket is truncated; the trailer shows the remaining count.
+  assert.match(result.stdout, /\[\+34 more\]/);
+  assert.match(result.stdout, /\[\+24 more\]/);
+});
+
 test('preview: errors on missing --diff or invalid --direction', () => {
   // Sanity: the subcommand must validate its inputs.
   let r = spawnSync('node', [CLI, 'preview', '--direction', 'push'], { encoding: 'utf8' });

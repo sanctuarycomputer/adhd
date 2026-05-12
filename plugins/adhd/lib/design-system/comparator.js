@@ -61,7 +61,14 @@ function tokenKey(t) {
   return t.domain + ':' + t.path;
 }
 
-function compareDesignSystems(code, figma) {
+function compareDesignSystems(code, figma, opts = {}) {
+  // `opts.includeTailwindDefaultsInCodeOnly` (boolean, default false).
+  // When false, the comparator drops Tailwind-default-origin tokens from
+  // `codeOnly` so day-to-day pushes don't try to bake the entire Tailwind
+  // palette into Figma. When true, the full palette surfaces in codeOnly
+  // — the right mode when seeding a fresh Figma file so designers have
+  // every Tailwind utility available as a variable.
+  const includeTailwindInCodeOnly = opts.includeTailwindDefaultsInCodeOnly === true;
   const same = [];
   const conflict = [];
   const codeOnly = [];
@@ -130,14 +137,16 @@ function compareDesignSystems(code, figma) {
     }
   }
 
-  // Filter Tailwind-default-origin tokens out of codeOnly. Pushing the
-  // entire Tailwind palette into Figma is rarely the user's intent — the
-  // tokens are implicit on both sides (Tailwind ships them; Figma users
-  // assume them). User-authored tokens at the same path keep the flag
-  // cleared during parse, so genuine overrides DO push. Tokens that
-  // surface in `same` or `conflict` are unaffected — those reflect real
-  // state on the Figma side already.
-  const filteredCodeOnly = codeOnly.filter(t => t.fromTailwindDefault !== true);
+  // Filter Tailwind-default-origin tokens out of codeOnly UNLESS the
+  // caller explicitly asked to include them. Defaulting to filtered keeps
+  // day-to-day pushes focused on authored changes (no 400-entry palette
+  // flood). The `--include-tailwind` push mode flips this for the
+  // one-time seeding case where designers want every Tailwind utility as
+  // a Figma variable. Tokens that surface in `same` or `conflict` are
+  // unaffected — those reflect real state on the Figma side already.
+  const filteredCodeOnly = includeTailwindInCodeOnly
+    ? codeOnly
+    : codeOnly.filter(t => t.fromTailwindDefault !== true);
 
   // ── Effect styles ──────────────────────────────────────────────────────
   // Diff by name only. Each side may not have styles at all (older callers).

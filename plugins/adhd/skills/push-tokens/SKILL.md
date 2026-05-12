@@ -1,7 +1,7 @@
 ---
-description: "Push the local design tokens (globals.css variables + named styles) into the configured Figma file. Two-way diff with per-attribute conflict prompts; additive (never deletes from Figma). Reads adhd.config.ts at the repo root. Pass --dry-run to preview without writing."
+description: "Push the local design tokens (globals.css variables + named styles) into the configured Figma file. Two-way diff with per-attribute conflict prompts; additive (never deletes from Figma). Reads adhd.config.ts at the repo root. Pass --dry-run to preview without writing. Pass --include-tailwind to seed Figma with the entire Tailwind v4 palette so designers have every utility available as a variable."
 disable-model-invocation: true
-argument-hint: "[--dry-run]"
+argument-hint: "[--dry-run] [--include-tailwind]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
@@ -10,6 +10,8 @@ allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use
 Pushes the codebase's design tokens (variables + named styles) into the configured Figma file. Compares both sides; for each conflicting variable, prompts the user; for variables that exist only in code, creates them in Figma; for variables that exist only in Figma, leaves them alone (additive policy).
 
 Pass `--dry-run` to see exactly what would be added or overwritten without making any changes — no prompts, no writes, no MCP traffic beyond the initial extract.
+
+Pass `--include-tailwind` to also push every Tailwind v4 default (the full color palette, the spacing scale, radii, breakpoints, etc.). Useful as a one-time **seed** when setting up a fresh Figma file so designers can pick from the same token space the code can render. Without this flag, daily pushes stay focused on user-authored tokens only — the Tailwind defaults are implicit on both sides and the additive policy keeps Figma clean.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-push-pull-design-system.md`
 
@@ -38,12 +40,14 @@ If Strategy A's response shows visible truncation (look for an unterminated JSON
 
 ## Phase 3: Run the comparator
 
-Use `Bash`:
+Use `Bash`. If the user passed `--include-tailwind`, add `--include-tailwind` to the compare invocation so the diff surfaces every Tailwind default that's missing from Figma. Otherwise omit it — the comparator filters Tailwind-default-origin tokens out of `codeOnly` so the diff stays focused on user-authored changes.
+
 ```bash
 node plugins/adhd/lib/design-system/cli.js compare \
   --code /tmp/adhd-push/globals.css \
   --figma /tmp/adhd-push/figma.json \
-  --output /tmp/adhd-push/diff.json
+  --output /tmp/adhd-push/diff.json \
+  [--include-tailwind]
 ```
 
 Read `/tmp/adhd-push/diff.json`. The diff has four arrays: `same`, `conflict`, `codeOnly`, `figmaOnly`.

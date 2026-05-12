@@ -26,7 +26,7 @@ function parseArgs(argv) {
 
 function printUsage() {
   console.log(`Usage:
-  cli.js compare           --code <globals.css> --figma <figma.json> --output <diff.json>
+  cli.js compare           --code <globals.css> --figma <figma.json> --output <diff.json> [--include-tailwind]
   cli.js apply             --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json>
   cli.js preview           --diff <diff.json> --direction <push|pull>
   cli.js assemble-extract  --chunks-dir <dir> --output <figma.json>
@@ -82,23 +82,60 @@ function formatPreview(diff, direction) {
 
   // Additions: tokens that exist only on the source side. Each token may
   // span multiple modes; emit one row per mode.
+  // Below this threshold, show every row inline — short lists are easier
+  // to read flat than bucketed. Above it, group by domain and truncate
+  // each bucket so a 493-entry Tailwind-palette seed remains scannable
+  // instead of unfurling 493 lines into the terminal.
+  const FLAT_THRESHOLD = 25;
+  const BUCKET_SAMPLE_SIZE = 6;
+
   const addRows = [];
   for (const tok of fromOnly) {
     for (const [mode, value] of Object.entries(tok.values || {})) {
-      addRows.push({ path: tok.path, mode, value });
+      addRows.push({ path: tok.path, mode, value, domain: tok.domain || 'other' });
     }
   }
-  addRows.sort((a, b) => a.path.localeCompare(b.path) || a.mode.localeCompare(b.mode));
+  addRows.sort((a, b) =>
+    a.domain.localeCompare(b.domain) ||
+    a.path.localeCompare(b.path) ||
+    a.mode.localeCompare(b.mode),
+  );
 
   if (addRows.length === 0) {
     lines.push(`Would add to ${toSide}: none.`);
-  } else {
+  } else if (addRows.length <= FLAT_THRESHOLD) {
     lines.push(`Would add to ${toSide} (${addRows.length} entr${addRows.length === 1 ? 'y' : 'ies'}):`);
     const pathW = Math.max(...addRows.map(r => r.path.length));
     const modeW = Math.max(...addRows.map(r => r.mode.length));
     for (const r of addRows) {
       lines.push(`  + ${r.path.padEnd(pathW)}  (${r.mode.padEnd(modeW)})  = ${fmtValue(r.value)}`);
     }
+  } else {
+    // Bucket by domain. Show counts up front, then a sample of each
+    // domain so the user can sanity-check the shape without scrolling
+    // past hundreds of rows.
+    const byDomain = new Map();
+    for (const r of addRows) {
+      if (!byDomain.has(r.domain)) byDomain.set(r.domain, []);
+      byDomain.get(r.domain).push(r);
+    }
+    lines.push(`Would add to ${toSide} (${addRows.length} entries across ${byDomain.size} domain${byDomain.size === 1 ? '' : 's'}):`);
+    for (const domain of [...byDomain.keys()].sort()) {
+      const rows = byDomain.get(domain);
+      lines.push(``);
+      lines.push(`  ${domain.toUpperCase()} (${rows.length})`);
+      const sample = rows.slice(0, BUCKET_SAMPLE_SIZE);
+      const pathW = Math.max(...sample.map(r => r.path.length));
+      const modeW = Math.max(...sample.map(r => r.mode.length));
+      for (const r of sample) {
+        lines.push(`    + ${r.path.padEnd(pathW)}  (${r.mode.padEnd(modeW)})  = ${fmtValue(r.value)}`);
+      }
+      if (rows.length > BUCKET_SAMPLE_SIZE) {
+        lines.push(`    [+${rows.length - BUCKET_SAMPLE_SIZE} more]`);
+      }
+    }
+    lines.push('');
+    lines.push(`  Full list written to the diff JSON (codeOnly array). For a one-time review, sort by domain in the diff file.`);
   }
   lines.push('');
 
@@ -140,13 +177,19 @@ function main() {
   if (cmd === 'compare') {
     const css = fs.readFileSync(args.code, 'utf8');
     const figmaExtract = JSON.parse(fs.readFileSync(args.figma, 'utf8'));
-    // Default: include Tailwind v4's full default theme so push/pull see
-    // the complete design system, not just what's redeclared in globals.css.
-    // Disable with --no-tailwind-defaults if you only want explicit overrides.
+    // Parser always learns about Tailwind v4's default theme so we know
+    // which tokens are user-authored vs default (the `fromTailwindDefault`
+    // marker). The COMPARATOR then decides what to include in `codeOnly`:
+    //   - Default: filter out defaults — keep day-to-day pushes focused
+    //   - --include-tailwind: surface the full Tailwind palette in
+    //     codeOnly, for seeding a fresh Figma file with every utility as
+    //     a variable. The seed case is once-per-project; the focused
+    //     diff is once-per-change.
     const includeTailwindDefaults = !('no-tailwind-defaults' in args);
+    const includeTailwindDefaultsInCodeOnly = 'include-tailwind' in args;
     const codeDS = parseCodeDesignSystem(css, { includeTailwindDefaults });
     const figmaDS = parseFigmaDesignSystem(figmaExtract);
-    const diff = compareDesignSystems(codeDS, figmaDS);
+    const diff = compareDesignSystems(codeDS, figmaDS, { includeTailwindDefaultsInCodeOnly });
     fs.writeFileSync(args.output, JSON.stringify(diff, null, 2));
     process.exit(0);
   }

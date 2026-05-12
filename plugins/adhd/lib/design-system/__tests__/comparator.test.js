@@ -205,6 +205,25 @@ test('valuesEqual: still flags real value differences after normalization', () =
   assert.equal(r.same.length, 0);
 });
 
+test('codeOnly: includeTailwindDefaultsInCodeOnly=true keeps the full palette in codeOnly (seed mode)', () => {
+  // The seed-the-design-system mode: designers want every Tailwind
+  // utility available as a Figma variable. Comparator should NOT filter
+  // origin-tagged tokens out of codeOnly when the flag is set.
+  const code = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
+      { domain: 'color', path: 'brand',    values: { default: { type: 'literal', value: '#5e3aee' } }, fromTailwindDefault: false },
+    ],
+    styles: { effects: [] },
+  };
+  const figma = { tokens: [], styles: { effects: [] } };
+  const diff = compareDesignSystems(code, figma, { includeTailwindDefaultsInCodeOnly: true });
+  // Both tokens surface in codeOnly.
+  assert.equal(diff.codeOnly.length, 2);
+  const paths = diff.codeOnly.map(t => t.path).sort();
+  assert.deepEqual(paths, ['brand', 'zinc/500']);
+});
+
 test('codeOnly: filters out Tailwind-default-origin tokens (additive policy)', () => {
   // Pushing the full Tailwind palette into Figma is rarely intended — both
   // sides assume the defaults implicitly. The comparator drops
