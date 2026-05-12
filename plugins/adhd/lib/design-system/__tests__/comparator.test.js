@@ -205,6 +205,65 @@ test('valuesEqual: still flags real value differences after normalization', () =
   assert.equal(r.same.length, 0);
 });
 
+test('canonicalization: code path "gold/25" and figma path "gold-25" reconcile to `same` (round-trip dup fix)', () => {
+  // The lossy-CSS-var bug: pull-tokens wrote `--color-gold-25` for a
+  // Figma variable named `Color/gold-25` (single leaf with internal
+  // hyphen). On push, code-parser tokenizes the CSS var as path `gold/25`
+  // (split-on-first-hyphen interpretation). Without canonicalization, the
+  // comparator sees `gold/25` in code and `gold-25` in Figma as distinct
+  // tokens — push would create a duplicate Figma variable. Canonicalization
+  // pairs them up by CSS-var equivalence.
+  const code = {
+    tokens: [{ domain: 'color', path: 'gold/25', values: { default: { type: 'literal', value: '#c5a572' } } }],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'gold-25', values: { default: { type: 'literal', value: '#c5a572' } } }],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.same.length, 1);
+  assert.equal(diff.codeOnly.length, 0);
+  assert.equal(diff.figmaOnly.length, 0);
+});
+
+test('canonicalization: alias targets match across "neutral/0" (code) and "neutral-0" (figma)', () => {
+  // Same root cause, alias edition. A Figma variable that aliases
+  // `neutral-0` pulls into code as `var(--color-neutral-0)`, which the
+  // code-parser interprets as alias-target `neutral/0`. Both should
+  // compare equal so push doesn't see a phantom conflict.
+  const code = {
+    tokens: [{ domain: 'color', path: 'background', values: { light: { type: 'alias', target: 'neutral/0' } } }],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'background', values: { light: { type: 'alias', target: 'neutral-0' } } }],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.same.length, 1);
+  assert.equal(diff.conflict.length, 0);
+});
+
+test('canonicalization: distinct domains don\'t collide even when paths canonicalize the same', () => {
+  // `color/gold/25` and `shadow/gold/25` would both reduce to similar
+  // CSS-var-equivalent forms — but their domain prefix differs
+  // (--color-gold-25 vs --shadow-gold-25). They must stay distinct.
+  const code = {
+    tokens: [{ domain: 'color', path: 'gold/25', values: { default: { type: 'literal', value: '#c5a572' } } }],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'shadow', path: 'gold/25', values: { default: { type: 'literal', value: '0 1px 2px black' } } }],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  // Neither moves to `same` — different domains, different CSS vars.
+  assert.equal(diff.same.length, 0);
+  assert.equal(diff.codeOnly.length, 1);
+  assert.equal(diff.figmaOnly.length, 1);
+});
+
 test('codeOnly: includeTailwindDefaultsInCodeOnly=true keeps the full palette in codeOnly (seed mode)', () => {
   // The seed-the-design-system mode: designers want every Tailwind
   // utility available as a Figma variable. Comparator should NOT filter

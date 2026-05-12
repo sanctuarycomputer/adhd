@@ -128,6 +128,22 @@ function buildFigmaActions(diff, resolutions, direction) {
     ]);
     // Code-only: create in Figma
     for (const t of diff.codeOnly) {
+      // Font-family tokens (`--font-sans`, `--font-aeonik`, etc.) shouldn't
+      // round-trip as Figma variables. Designers use Figma's TEXT STYLES
+      // for typography choices — pushing fonts as string variables creates
+      // a parallel channel that competes with the text-style system and
+      // confuses the design surface. Skip them at the action level so the
+      // user gets a clear reason. (Font-weight, text-size, line-height,
+      // tracking still push — those are scalar values that variables
+      // handle well; only `font-*` family names land in text styles.)
+      if (t.domain === 'typography' && t.path.startsWith('font/')) {
+        actions.push({
+          kind: 'skip-font-family',
+          path: t.path,
+          reason: 'Font families belong in Figma text styles, not variables. Manage these directly in the Figma typography panel.',
+        });
+        continue;
+      }
       // Shadow tokens map to Figma effect styles, not variables. Parse the
       // CSS shadow string and emit a create-effect-style action.
       if (t.domain === 'shadow') {

@@ -80,25 +80,42 @@ test('spacing token with 0.25rem produces FLOAT create-variable with resolved va
   assert.equal(actions[0].resolvedByMode.default, 4);
 });
 
-test('font-family typography token produces STRING create-variable', () => {
+test('font-family typography tokens are skipped (text-styles channel, not variables)', () => {
+  // Font families belong in Figma's text-style system, not its variable
+  // system. Pushing them as STRING variables creates a parallel channel
+  // that competes with the designer's text-style workflow. The action
+  // builder emits a `skip-font-family` action so the SKILL can surface
+  // the reason in the report instead of silently dropping the token.
   const diff = {
     same: [], conflict: [], figmaOnly: [],
     codeOnly: [{
       domain: 'typography',
       path: 'font/sans',
-      values: {
-        default: { type: 'literal', value: 'ui-sans-serif, system-ui, sans-serif' },
-      },
+      values: { default: { type: 'literal', value: 'ui-sans-serif, system-ui, sans-serif' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push');
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].kind, 'skip-font-family');
+  assert.equal(actions[0].path, 'font/sans');
+  assert.match(actions[0].reason, /text styles, not variables/);
+});
+
+test('font-weight typography tokens still push as variables (only font families skip)', () => {
+  // `--font-weight-bold` lives under the typography domain but it's a
+  // scalar value designers consume as a Tailwind utility — variables are
+  // the right home. Only the `font/<family>` path triggers the skip.
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'typography',
+      path: 'font-weight/bold',
+      values: { default: { type: 'literal', value: '700' } },
     }],
   };
   const actions = buildFigmaActions(diff, [], 'push');
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, 'create-variable');
-  assert.equal(actions[0].type, 'STRING');
-  assert.equal(
-    actions[0].resolvedByMode.default,
-    'ui-sans-serif, system-ui, sans-serif',
-  );
 });
 
 test('shadow token produces a create-effect-style action', () => {

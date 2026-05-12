@@ -122,6 +122,13 @@ Print:
   - <K> figma-only variables left untouched (additive policy)
 ```
 
+Also count `skip-font-family` actions in `actions.json` and append a note if any are present:
+
+```
+  - <F> font family token(s) skipped — these belong in Figma text styles, not variables.
+    Manage `font-*` families in the Figma typography panel directly.
+```
+
 ## Common errors
 
 | Error | Fix-up guidance |

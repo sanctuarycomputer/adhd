@@ -1,5 +1,28 @@
 'use strict';
 
+const { pathToCssVar } = require('./figma-write-actions');
+
+// CSS variable names are lossy: a Figma variable named `Color/gold-25`
+// (single leaf with an internal hyphen) and one named `Color/gold/25`
+// (two-segment path) both pull to `--color-gold-25` in globals.css.
+// The path reconstruction on push always picks the slash interpretation
+// (`gold/25`), so the same underlying variable looks like a fresh
+// codeOnly token to the comparator and push would duplicate it in Figma.
+// Canonicalize to the CSS-var form so both interpretations match.
+function tokenCanonicalKey(t) {
+  try { return pathToCssVar(t.domain, t.path); }
+  catch { return null; }
+}
+
+// Same canonicalization for alias targets — Figma stores `target.name`
+// verbatim ("neutral-0"), code stores the parsed path ("neutral/0"). They
+// describe the same variable; collapse to a hyphenated form so a
+// round-tripped alias compares equal regardless of which side authored it.
+function canonicalizeAliasTarget(target) {
+  if (target == null) return '';
+  return String(target).replace(/\//g, '-').toLowerCase();
+}
+
 // Convert "0.25rem" / "16px" / "1.5" → number (px). Returns null if not a
 // simple dimension/unitless number. Mirrors dimensionToPx in figma-write-actions.
 function dimensionToPx(raw) {
@@ -49,7 +72,7 @@ function valuesEqual(a, b) {
   if (!a || !b) return false;
   if (a.type !== b.type) return false;
   if (a.type === 'alias') {
-    return a.target === b.target;
+    return canonicalizeAliasTarget(a.target) === canonicalizeAliasTarget(b.target);
   }
   // literal
   return canonicalLiteral(a.value) === canonicalLiteral(b.value);
@@ -137,6 +160,31 @@ function compareDesignSystems(code, figma, opts = {}) {
     }
   }
 
+  // Reclaim cross-tokenization duplicates. The per-domain matching above
+  // keys on `domain:path` with the literal path strings — `gold/25` and
+  // `gold-25` are distinct keys even though they describe the same Figma
+  // variable. Canonicalize both sides to the CSS-var form and pair them
+  // up: any (codeOnly, figmaOnly) pair that resolves to the same CSS var
+  // moves into `same`. Without this step, push would create a duplicate
+  // variable in Figma every time pull pulled a single-leaf hyphenated name.
+  const figmaByCanon = new Map();
+  for (const t of figmaOnly) {
+    const key = tokenCanonicalKey(t);
+    if (key) figmaByCanon.set(key, t);
+  }
+  const survivedCodeOnly = [];
+  const matchedFigma = new Set();
+  for (const t of codeOnly) {
+    const key = tokenCanonicalKey(t);
+    if (key && figmaByCanon.has(key)) {
+      same.push(t);
+      matchedFigma.add(figmaByCanon.get(key));
+    } else {
+      survivedCodeOnly.push(t);
+    }
+  }
+  const survivedFigmaOnly = figmaOnly.filter(t => !matchedFigma.has(t));
+
   // Filter Tailwind-default-origin tokens out of codeOnly UNLESS the
   // caller explicitly asked to include them. Defaulting to filtered keeps
   // day-to-day pushes focused on authored changes (no 400-entry palette
@@ -145,8 +193,8 @@ function compareDesignSystems(code, figma, opts = {}) {
   // a Figma variable. Tokens that surface in `same` or `conflict` are
   // unaffected — those reflect real state on the Figma side already.
   const filteredCodeOnly = includeTailwindInCodeOnly
-    ? codeOnly
-    : codeOnly.filter(t => t.fromTailwindDefault !== true);
+    ? survivedCodeOnly
+    : survivedCodeOnly.filter(t => t.fromTailwindDefault !== true);
 
   // ── Effect styles ──────────────────────────────────────────────────────
   // Diff by name only. Each side may not have styles at all (older callers).
@@ -166,7 +214,7 @@ function compareDesignSystems(code, figma, opts = {}) {
     },
   };
 
-  return { same, conflict, codeOnly: filteredCodeOnly, figmaOnly, styles };
+  return { same, conflict, codeOnly: filteredCodeOnly, figmaOnly: survivedFigmaOnly, styles };
 }
 
 module.exports = { compareDesignSystems, valuesEqual };
