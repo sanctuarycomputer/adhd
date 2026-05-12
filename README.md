@@ -32,10 +32,10 @@ After install, nine slash commands are available:
 | `/adhd:lint` | `[<figma-url>] [--annotate] [--fix]` | read-only by default | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices. With `--annotate`, also writes Figma annotations on each offending node in a "lint" category. With `--fix`, walks STRUCT013 Tailwind-duplicate candidates per-prompt and consolidates approved ones (rebinds bindings to the canonical Tailwind variable, then deletes the duplicate). |
 | `/adhd:push-tokens` | `[--dry-run]` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP. Runs an interactive 7-question wizard on every invocation to set per-domain push policy: push the full Tailwind palette or only your semantic colors? Push the full spacing scale or only your authored tokens? Skip opacity entirely? Route shadows through effect styles? `--dry-run` previews exactly what would be added or skipped (reflecting your wizard answers) without writing. |
 | `/adhd:pull-tokens` | `[--dry-run]` | Figma → code | Pulls Figma variables + named styles into globals.css. `--dry-run` previews without writing. |
-| `/adhd:push-component` | `<path> [--max-variants <n>] [--annotate]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. `--annotate` annotates preflight violations on Figma nodes. |
-| `/adhd:push-all-components` | `[--continue-on-error] [--max-variants <n>] [--annotate]` | code → Figma | Bulk version of `push-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. |
-| `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound] [--annotate]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched). `--annotate` annotates preflight violations on Figma nodes. Records an 8-char fingerprint + ISO `pulledAt` in `adhd.config.ts`; subsequent pulls short-circuit (no lint, no diff, no commit) when the Figma extract + pull-relevant config still hash to the same value. |
-| `/adhd:pull-all-components` | `[--continue-on-error] [--allow-unbound] [--annotate]` | Figma → code | Bulk version of `pull-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. Components whose stored fingerprint matches the fresh Figma extract are reported as `unchanged` and skipped (no lint, no diff, no commit). |
+| `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. Per-variable STRUCT015/STRUCT016 resolution prompts let you sync mismatches in either direction; annotations land automatically on any abort. |
+| `/adhd:push-all-components` | `[--continue-on-error] [--max-variants <n>]` | code → Figma | Bulk version of `push-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. |
+| `/adhd:pull-component` | `<path \| figma-url> [--allow-unbound]` | Figma → code | Pulls a Figma Component Set into a React source file; updates lookup tables and union types only (function body untouched). Per-variable STRUCT015/STRUCT016 resolution prompts let you sync mismatches in either direction; annotations land automatically on any abort. Records an 8-char fingerprint + ISO `pulledAt` in `adhd.config.ts`; subsequent pulls short-circuit (no lint, no diff, no commit) when the Figma extract + pull-relevant config still hash to the same value. |
+| `/adhd:pull-all-components` | `[--continue-on-error] [--allow-unbound]` | Figma → code | Bulk version of `pull-component` — iterates over every entry in `adhd.config.ts`'s components map. Sequential, halt-on-first-failure by default. Components whose stored fingerprint matches the fresh Figma extract are reported as `unchanged` and skipped (no lint, no diff, no commit). |
 | `/adhd:sync-docs` | — | install | Generates a design-system docs route in your Next.js consumer app. Tokens read live from globals.css; components are statically imported from adhd.config.ts at setup time — re-run after editing the components map. Excluded from production builds by default. |
 
 Every command above drives Figma exclusively through the `figma@claude-plugins-official` plugin. `/adhd:config` checks it's installed + authenticated up front so setup errors surface where you can fix them, not mid-pipeline.
@@ -90,15 +90,17 @@ Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` wi
 
 The scoped report covers the same rules (STRUCT001–016 + variable mismatches), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
 
-### Annotate violations in Figma (`--annotate`)
+### Annotate violations in Figma
 
-By default `/adhd:lint` (and the preflight inside `/adhd:push-component` / `/adhd:pull-component`) is read-only — it echoes a markdown report to the terminal and exits. Pass `--annotate` to also push each violation to Figma as a node-bound annotation in a dedicated **"lint"** category (orange). Designers see them on the layers panel, and a re-run with `--annotate` cleans up stale "lint"-category annotations automatically (designer-authored annotations and other categories are never touched).
+`/adhd:lint` is read-only — it echoes a markdown report to the terminal and exits. Pass `--annotate` to also push each violation to Figma as a node-bound annotation in a dedicated **"lint"** category (orange). Designers see them on the layers panel, and a re-run with `--annotate` cleans up stale "lint"-category annotations automatically (designer-authored annotations and other categories are never touched).
+
+For `/adhd:push-component` and `/adhd:pull-component`, annotation is **automatic on any abort** — when the SKILL aborts due to preflight violations (including a "Don't sync" pick on the per-variable STRUCT015/STRUCT016 prompts), every blocking violation is pushed to Figma before exit. On successful runs the same annotation script clears prior-run annotations from the scope so Figma stays clean. No flag needed.
 
 ```
-/adhd:lint --annotate                                                            # whole file
-/adhd:lint https://www.figma.com/design/<KEY>?node-id=91-18 --annotate           # scoped
-/adhd:push-component app/components/avatar/index.tsx --annotate                  # preflight
-/adhd:pull-component https://www.figma.com/design/<KEY>?node-id=91-18 --annotate # preflight
+/adhd:lint --annotate                                                  # whole file (manual annotation)
+/adhd:lint https://www.figma.com/design/<KEY>?node-id=91-18 --annotate # scoped (manual annotation)
+/adhd:push-component app/components/avatar/index.tsx                   # annotates on abort
+/adhd:pull-component https://www.figma.com/design/<KEY>?node-id=91-18  # annotates on abort
 ```
 
 ### Push a component

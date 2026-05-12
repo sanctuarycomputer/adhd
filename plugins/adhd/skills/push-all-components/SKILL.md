@@ -1,7 +1,7 @@
 ---
-description: "Bulk version of /adhd:push-component. Iterates over every entry in adhd.config.ts's `components` map and runs the full push flow on each, sequentially. Halts on first failure by default (use --continue-on-error for best-effort + summary). Per-component interactivity (preview server start, capture, consolidation, preflight, --annotate prompts) is preserved — each component's push behaves exactly as if you'd invoked /adhd:push-component manually."
+description: "Bulk version of /adhd:push-component. Iterates over every entry in adhd.config.ts's `components` map and runs the full push flow on each, sequentially. Halts on first failure by default (use --continue-on-error for best-effort + summary). Per-component interactivity (preview server start, capture, consolidation, preflight, per-variable STRUCT015/016 resolution, decide-or-rollback) is preserved — each component's push behaves exactly as if you'd invoked /adhd:push-component manually."
 disable-model-invocation: true
-argument-hint: "[--continue-on-error] [--max-variants <n>] [--annotate]"
+argument-hint: "[--continue-on-error] [--max-variants <n>]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma mcp__plugin_figma_figma__generate_figma_design
 ---
 
@@ -12,8 +12,8 @@ Bulk wrapper around `/adhd:push-component`. Reads the components map from `adhd.
 **Why this skill exists:** if you've made structural changes to multiple components in code (renamed props, added variants, updated tokens) and want to push them all to Figma, this saves the typing AND keeps the Next.js dev server warm across pushes — push-component auto-starts it on the first component, and subsequent ones reuse the running instance.
 
 **What this skill DOES NOT do:**
-- Suppress per-component prompts (rollback decisions, annotate offers). Each push runs its full interactive flow.
-- Apply decisions across all components ("rollback all on any failure", "annotate all"). Per-component decisions stay per-component.
+- Suppress per-component prompts (rollback decisions, per-variable resolution). Each push runs its full interactive flow.
+- Apply decisions across all components ("rollback all on any failure", "take Figma for everything"). Per-component decisions stay per-component.
 
 ## Phase 1: Validate config + read components list
 
@@ -47,9 +47,8 @@ For each path in the list, in order:
 
 2. Invoke the phases of `/adhd:push-component` inline for this path. Pass through any flags the user gave to `/adhd:push-all-components`:
    - `--max-variants <n>` (applied uniformly to every component's variant cap)
-   - `--annotate` (per-component preflight annotation)
 
-   The per-component push-component SKILL handles its own validation, dev-server start/check, capture, consolidation, preflight, decide-or-rollback, final report, and the mapping write to `adhd.config.ts`. All of those still fire normally.
+   The per-component push-component SKILL handles its own validation, dev-server start/check, capture, consolidation, preflight, STRUCT015/016 resolution, decide-or-rollback, final report, and the mapping write to `adhd.config.ts`. Annotations land automatically on any abort — no flag forwarding needed.
 
    **Dev-server reuse:** push-component's Phase 4 only starts the server if one isn't already running. The first push in the bulk run starts it (if not already up); subsequent pushes reuse the running instance. push-component's Phase 13 (cleanup) tears down the server only when it auto-started it for that single run — in the bulk case, push-component sees the server was already running and leaves it alone. **This skill's Phase 4 (below) is responsible for the final teardown.**
 
@@ -86,7 +85,7 @@ Summary: 2 succeeded, 1 failed, 1 skipped.
 Actionable next steps:
 - **All succeeded:** `All components are now in sync with Figma. Run /adhd:sync-docs if you want to refresh the design-system docs route.`
 - **Any failed:** `To re-try just the failures: /adhd:push-component <path>`.
-- **`--annotate` was active:** `Preflight annotations updated in the "lint" category in Figma.`
+- **Any rollback happened during the run** (per-component pushes auto-push annotations on rollback): `Annotations were pushed to Figma for unresolved violations during this run. Check the "lint" category to see what needs fixing.`
 
 Exit 0 if all `success`/`cancel`, else 1.
 

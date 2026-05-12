@@ -1,7 +1,7 @@
 ---
 description: "Push a React component to the configured Figma file as a structured Component Set. Reads adhd.config.ts. Parses the component's variant axes from its TypeScript prop unions, generates a temp Next.js preview route, auto-starts the dev server if needed (and tears it down after), captures via generate_figma_design, wraps the captured frames into a Component Set with variant properties, rebinds raw values to existing design-system variables, and runs the same lint engine /adhd:lint uses as a preflight check before finalizing."
 disable-model-invocation: true
-argument-hint: "<component-path> [--max-variants <n>] [--annotate]"
+argument-hint: "<component-path> [--max-variants <n>]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma mcp__plugin_figma_figma__generate_figma_design
 ---
 
@@ -182,39 +182,17 @@ node plugins/adhd/lib/push-component/cli.js preflight \
 
 Read the report. Parse out error count and warning count.
 
-The preflight CLI also writes a JSON sidecar with the engine's full structured output at `/tmp/adhd-push-component/preflight-report.json` (same path as the report, `.md` → `.json`). Phase 10.5 uses this when `--annotate` is set.
+The preflight CLI also writes a JSON sidecar with the engine's full structured output at `/tmp/adhd-push-component/preflight-report.json` (same path as the report, `.md` → `.json`). Phase 10.7 and the abort-time annotation helper both read from it.
 
-## Phase 10.5: Annotate offending nodes in Figma
+## Phase 10.5: Abort-time annotation helper
 
-Two paths into this phase, both producing the same `use_figma` annotation work described in `/adhd:lint` Phase 6:
+Not a phase the SKILL invokes top-down — a helper called by Phase 10.7 and Phase 11 whenever push aborts due to violations. Pushes every blocking violation to Figma as a "lint"-category annotation BEFORE the rollback completes, so designers see what needs fixing the next time they open the file. Same mechanic as `/adhd:lint` Phase 6:
 
-**Path A — `--annotate` was passed.** Run the annotation script unconditionally. After it returns, print:
+1. Distill `/tmp/adhd-push-component/preflight-report.json` to `/tmp/adhd-push-component/violations.json` (same `node -e` snippet as lint Phase 6 — filters to `nodeId`-bearing entries).
+2. Call `mcp__plugin_figma_figma__use_figma` with the annotation script, passing `SCOPE_ROOT_ID = <componentSetId saved in Phase 9>`. Stale-annotation cleanup is bounded to this Component Set's subtree — never wipes unrelated frames.
+3. If there are zero `nodeId`-bearing violations, skip silently.
 
-```
-✓ Annotated <updated> Figma node(s) in the "lint" category. Cleared <cleared> stale annotation(s).
-```
-
-**Path B — `--annotate` was NOT passed, AND preflight produced node-bound errors that will abort the push.** Use `AskUserQuestion` to offer it retroactively:
-
-```
-Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'lint' category to fix in-context."
-Header: "Annotate?"
-Options:
-  - "Yes, annotate them in Figma"
-  - "No, skip"
-```
-
-On "Yes": run the same annotation script and print the result line.
-On "No": skip silently.
-
-For Path B, skip the prompt if (a) preflight is clean (no errors blocking the push), or (b) no violation has a `nodeId`.
-
-Inputs (both paths):
-- Engine stdout: `/tmp/adhd-push-component/preflight-report.json`
-- Distill to `/tmp/adhd-push-component/violations.json` using the same `node -e` snippet as lint Phase 6.
-- **`SCOPE_ROOT_ID`** — pass the freshly-pushed Component Set's nodeId (saved in Phase 9 as `componentSetId`). This bounds the annotation script's stale-annotation cleanup to this Component Set's subtree, so a push of UserAvatar doesn't wipe a previously-annotated STRUCT010 on an unrelated Logo Component Set elsewhere in the file.
-
-Phase 10.5 runs AFTER the preflight CLI exits but BEFORE Phase 11's decide-or-rollback — designers see annotations even when push aborts.
+On successful pushes (no abort, Phase 11 takes the finalize path), the same helper runs with `VIOLATIONS = []` so any prior-run annotations are cleared and Figma reflects the new clean state.
 
 ## Phase 10.7: Interactive STRUCT015 / STRUCT016 resolution
 
@@ -233,11 +211,9 @@ Question: "`<figmaName>` is bound by this push but doesn't exist in code's desig
 Header: "Variable missing"
 Options:
   - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
-  - "Annotate only — don't sync this variable"
-  - "Abort the push (roll back)"
+  - "Don't sync — leave the annotation in Figma and roll back"
+  - "Roll back the push (no annotation change)"
 ```
-
-"Annotate only" finalizes the push with the binding referencing a variable that doesn't exist in code — the component will render broken until the designer addresses it. The Figma annotation stays in place to surface the issue.
 
 For each unique STRUCT016 variable:
 
@@ -247,17 +223,17 @@ Header: "Value conflict"
 Options:
   - "Take code's value (update Figma to match code)"
   - "Take Figma's value (write to globals.css; alias-aware)"
-  - "Annotate only — don't sync this variable"
-  - "Abort the push (roll back)"
+  - "Don't sync — leave the annotation in Figma and roll back"
+  - "Roll back the push (no annotation change)"
 ```
 
-"Annotate only" finalizes the push leaving both sides divergent — Figma keeps its value, code keeps its value, the lint annotation in Figma surfaces the conflict for later reconciliation (run `/adhd:pull-tokens` or `/adhd:push-tokens` when ready).
-
-Record each pick (other than "Annotate only" / "Abort") into one of two arrays:
+For each "Add" / "Take code's value" / "Take Figma's value" pick, record into one of two arrays:
 - `code-side-actions`: every "Add to globals.css" and "Take Figma's value" pick. Same shape as `/adhd:pull-component`'s actions — feed into `lib/pull-component/cli.js resolve-actions` per entry to get alias-aware `set-primitive` / `set-semantic` actions, concatenate into one list.
 - `figma-side-actions`: every "Take code's value" pick. Shape: `{ figmaVarId, mode, value, valueDomain }` (need the Figma variable id; look it up by inverting `/tmp/adhd-push-component/varidmap.json` — same map the lint engine produced).
 
-If any prompt picks "Abort," skip the apply step and fall through to Phase 11's rollback path with the unresolved-violations recap.
+For each "Don't sync" or "Roll back" pick, set `abortIntent = true` and continue collecting picks (so subsequent prompts still get answered — the designer might want to record decisions on the rest before the rollback fires). The two abort-flavored picks differ only in whether annotations get pushed: "Don't sync" guarantees they land (via the Phase 10.5 helper); "Roll back" leaves annotations as-is.
+
+If `abortIntent === true` after the prompt loop, skip the apply step and fall through to Phase 11's rollback path. The Phase 10.5 helper handles annotations for the "Don't sync" picks.
 
 ### Apply code-side actions
 
@@ -328,23 +304,22 @@ Print a one-line summary before continuing:
 
 ## Phase 11: Decide and finalize OR roll back
 
-If preflight has zero errors: print "✓ Preflight clean" plus warning summary, then proceed to Phase 12.
+Three sub-paths into this phase:
 
-If preflight has errors: print the report. Use `AskUserQuestion`:
-- "Keep the pushed page (you can fix in Figma manually)"
-- "Roll back — delete the captured page and exit"
+1. **Preflight clean, no `abortIntent`.** Call the Phase 10.5 helper with `VIOLATIONS = []` to clear any prior-run annotations, print "✓ Preflight clean" plus the warning summary, then proceed to Phase 12.
 
-If user picks roll back:
+2. **`abortIntent === true`** (from Phase 10.7's per-variable prompts). Call the Phase 10.5 helper to push annotations for the unresolved blocking violations (no AskUserQuestion needed — the designer already made the call). Then run the rollback script below, print "Rolled back. Annotations pushed to Figma for the unresolved violations. Fix in Figma and re-run." Exit 1.
+
+3. **Preflight has errors that didn't go through Phase 10.7's resolution loop** (e.g. STRUCT011 / STRUCT012 / unescaped STRUCT003-5). Same path as (2) — annotations land, rollback fires. No "Keep with errors" prompt; if blocking violations weren't resolvable through the structured prompts in Phase 10.7, the only safe action is rollback.
+
+The rollback script:
+
 ```js
 // run via use_figma
 const page = await figma.getNodeByIdAsync(PAGE_ID);
 page.remove();
 return { rolledBack: true };
 ```
-
-Then print "Rolled back. No changes to Figma. Fix the issues in your component and re-run." Exit with code 1.
-
-If user picks keep, proceed to Phase 12.
 
 ## Phase 11.5: Write component mapping to adhd.config.ts
 

@@ -1,7 +1,7 @@
 ---
-description: "Bulk version of /adhd:pull-component. Iterates over every entry in adhd.config.ts's `components` map and runs the full pull flow on each, sequentially. Halts on first failure by default (use --continue-on-error for best-effort + summary). Per-component interactivity (preflight blockers, --allow-unbound escape, Phase 2.7 missing-var discovery, annotate, sync-docs prompt) is preserved — each component's pull behaves exactly as if you'd invoked /adhd:pull-component manually."
+description: "Bulk version of /adhd:pull-component. Iterates over every entry in adhd.config.ts's `components` map and runs the full pull flow on each, sequentially. Halts on first failure by default (use --continue-on-error for best-effort + summary). Per-component interactivity (preflight blockers, --allow-unbound escape, per-variable STRUCT015/016 resolution, Phase 2.7 missing-var discovery, sync-docs prompt) is preserved — each component's pull behaves exactly as if you'd invoked /adhd:pull-component manually."
 disable-model-invocation: true
-argument-hint: "[--continue-on-error] [--allow-unbound] [--annotate]"
+argument-hint: "[--continue-on-error] [--allow-unbound]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma mcp__plugin_figma_figma__get_metadata
 ---
 
@@ -12,8 +12,8 @@ Bulk wrapper around `/adhd:pull-component`. Reads the components map from `adhd.
 **Why this skill exists:** for design systems with many components, pulling each one manually is repetitive. This skill saves the typing AND provides a single end-of-run summary so failures don't get buried in a long log.
 
 **What this skill DOES NOT do:**
-- Suppress per-component prompts (preflight blockers, escape questions, annotate offers). Each component's pull runs its full interactive flow.
-- Apply decisions across all components ("annotate all", "add all missing vars", etc.). Those would require a global mode and risk batch-applying choices that should be considered per-component. v2 if it proves annoying.
+- Suppress per-component prompts (preflight blockers, escape questions, per-variable STRUCT015/016 resolution). Each component's pull runs its full interactive flow.
+- Apply decisions across all components ("add all missing vars", "take Figma for everything", etc.). Those would require a global mode and risk batch-applying choices that should be considered per-component. v2 if it proves annoying.
 
 ## Phase 1: Validate config + read components list
 
@@ -89,9 +89,8 @@ For each path in the list, in order:
 
 2. Invoke the phases of `/adhd:pull-component` inline for this path. Pass through any flags the user gave to `/adhd:pull-all-components`:
    - `--allow-unbound` (per-component STRUCT003/004/005 escape)
-   - `--annotate` (per-component preflight annotation)
 
-   The per-component pull-component SKILL handles its own validation, preflight, abort/escape logic, opportunistic-variable discovery (Phase 2.7), final report, and the post-success sync-docs prompt. All of those still fire normally — `pull-all-components` doesn't interfere with their flow.
+   The per-component pull-component SKILL handles its own validation, preflight, abort/escape logic, STRUCT015/016 resolution, opportunistic-variable discovery (Phase 2.7), final report, and the post-success sync-docs prompt. Annotations land automatically on any abort — no flag forwarding needed.
 
 3. Record the outcome for this component into `/tmp/adhd-pull-all/outcomes.json` (append-only). Outcome shape:
    ```json
@@ -133,7 +132,7 @@ Append actionable next steps based on outcome:
 
 - **All succeeded:** print `Run /adhd:sync-docs to refresh the design-system docs route.` (already prompted per component but worth reminding for the whole run).
 - **Any failed:** print `To re-try just the failures: /adhd:pull-component <path>` with the actual failed paths listed.
-- **Any annotations were pushed** (i.e., `--annotate` was active): print `Annotations updated in the "lint" category in Figma.`
+- **Any abort happened during the run** (per-component pulls auto-push annotations on abort): print `Annotations were pushed to Figma for unresolved violations during this run. Check the "lint" category to see what needs fixing.`
 
 Exit code:
 - All `success`/`cancel`: exit 0.

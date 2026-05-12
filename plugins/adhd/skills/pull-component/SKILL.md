@@ -1,7 +1,7 @@
 ---
 description: "Pull a Figma Component Set into a React component source file. Inverse of /adhd:push-component. Updates only design-token lookup tables and union type members — function body, JSX, hooks, handlers, and imports are never modified. Reads adhd.config.ts and uses the mapping at components.<path>.figma.url. Pre-flight validates the Figma source using the same lint engine /adhd:lint uses; structural violations abort the pull."
 disable-model-invocation: true
-argument-hint: "<react-path | figma-url> [--allow-unbound] [--annotate]"
+argument-hint: "<react-path | figma-url> [--allow-unbound]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
@@ -112,45 +112,31 @@ node plugins/adhd/lib/lint-engine/cli.js \
   > /tmp/adhd-pull-component/stdout.json
 ```
 
-The stdout redirect captures the engine's JSON summary for Phase 2.6's optional `--annotate` step.
+The stdout redirect captures the engine's JSON summary for later abort-time annotation (see below).
 
 Use the globals.css path from `config.cssEntry` if set, otherwise auto-detect: `example/app/globals.css` → `app/globals.css` → `src/app/globals.css`.
 
 Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Four classes of violation block the pull:
 
 - **STRUCT003/004/005** — variable-binding errors (layer uses raw color, typography, or effect that isn't bound to a variable or paint style). The `--allow-unbound` escape applies here; without it, abort.
-- **STRUCT011** — variable-naming non-compliance (case violation OR Tailwind v4 domain mismatch). No escape — the designer fixes the names in Figma before the pull can proceed. Rationale: if Figma variables have non-conventional names, the pulled code's lookup tables would either reference broken names or drift from the design system. Better to fix the source than carry forward bad names into generated code.
-- **STRUCT015** — layer binds a Figma variable that doesn't exist in code's design system. No escape. Pulling would generate code referencing a CSS variable globals.css never declares — broken rendering at runtime. The designer either rebinds the layer to a variable that IS in code, or runs `/adhd:pull-tokens` to add the missing variable first.
-- **STRUCT016** — layer binds a Figma variable whose value in Figma differs from code's. No escape. Pulling would render with code's value, drifting from what the designer sees in Figma. Reconcile via `/adhd:pull-tokens` (take Figma's value) or `/adhd:push-tokens` (send code's value back to Figma), then re-run.
+- **STRUCT011** — variable-naming non-compliance (case violation OR Tailwind v4 domain mismatch). No escape — the designer fixes the names in Figma before the pull can proceed.
+- **STRUCT012** — cross-domain bindings (e.g. spacing variable bound to letter-spacing). No escape — the fix is to rebind the layer in Figma.
+- **STRUCT015** — layer binds a Figma variable that doesn't exist in code's design system. Interactive per-variable resolution (see below).
+- **STRUCT016** — layer binds a Figma variable whose value in Figma differs from code's. Interactive per-variable resolution (see below).
+
+**Annotations land automatically on abort.** Whenever the pull aborts due to any blocking violation — including a "Don't sync" pick on a STRUCT015 / STRUCT016 prompt — every blocking violation is pushed to Figma as a "lint"-category annotation before the abort completes. No flag is needed; the annotations are the designer's record of what to fix. On successful pulls (zero unresolved blocking violations) annotations from prior runs are cleared so Figma stays clean.
 
 Other rules' violations are noted for the final report but don't block.
 
-### Annotate offending nodes in Figma
+### Abort-time annotation helper (called from every abort path below)
 
-Two paths, both producing the same `use_figma` annotation work described in `/adhd:lint` Phase 6:
+Whenever this SKILL aborts due to blocking violations, push every blocking violation to Figma as a "lint"-category annotation BEFORE printing the abort message and exiting. The mechanic mirrors `/adhd:lint` Phase 6:
 
-**Path A — `--annotate` was passed.** Run the annotation script unconditionally.
+1. Distill violations from `/tmp/adhd-pull-component/stdout.json` to `/tmp/adhd-pull-component/violations.json` using the same `node -e` snippet as lint Phase 6 (filters to `nodeId`-bearing entries).
+2. Call `mcp__plugin_figma_figma__use_figma` with the annotation script from `/adhd:lint` Phase 6, passing `SCOPE_ROOT_ID = <target Component Set's nodeId>` so stale-annotation cleanup is bounded to this Component Set's subtree — never wipes annotations on unrelated frames.
+3. If there are zero `nodeId`-bearing violations (rare — typically only happens on whole-file scope issues), skip the annotation step silently and continue to the abort message.
 
-**Path B — `--annotate` was NOT passed, AND there are blocking violations (STRUCT003/004/005 binding errors, STRUCT011 variable-naming non-compliance, STRUCT015 variable-missing-in-code, or STRUCT016 variable-value-conflict).** Use `AskUserQuestion` to offer annotation retroactively:
-
-```
-Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'lint' category to fix in-context."
-Header: "Annotate?"
-Options:
-  - "Yes, annotate them in Figma"
-  - "No, skip"
-```
-
-On "Yes": run the annotation script. On "No": skip silently.
-
-For Path B, skip the prompt if no violation has a `nodeId` (no actionable annotations to write).
-
-Inputs (both paths):
-- Engine stdout: `/tmp/adhd-pull-component/stdout.json`
-- Distill to `/tmp/adhd-pull-component/violations.json` using the same `node -e` snippet as lint Phase 6.
-- **`SCOPE_ROOT_ID`** — pass the target Component Set's nodeId (from Phase 2's URL extraction). This bounds the annotation script's stale-annotation cleanup to this Component Set's subtree, so a pull of UserAvatar doesn't wipe a previously-annotated STRUCT010 on an unrelated Logo Component Set elsewhere in the file.
-
-Either path runs BEFORE the abort/escape evaluation below, so the designer sees the annotations regardless of whether the pull continues.
+On successful pulls (no abort), the same annotation script runs with `VIOLATIONS = []` so any prior-run annotations within the scope are cleared — Figma stays clean.
 
 **If variable-binding errors exist:**
 
@@ -239,11 +225,11 @@ Question: "`<figmaName>` is bound in this component but doesn't exist in code's 
 Header: "Variable missing"
 Options:
   - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
-  - "Annotate only — don't sync this variable"
-  - "Abort the pull"
+  - "Don't sync — leave the annotation in Figma and abort"
+  - "Abort the pull (no annotation change)"
 ```
 
-If "Abort," stop and emit the abort message (below). If "Add," record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array. If "Annotate only," record nothing — the pull proceeds with the binding referencing a variable that doesn't exist in code; the lint annotation in Figma stays visible so the designer can fix later. (Tip: this is the right pick when the designer plans to address the missing variable in a separate `/adhd:pull-tokens` run rather than inline.)
+If "Add," record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array and continue to the next prompt. If "Don't sync" or "Abort," set `abortIntent = true` and continue collecting picks (so subsequent prompts still get answered — the designer might still want to record decisions on the rest before the run aborts). The difference between the two abort-flavored picks: "Don't sync" guarantees annotations land (via the helper above); "Abort" leaves annotations as-is (already-on if a prior run annotated them, off otherwise).
 
 **If STRUCT016 violations exist (layer binds variable whose value differs from code's):**
 
@@ -254,13 +240,34 @@ Question: "`<figmaName>` differs between Figma and code:\n  code:  <local-normal
 Header: "Value conflict"
 Options:
   - "Take Figma's value (update globals.css)"
-  - "Annotate only — don't sync this variable"
-  - "Abort the pull"
+  - "Don't sync — leave the annotation in Figma and abort"
+  - "Abort the pull (no annotation change)"
 ```
 
-If "Abort," same path as STRUCT015 abort. If "Annotate only," record nothing — the pull continues with code's value as-is and the Figma annotation stays in place so the designer can decide later (run `/adhd:pull-tokens` to take Figma's value, or `/adhd:push-tokens` to push code's value to Figma). If "Take Figma," record `{ figmaName, value: figma-normalized }` to `actions-input`.
+If "Take Figma," record `{ figmaName, value: figma-normalized }` to `actions-input` and continue. If "Don't sync" or "Abort," set `abortIntent = true` and continue collecting picks. Same abort-flavor distinction as STRUCT015 above.
 
-### Build + apply the write actions
+### Apply OR abort
+
+**If `abortIntent === true`** (any STRUCT015 / STRUCT016 prompt got a "Don't sync" or "Abort" pick), OR **any unresolved blocking class remains** (STRUCT011 / STRUCT012 / unescaped STRUCT003/4/5):
+
+1. Call the abort-time annotation helper to push every blocking violation to Figma.
+2. Print the abort message:
+
+```
+✗ Cannot pull — variable issues remain. Recap:
+
+<paste each unresolved blocking violation message verbatim>
+
+Either resolve these in Figma (rebind layers, fix variable values, or
+rename) and re-run, or pick "Add to globals.css" / "Take Figma's
+value" on the per-variable prompts above.
+
+<annotation summary line — "Pushed N annotations to the 'lint' category in Figma." or "No nodeId-bearing violations to annotate.">
+```
+
+3. Exit 1.
+
+**Otherwise**, every STRUCT015 / STRUCT016 prompt was resolved (every pick was "Add" / "Take Figma's value"). Apply the queued writes:
 
 For each entry in `actions-input`, resolve the alias chain via the CLI to find where the write should actually land. The resolver handles the shadcn-style exposure pattern (`--color-primary: var(--primary)` in `@theme inline` → write lands at `--primary` in `:root`, not at `--color-primary` in `@theme`), avoiding the trap of overwriting an alias with a literal and breaking dark-mode propagation.
 
@@ -285,21 +292,11 @@ node -e '
 '
 ```
 
-After writing, re-run the lint engine (cheap, no MCP call needed — same `cli.js` invocation as before) and confirm zero remaining STRUCT015 / STRUCT016 violations. If any remain (unusual — typically only happens when the resolver hit an alias cycle and fell back to a defensive write), abort with the standard message; the designer needs to look at the file by hand.
+After writing, re-run the lint engine (cheap, no MCP call needed — same `cli.js` invocation as before) and confirm zero remaining STRUCT015 / STRUCT016 violations. If any remain (unusual — typically only happens when the resolver hit an alias cycle and fell back to a defensive write), fall back to the abort path above; the designer needs to look at the file by hand.
 
-### Abort message (used by all "Abort" picks)
+After a successful preflight pass, call the annotation helper one more time with `VIOLATIONS = []` so any prior-run annotations are cleared from the scope — Figma reflects the new clean state.
 
-```
-✗ Cannot pull — variable issues remain. Recap:
-
-<paste each STRUCT015 + STRUCT016 message that wasn't resolved verbatim>
-
-Either resolve these in Figma (rebind layers to real variables, or
-update Figma's values) and re-run, or pick "Add to globals.css" /
-"Take Figma's value" on the per-variable prompts above.
-```
-
-Priority when multiple block-classes are present: STRUCT011 first (variable names — unconditional abort, no prompts), then STRUCT003/004/005 (raw values — `--allow-unbound` escape), then STRUCT015 + STRUCT016 (interactive prompts).
+Priority when multiple block-classes are present: STRUCT011 / STRUCT012 first (unconditional abort), then STRUCT003/004/005 (raw values — `--allow-unbound` escape), then STRUCT015 + STRUCT016 (interactive prompts).
 
 ## Phase 2.7: Opportunistic variable discovery
 
