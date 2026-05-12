@@ -92,7 +92,12 @@ The stdout redirect captures the engine's JSON summary for Phase 2.6's optional 
 
 Use the globals.css path from `config.cssEntry` if set, otherwise auto-detect: `example/app/globals.css` → `app/globals.css` → `src/app/globals.css`.
 
-Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Scan for STRUCT003/004/005 (variable-binding errors). Other rules' violations are noted for the final report but don't block.
+Use `Read` on `/tmp/adhd-pull-component/preflight.md`. Two classes of violation block the pull:
+
+- **STRUCT003/004/005** — variable-binding errors (layer uses raw color, typography, or effect that isn't bound to a variable or paint style). The `--allow-unbound` escape applies here; without it, abort.
+- **STRUCT011** — variable-naming non-compliance (case violation OR Tailwind v4 domain mismatch). No escape — the designer fixes the names in Figma before the pull can proceed. Rationale: if Figma variables have non-conventional names, the pulled code's lookup tables would either reference broken names or drift from the design system. Better to fix the source than carry forward bad names into generated code.
+
+Other rules' violations are noted for the final report but don't block.
 
 ### Annotate offending nodes in Figma
 
@@ -100,7 +105,7 @@ Two paths, both producing the same `use_figma` annotation work described in `/ad
 
 **Path A — `--annotate` was passed.** Run the annotation script unconditionally.
 
-**Path B — `--annotate` was NOT passed, AND there are variable-binding errors (STRUCT003/004/005) that will block the pull.** Use `AskUserQuestion` to offer it retroactively:
+**Path B — `--annotate` was NOT passed, AND there are blocking violations (STRUCT003/004/005 binding errors, OR STRUCT011 variable-naming non-compliance).** Use `AskUserQuestion` to offer annotation retroactively:
 
 ```
 Question: "Push these <N> preflight violation(s) to Figma as annotations before aborting? Designers can see them in the 'lint' category to fix in-context."
@@ -159,6 +164,24 @@ Continue? [Y] yes / [N] no (abort)
 ```
 
 On `no` or no answer, abort. On `yes`, note which entries will be off-system; you'll prefix their applied values with the `// adhd:off-system — <reason>` comment in Phase 7.
+
+**If STRUCT011 violations exist (variable-naming non-compliance):**
+
+Abort unconditionally — there is no escape. STRUCT011 reports either a case-convention mismatch on a variable name or an unrecognized Tailwind v4 domain prefix; in both cases the fix is the designer renaming the variable in Figma, not the pull adapting around it. If we proceeded, the pulled component's lookup tables would reference variables that either don't bind to anything in code's `@theme` or land in code with the wrong name shape — drift we can't reliably round-trip on the next `/adhd:push-component`.
+
+Read the STRUCT011 message from the preflight report verbatim (it already names every offender + suggested rename) and print it under a banner:
+
+```
+✗ Cannot pull — the Figma Component Set has variables that don't follow the design-system naming conventions:
+
+<paste the STRUCT011 message verbatim>
+
+Fix the variable names in Figma (right-click each variable → "Rename")
+and re-run /adhd:pull-component. There's no escape for this — bad names
+would land in your code's lookup tables and drift on the next push.
+```
+
+If BOTH STRUCT011 AND variable-binding errors are present, surface STRUCT011 first (it's the more fundamental fix — bind-errors might be tolerable with `--allow-unbound`, but bad names always need fixing first).
 
 ## Phase 3: Read both sides
 
