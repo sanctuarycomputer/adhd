@@ -82,10 +82,9 @@ test('spacing token with 0.25rem produces FLOAT create-variable with resolved va
 
 test('font-family typography tokens are skipped (text-styles channel, not variables)', () => {
   // Font families belong in Figma's text-style system, not its variable
-  // system. Pushing them as STRING variables creates a parallel channel
-  // that competes with the designer's text-style workflow. The action
-  // builder emits a `skip-font-family` action so the SKILL can surface
-  // the reason in the report instead of silently dropping the token.
+  // system. The disposition classifier hardcodes this skip so it applies
+  // even when the user picks "push all typography" — text styles are the
+  // right channel period.
   const diff = {
     same: [], conflict: [], figmaOnly: [],
     codeOnly: [{
@@ -94,11 +93,11 @@ test('font-family typography tokens are skipped (text-styles channel, not variab
       values: { default: { type: 'literal', value: 'ui-sans-serif, system-ui, sans-serif' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { typography: 'all' } });
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].kind, 'skip-font-family');
+  assert.equal(actions[0].kind, 'skip-by-disposition');
   assert.equal(actions[0].path, 'font/sans');
-  assert.match(actions[0].reason, /text styles, not variables/);
+  assert.match(actions[0].reason, /font-family/);
 });
 
 test('font-weight typography tokens still push as variables (only font families skip)', () => {
@@ -216,6 +215,8 @@ test('color token still emits COLOR-typed create-variable (regression guard)', (
 });
 
 test('opacity token (0.05) → FLOAT in `opacity` collection', () => {
+  // Opacity defaults to skip (Tailwind's class-modifier pattern), so this
+  // test passes an opt-in disposition to exercise the create-variable shape.
   const diff = {
     same: [], conflict: [], figmaOnly: [],
     codeOnly: [{
@@ -223,7 +224,7 @@ test('opacity token (0.05) → FLOAT in `opacity` collection', () => {
       values: { default: { type: 'literal', value: '0.05' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { opacity: 'push' } });
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, 'create-variable');
   assert.equal(actions[0].collection, 'opacity');
@@ -253,7 +254,7 @@ test('z-index token (50, unitless) → FLOAT in `z-index` collection', () => {
       values: { default: { type: 'literal', value: '50' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'z-index');
   assert.equal(actions[0].type, 'FLOAT');
   assert.equal(actions[0].resolvedByMode.default, 50);
@@ -267,7 +268,7 @@ test('breakpoint token (40rem) → FLOAT converted to 640 px', () => {
       values: { default: { type: 'literal', value: '40rem' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'breakpoint');
   assert.equal(actions[0].type, 'FLOAT');
   assert.equal(actions[0].resolvedByMode.default, 640);
@@ -281,7 +282,7 @@ test('aspect token (16 / 9) → STRING in `aspect` collection', () => {
       values: { default: { type: 'literal', value: '16 / 9' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'aspect');
   assert.equal(actions[0].type, 'STRING');
   assert.equal(actions[0].resolvedByMode.default, '16 / 9');
@@ -295,7 +296,7 @@ test('ease cubic-bezier → STRING in `ease` collection', () => {
       values: { default: { type: 'literal', value: 'cubic-bezier(0.4, 0, 0.2, 1)' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'ease');
   assert.equal(actions[0].type, 'STRING');
   assert.equal(actions[0].resolvedByMode.default, 'cubic-bezier(0.4, 0, 0.2, 1)');
@@ -309,7 +310,7 @@ test('animate shorthand → STRING in `animate` collection', () => {
       values: { default: { type: 'literal', value: 'spin 1s linear infinite' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'animate');
   assert.equal(actions[0].type, 'STRING');
 });

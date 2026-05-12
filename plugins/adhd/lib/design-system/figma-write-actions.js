@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseShadow } = require('./shadow-parser');
+const { classifyToken } = require('./dispositions');
 
 const DOMAIN_COLLECTION = {
   color: 'color',
@@ -107,7 +108,8 @@ function pathToCssVar(domain, path) {
   return DOMAIN_PREFIX[domain] + dashed;
 }
 
-function buildFigmaActions(diff, resolutions, direction) {
+function buildFigmaActions(diff, resolutions, direction, opts = {}) {
+  const dispositions = opts.dispositions || null;
   const resolutionMap = new Map();
   for (const r of resolutions) {
     resolutionMap.set(r.path + ':' + (r.mode ?? 'default'), r.winner);
@@ -126,21 +128,21 @@ function buildFigmaActions(diff, resolutions, direction) {
       // not extract.collections), but include here for forward-compat.
       ...(((diff.styles && diff.styles.effects && diff.styles.effects.same) || []).map(s => s.name)),
     ]);
-    // Code-only: create in Figma
+    // Code-only: create in Figma. Each token is classified through the
+    // user's push-token dispositions (collected via the wizard in
+    // /adhd:push-tokens — see dispositions.js). Three outcomes:
+    //   - 'push'         → create-variable
+    //   - 'effect-style' → create-effect-style (shadow)
+    //   - 'skip'         → skip-by-disposition with reason (visible in
+    //                       the dry-run + final report, no Figma write)
     for (const t of diff.codeOnly) {
-      // Font-family tokens (`--font-sans`, `--font-aeonik`, etc.) shouldn't
-      // round-trip as Figma variables. Designers use Figma's TEXT STYLES
-      // for typography choices — pushing fonts as string variables creates
-      // a parallel channel that competes with the text-style system and
-      // confuses the design surface. Skip them at the action level so the
-      // user gets a clear reason. (Font-weight, text-size, line-height,
-      // tracking still push — those are scalar values that variables
-      // handle well; only `font-*` family names land in text styles.)
-      if (t.domain === 'typography' && t.path.startsWith('font/')) {
+      const verdict = classifyToken(t, dispositions);
+      if (verdict.action === 'skip') {
         actions.push({
-          kind: 'skip-font-family',
+          kind: 'skip-by-disposition',
+          domain: t.domain,
           path: t.path,
-          reason: 'Font families belong in Figma text styles, not variables. Manage these directly in the Figma typography panel.',
+          reason: verdict.reason,
         });
         continue;
       }

@@ -54,20 +54,27 @@ assemble-extract:
 }
 
 // Renders a value (hex string, px string, shadow descriptor, etc.) in a
-// single short token. Shadows / nested objects collapse to a short JSON
-// representation so the alignment column stays sane. Conservative — the
-// preview is for spot-checking, not full fidelity.
+// single short token. TokenValue objects from the parsers come in two
+// shapes — `{type: 'literal', value}` and `{type: 'alias', target}` —
+// unwrap them so designers see `#fff` instead of `{"type":"literal",...}`.
 function fmtValue(v) {
   if (v == null) return '—';
   if (typeof v === 'string') return v;
   if (typeof v === 'number') return String(v);
+  if (v && typeof v === 'object') {
+    if (v.type === 'literal' && 'value' in v) return String(v.value);
+    if (v.type === 'alias' && 'target' in v) return `→ ${v.target}`;
+  }
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 
 // One line per (path, mode). Code-only and figma-only token entries store
 // their values per mode under `values`; conflict entries already arrive
-// flattened by mode.
-function formatPreview(diff, direction) {
+// flattened by mode. When `actions` is provided (push-direction dry-run
+// with dispositions), entries are split into "would push" vs "would
+// skip" buckets so designers see the actual outcome of their disposition
+// choices, not the unfiltered diff.
+function formatPreview(diff, direction, actions = null) {
   if (direction !== 'push' && direction !== 'pull') {
     throw new Error(`preview: --direction must be 'push' or 'pull', got '${direction}'`);
   }
@@ -89,10 +96,23 @@ function formatPreview(diff, direction) {
   const FLAT_THRESHOLD = 25;
   const BUCKET_SAMPLE_SIZE = 6;
 
+  // When actions are available, build a (domain, path) → skipReason map
+  // so we can label each row's disposition outcome. Push-action tokens
+  // produce no map entry — they push as normal.
+  const skipReasonByKey = new Map();
+  if (actions && direction === 'push') {
+    for (const a of actions) {
+      if (a.kind === 'skip-by-disposition') {
+        skipReasonByKey.set((a.domain || '') + ':' + a.path, a.reason);
+      }
+    }
+  }
+
   const addRows = [];
   for (const tok of fromOnly) {
+    const skipReason = skipReasonByKey.get((tok.domain || '') + ':' + tok.path) || null;
     for (const [mode, value] of Object.entries(tok.values || {})) {
-      addRows.push({ path: tok.path, mode, value, domain: tok.domain || 'other' });
+      addRows.push({ path: tok.path, mode, value, domain: tok.domain || 'other', skipReason });
     }
   }
   addRows.sort((a, b) =>
@@ -101,13 +121,19 @@ function formatPreview(diff, direction) {
     a.mode.localeCompare(b.mode),
   );
 
-  if (addRows.length === 0) {
+  // Split into push and skip lanes when dispositions are available; the
+  // skip lane shows reasons so designers see exactly why their tokens
+  // are filtered out.
+  const pushRows = addRows.filter(r => !r.skipReason);
+  const skipRows = addRows.filter(r => r.skipReason);
+
+  if (pushRows.length === 0) {
     lines.push(`Would add to ${toSide}: none.`);
-  } else if (addRows.length <= FLAT_THRESHOLD) {
-    lines.push(`Would add to ${toSide} (${addRows.length} entr${addRows.length === 1 ? 'y' : 'ies'}):`);
-    const pathW = Math.max(...addRows.map(r => r.path.length));
-    const modeW = Math.max(...addRows.map(r => r.mode.length));
-    for (const r of addRows) {
+  } else if (pushRows.length <= FLAT_THRESHOLD) {
+    lines.push(`Would add to ${toSide} (${pushRows.length} entr${pushRows.length === 1 ? 'y' : 'ies'}):`);
+    const pathW = Math.max(...pushRows.map(r => r.path.length));
+    const modeW = Math.max(...pushRows.map(r => r.mode.length));
+    for (const r of pushRows) {
       lines.push(`  + ${r.path.padEnd(pathW)}  (${r.mode.padEnd(modeW)})  = ${fmtValue(r.value)}`);
     }
   } else {
@@ -115,11 +141,11 @@ function formatPreview(diff, direction) {
     // domain so the user can sanity-check the shape without scrolling
     // past hundreds of rows.
     const byDomain = new Map();
-    for (const r of addRows) {
+    for (const r of pushRows) {
       if (!byDomain.has(r.domain)) byDomain.set(r.domain, []);
       byDomain.get(r.domain).push(r);
     }
-    lines.push(`Would add to ${toSide} (${addRows.length} entries across ${byDomain.size} domain${byDomain.size === 1 ? '' : 's'}):`);
+    lines.push(`Would add to ${toSide} (${pushRows.length} entries across ${byDomain.size} domain${byDomain.size === 1 ? '' : 's'}):`);
     for (const domain of [...byDomain.keys()].sort()) {
       const rows = byDomain.get(domain);
       lines.push(``);
@@ -138,6 +164,28 @@ function formatPreview(diff, direction) {
     lines.push(`  Full list written to the diff JSON (codeOnly array). For a one-time review, sort by domain in the diff file.`);
   }
   lines.push('');
+
+  // Skipped-by-disposition lane (only renders when actions were provided).
+  if (skipRows.length > 0) {
+    const byReason = new Map();
+    for (const r of skipRows) {
+      if (!byReason.has(r.skipReason)) byReason.set(r.skipReason, []);
+      byReason.get(r.skipReason).push(r);
+    }
+    lines.push(`Would NOT add to ${toSide} (${skipRows.length} entr${skipRows.length === 1 ? 'y' : 'ies'} filtered by your dispositions):`);
+    for (const [reason, rows] of byReason.entries()) {
+      lines.push(``);
+      lines.push(`  ${rows.length} × ${reason}`);
+      const sample = rows.slice(0, BUCKET_SAMPLE_SIZE);
+      for (const r of sample) {
+        lines.push(`    - ${r.domain}/${r.path}  (${r.mode})  = ${fmtValue(r.value)}`);
+      }
+      if (rows.length > BUCKET_SAMPLE_SIZE) {
+        lines.push(`    [+${rows.length - BUCKET_SAMPLE_SIZE} more]`);
+      }
+    }
+    lines.push('');
+  }
 
   // Conflicts: same path on both sides, different value per mode. Show
   // BOTH sides so the user can judge — the dry run intentionally doesn't
@@ -197,7 +245,15 @@ function main() {
   if (cmd === 'apply') {
     const diff = JSON.parse(fs.readFileSync(args.diff, 'utf8'));
     const resolutions = JSON.parse(fs.readFileSync(args.resolutions, 'utf8'));
-    const actions = buildFigmaActions(diff, resolutions, args.direction);
+    // Optional dispositions (push only) — the per-domain policy collected
+    // by /adhd:push-tokens's wizard. When absent, defaults from
+    // dispositions.js apply.
+    let dispositions = null;
+    if (args.dispositions) {
+      try { dispositions = JSON.parse(fs.readFileSync(args.dispositions, 'utf8')); }
+      catch { dispositions = null; }
+    }
+    const actions = buildFigmaActions(diff, resolutions, args.direction, { dispositions });
     fs.writeFileSync(args.output, JSON.stringify(actions, null, 2));
     process.exit(0);
   }
@@ -206,7 +262,16 @@ function main() {
     if (!args.diff) { console.error('Missing --diff'); process.exit(2); }
     if (!args.direction) { console.error('Missing --direction'); process.exit(2); }
     const diff = JSON.parse(fs.readFileSync(args.diff, 'utf8'));
-    process.stdout.write(formatPreview(diff, args.direction) + '\n');
+    // Optional: when actions.json is provided, the preview reflects what
+    // the action builder would actually do — grouping additions into
+    // "would push" vs "would skip — reason". Without it, the preview is
+    // diff-only (legacy behavior).
+    let actions = null;
+    if (args.actions) {
+      try { actions = JSON.parse(fs.readFileSync(args.actions, 'utf8')); }
+      catch { actions = null; }
+    }
+    process.stdout.write(formatPreview(diff, args.direction, actions) + '\n');
     process.exit(0);
   }
 

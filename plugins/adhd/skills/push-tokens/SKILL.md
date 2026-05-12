@@ -21,6 +21,64 @@ Read `adhd.config.ts` at the repo root with the `Read` tool. If it doesn't exist
 
 Extract `figma.url` (required) and `cssEntry` (optional; auto-detect `app/globals.css` then `src/app/globals.css`). Extract the file key from `figma.url` — the segment after `/design/`.
 
+## Phase 1.5: Disposition wizard (runs EVERY push)
+
+Walk the user through seven `AskUserQuestion` prompts to set per-domain push policy. The wizard runs on every invocation — including `--dry-run` — so the dry-run preview reflects exactly what the live push would do. No persistence: dispositions live in `/tmp/adhd-push/dispositions.json` for this run only.
+
+Issue each question in order. After each answer, append the resulting key/value to a running dispositions object. Question text and options:
+
+**1. Color** — `Header: "Color"`
+   Question: "Which color tokens should we push to Figma?"
+   - `"Push all (recommended for seeding Figma)"` → `color: "all"`
+   - `"Push semantic only (skip --color-zinc-*, --color-blue-*, etc.)"` → `color: "semantic-only"`
+   - `"Skip colors entirely"` → `color: "skip"`
+
+**2. Typography** — `Header: "Typography"`
+   Question: "Which typography scales should we push? (Font families always route to Figma text styles, never variables.)"
+   - `"Push all scales (text sizes, font-weights, leading, tracking)"` → `typography: "all"`
+   - `"Push sizes + weights only (skip leading + tracking)"` → `typography: "sizes-and-weights"`
+   - `"Skip typography variables"` → `typography: "skip"`
+
+**3. Spacing** — `Header: "Spacing"`
+   Question: "Which spacing tokens should we push?"
+   - `"Push the full Tailwind 0..96 scale"` → `spacing: "all"`
+   - `"Push only my authored spacing tokens (skip Tailwind scale)"` → `spacing: "authored-only"`
+   - `"Skip spacing"` → `spacing: "skip"`
+
+**4. Radius + border width** — `Header: "Radius / border"`
+   Question: "Push corner radius + border-width tokens?"
+   - `"Yes — these bind to Figma's corner radius and stroke weight"` → `radiusAndBorder: "push"`
+   - `"Skip"` → `radiusAndBorder: "skip"`
+
+**5. Shadow** — `Header: "Shadow"`
+   Question: "Push shadow tokens as Figma effect styles?"
+   - `"Yes, push as effect styles (Figma's native shadow channel)"` → `shadow: "effect-styles"`
+   - `"Skip — manage shadows directly in Figma"` → `shadow: "skip"`
+
+**6. Opacity** — `Header: "Opacity"`
+   Question: "Push opacity tokens? Tailwind applies opacity via `/<percent>` class modifiers, not variables."
+   - `"Skip (recommended — matches Tailwind's class-modifier pattern)"` → `opacity: "skip"`
+   - `"Push as variables anyway (for documentation)"` → `opacity: "push"`
+
+**7. Utility domains** — `Header: "Utilities"`
+   Question: "Push utility tokens that Figma doesn't natively consume (z-index, animate, ease, aspect, perspective, container, breakpoint, blur)?"
+   - `"Skip all (recommended — none of these bind to Figma properties)"` → `utilityDomains: "skip"`
+   - `"Push anyway for documentation"` → `utilityDomains: "push"`
+
+After all seven answers, write the dispositions object to `/tmp/adhd-push/dispositions.json` via the `Write` tool. Example shape:
+
+```json
+{
+  "color": "all",
+  "typography": "all",
+  "spacing": "all",
+  "radiusAndBorder": "push",
+  "shadow": "effect-styles",
+  "opacity": "skip",
+  "utilityDomains": "skip"
+}
+```
+
 ## Phase 2: Read both sides
 
 Use the `Read` tool to read the resolved `globals.css` path. Save it to `/tmp/adhd-push/globals.css` via the `Write` tool.
@@ -56,15 +114,26 @@ If `conflict.length === 0` and `codeOnly.length === 0`, print "Figma is already 
 
 ## Phase 3b: Dry run (only if `--dry-run` was passed)
 
-If the user invoked `/adhd:push-tokens --dry-run`, print the preview from the comparator and exit BEFORE the prompt loop. The dry run is a pure discovery tool — no `AskUserQuestion`, no writes, no MCP traffic beyond Phase 2's extract:
+If the user invoked `/adhd:push-tokens --dry-run`, build the action plan first (so the preview reflects the user's wizard answers — every disposition's effect shows in the output), then preview, then exit BEFORE the conflict prompts:
 
 ```bash
+# Build actions with the wizard's dispositions but no resolutions
+# (dry-run never resolves conflicts — it surfaces them).
+echo "[]" > /tmp/adhd-push/resolutions.json
+node plugins/adhd/lib/design-system/cli.js apply \
+  --diff /tmp/adhd-push/diff.json \
+  --resolutions /tmp/adhd-push/resolutions.json \
+  --dispositions /tmp/adhd-push/dispositions.json \
+  --direction push \
+  --output /tmp/adhd-push/actions.json
+
 node plugins/adhd/lib/design-system/cli.js preview \
   --diff /tmp/adhd-push/diff.json \
+  --actions /tmp/adhd-push/actions.json \
   --direction push
 ```
 
-The preview lists every variable that would be added to Figma (one row per mode), every variable whose code/Figma values differ (showing both — the dry run intentionally doesn't pre-resolve in favor of either side), and the count of Figma-only variables that would stay untouched per the additive policy. Echo the output verbatim to the user, then print a one-line summary: `Dry run complete. Re-run without --dry-run to apply (you'll be prompted on each conflict).` Exit 0.
+The preview splits additions into two lanes: "Would add to Figma" (tokens the action builder would push) and "Would NOT add to Figma" (tokens filtered by the user's dispositions, grouped by reason). Conflicts surface separately. Echo the output verbatim, then print: `Dry run complete. Re-run without --dry-run to apply (you'll be prompted on each conflict and asked the disposition questions again).` Exit 0.
 
 If `--dry-run` was NOT passed, skip this phase and continue to Phase 4.
 
@@ -84,15 +153,18 @@ Build a `resolutions` array of `{path, mode, winner}` objects. Save it to `/tmp/
 
 ## Phase 5: Build actions
 
+Pass the wizard's dispositions so the action builder honors the user's per-domain choices.
+
 ```bash
 node plugins/adhd/lib/design-system/cli.js apply \
   --diff /tmp/adhd-push/diff.json \
   --resolutions /tmp/adhd-push/resolutions.json \
+  --dispositions /tmp/adhd-push/dispositions.json \
   --direction push \
   --output /tmp/adhd-push/actions.json
 ```
 
-Read `/tmp/adhd-push/actions.json`. If empty, print "Nothing to apply." and exit 0.
+Read `/tmp/adhd-push/actions.json`. Count `skip-by-disposition` entries — they're informational only (no Figma write happens for these). If the file contains only skip actions (no `create-variable` or `create-effect-style`), print "Nothing to push given your disposition choices." and exit 0.
 
 ## Phase 6: Drift check (re-fetch Figma)
 
@@ -122,12 +194,16 @@ Print:
   - <K> figma-only variables left untouched (additive policy)
 ```
 
-Also count `skip-font-family` actions in `actions.json` and append a note if any are present:
+Also count `skip-by-disposition` actions in `actions.json`, group them by `reason`, and append a section if any are present:
 
 ```
-  - <F> font family token(s) skipped — these belong in Figma text styles, not variables.
-    Manage `font-*` families in the Figma typography panel directly.
+  - <S> token(s) skipped by your disposition choices:
+      <count> × <reason>
+      <count> × <reason>
+      ...
 ```
+
+This is informational — the user already chose these in the wizard. Surfacing them in the report confirms the policy held end-to-end.
 
 ## Common errors
 
