@@ -353,4 +353,5 @@ module.exports = {
   figmaTypeForToken,
   dimensionToPx,
   resolveFigmaValue,
+  DOMAIN_COLLECTION,
 };

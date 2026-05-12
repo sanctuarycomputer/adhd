@@ -1,5 +1,49 @@
 'use strict';
 
+// Collection-name aliases. Figma users name their collections however
+// they like — "Color", "Colors", "Colour", "Type + Effects", "Borders",
+// "Space" — but our canonical names are the lowercase Tailwind domain
+// keys ("color", "typography", "border-width", "spacing"). Without
+// alias-aware lookup, pushing into a file where the designer has
+// "Color" (capital C) creates a parallel "color" collection — Figma
+// treats names case-sensitively. The aliases below mirror common
+// real-world variations + Tailwind's own multi-word names.
+//
+// Match is case-insensitive on lowercase+trimmed Figma names. First
+// canonical that finds an existing collection wins; subsequent pushes
+// targeting the same canonical reuse that collection.
+const COLLECTION_ALIASES = {
+  color:          ['color', 'colors', 'colour', 'colours'],
+  spacing:        ['spacing', 'space', 'spaces'],
+  radius:         ['radius', 'radii', 'rounded', 'corner radius'],
+  shadow:         ['shadow', 'shadows', 'effects'],
+  opacity:        ['opacity', 'alpha'],
+  'border-width': ['border-width', 'border width', 'borders', 'border', 'strokes', 'stroke'],
+  typography:     ['typography', 'type', 'text', 'text styles', 'type + effects', 'text + effects', 'fonts'],
+  'z-index':      ['z-index', 'z'],
+  breakpoint:     ['breakpoint', 'breakpoints', 'screens', 'media'],
+  container:      ['container', 'containers'],
+  blur:           ['blur'],
+  perspective:    ['perspective'],
+  aspect:         ['aspect', 'aspects', 'aspect ratio', 'ratios'],
+  ease:           ['ease', 'easing', 'easings', 'transitions', 'transition'],
+  animate:        ['animate', 'animation', 'animations'],
+};
+
+// Given the canonical domain name and the list of existing Figma
+// collection names, return the existing name that aliases to the
+// canonical (if any). Returns null when nothing matches — caller should
+// create a new collection with the canonical name.
+function findCollectionAlias(canonical, existingNames) {
+  const aliases = COLLECTION_ALIASES[canonical];
+  if (!aliases) return null;
+  for (const existing of existingNames) {
+    const norm = String(existing).toLowerCase().trim();
+    if (aliases.includes(norm)) return existing;
+  }
+  return null;
+}
+
 // Exported mirror of the inline `tokenScopesFor` inside WRITE_SCRIPT.
 // The Figma plugin sandbox can't `require`, so the script needs an
 // inline copy. We keep this JS-side function as the testable mirror —
@@ -144,8 +188,46 @@ const collections = await figma.variables.getLocalVariableCollectionsAsync();
 const collectionByName = {};
 for (const c of collections) collectionByName[c.name] = c;
 
+// Alias table — see the JS-side mirror at the top of this file.
+// Inline here because the Figma plugin sandbox can't require().
+// Drift-guarded by a test in __tests__/figma-write-script.test.js.
+const COLLECTION_ALIASES = {
+  color:          ['color', 'colors', 'colour', 'colours'],
+  spacing:        ['spacing', 'space', 'spaces'],
+  radius:         ['radius', 'radii', 'rounded', 'corner radius'],
+  shadow:         ['shadow', 'shadows', 'effects'],
+  opacity:        ['opacity', 'alpha'],
+  'border-width': ['border-width', 'border width', 'borders', 'border', 'strokes', 'stroke'],
+  typography:     ['typography', 'type', 'text', 'text styles', 'type + effects', 'text + effects', 'fonts'],
+  'z-index':      ['z-index', 'z'],
+  breakpoint:     ['breakpoint', 'breakpoints', 'screens', 'media'],
+  container:      ['container', 'containers'],
+  blur:           ['blur'],
+  perspective:    ['perspective'],
+  aspect:         ['aspect', 'aspects', 'aspect ratio', 'ratios'],
+  ease:           ['ease', 'easing', 'easings', 'transitions', 'transition'],
+  animate:        ['animate', 'animation', 'animations'],
+};
+
+function resolveExistingCollection(canonical) {
+  if (collectionByName[canonical]) return collectionByName[canonical];
+  const aliases = COLLECTION_ALIASES[canonical];
+  if (!aliases) return null;
+  for (const c of collections) {
+    const norm = String(c.name).toLowerCase().trim();
+    if (aliases.includes(norm)) return c;
+  }
+  return null;
+}
+
 async function ensureCollection(name, withModes) {
-  if (collectionByName[name]) return collectionByName[name];
+  const existing = resolveExistingCollection(name);
+  if (existing) {
+    // Cache under the canonical key too so repeat calls in this run
+    // hit the fast path.
+    collectionByName[name] = existing;
+    return existing;
+  }
   const col = figma.variables.createVariableCollection(name);
   if (withModes && withModes.length > 1) {
     col.renameMode(col.modes[0].modeId, withModes[0]);
@@ -156,6 +238,7 @@ async function ensureCollection(name, withModes) {
     col.renameMode(col.modes[0].modeId, withModes[0]);
   }
   collectionByName[name] = col;
+  collections.push(col);
   return col;
 }
 
@@ -291,4 +374,4 @@ for (const a of actions) {
 return { applied, skipped, errors };
 `;
 
-module.exports = { WRITE_SCRIPT, tokenScopesFor };
+module.exports = { WRITE_SCRIPT, tokenScopesFor, findCollectionAlias, COLLECTION_ALIASES };

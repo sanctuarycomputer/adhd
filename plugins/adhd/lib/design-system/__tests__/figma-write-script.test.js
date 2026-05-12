@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { WRITE_SCRIPT, tokenScopesFor } = require('../figma-write-script');
+const { WRITE_SCRIPT, tokenScopesFor, findCollectionAlias, COLLECTION_ALIASES } = require('../figma-write-script');
 
 test('tokenScopesFor: text/<size> → FONT_SIZE', () => {
   assert.deepEqual(tokenScopesFor('typography', 'text/xs'), ['FONT_SIZE']);
@@ -31,6 +31,57 @@ test('tokenScopesFor: non-typography domains pull from the domain table', () => 
   assert.deepEqual(tokenScopesFor('color', 'gold/100'), ['FRAME_FILL', 'SHAPE_FILL', 'TEXT_FILL', 'STROKE_COLOR']);
   assert.deepEqual(tokenScopesFor('radius', 'sm'), ['CORNER_RADIUS']);
   assert.deepEqual(tokenScopesFor('opacity', '50'), ['OPACITY']);
+});
+
+test('findCollectionAlias: matches case-insensitively to the canonical (Color → color)', () => {
+  // The user's "duped collections" bug. Designer's Figma file had a
+  // "Color" collection (capital C) but push was looking up "color"
+  // case-sensitively, missed it, and created a parallel "color"
+  // collection alongside. Same for "Radius" / "radius".
+  assert.equal(findCollectionAlias('color', ['Color', 'Other']), 'Color');
+  assert.equal(findCollectionAlias('radius', ['Other', 'Radius']), 'Radius');
+});
+
+test('findCollectionAlias: matches synonyms (Space → spacing, Borders → border-width, Type + Effects → typography)', () => {
+  // Real collection names from the user's screenshot. Each maps to a
+  // different canonical without case alone — these are semantic synonyms.
+  assert.equal(findCollectionAlias('spacing', ['Space']), 'Space');
+  assert.equal(findCollectionAlias('border-width', ['Borders']), 'Borders');
+  assert.equal(findCollectionAlias('typography', ['Type + Effects']), 'Type + Effects');
+  assert.equal(findCollectionAlias('shadow', ['Effects']), 'Effects');
+});
+
+test('findCollectionAlias: returns null when nothing matches (caller creates new collection)', () => {
+  assert.equal(findCollectionAlias('color', ['Spacing', 'Radii']), null);
+  assert.equal(findCollectionAlias('color', []), null);
+});
+
+test('findCollectionAlias: unknown canonical returns null (safe default)', () => {
+  assert.equal(findCollectionAlias('not-a-domain', ['Color', 'Radius']), null);
+});
+
+test('COLLECTION_ALIASES covers every domain the action builder might emit', () => {
+  // If a new domain gets added to figma-write-actions's DOMAIN_COLLECTION
+  // but not here, the alias lookup silently returns null for it and
+  // push starts creating differently-cased duplicate collections.
+  const { DOMAIN_COLLECTION } = require('../figma-write-actions');
+  for (const canonical of Object.values(DOMAIN_COLLECTION)) {
+    assert.ok(COLLECTION_ALIASES[canonical],
+      `missing alias list for canonical "${canonical}" — push will create a fresh collection instead of reusing existing case-variants`);
+  }
+});
+
+test('WRITE_SCRIPT inlines the same alias logic (drift guard)', () => {
+  // The script template carries its own copy of COLLECTION_ALIASES.
+  // This guard catches drift: if the JS-side table evolves without the
+  // inline copy keeping up, real pushes go back to creating parallel
+  // case-variant collections.
+  for (const aliases of Object.values(COLLECTION_ALIASES)) {
+    for (const a of aliases) {
+      assert.ok(WRITE_SCRIPT.includes(`'${a}'`),
+        `alias "${a}" missing from inlined COLLECTION_ALIASES in WRITE_SCRIPT`);
+    }
+  }
 });
 
 test('WRITE_SCRIPT inlines the same line-height pattern (drift guard)', () => {
