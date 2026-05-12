@@ -130,32 +130,27 @@ test('preview (pull): flips the direction labels', () => {
   assert.match(result.stdout, /code-only \(left untouched per additive policy\): 1 entry/);
 });
 
-test('compare --include-tailwind: keeps Tailwind-default-origin tokens in codeOnly', () => {
-  // Verifies the seed-mode flag plumbing. With --include-tailwind, the
-  // comparator should NOT filter origin-tagged tokens.
+test('compare: surfaces Tailwind defaults in codeOnly with fromTailwindDefault marker', () => {
+  // Comparator is policy-free now — every token from the parser lands in
+  // codeOnly. Filtering (Tailwind palette vs only my semantics) happens
+  // at the action-builder layer per the user's dispositions. This test
+  // confirms the marker travels through compare so dispositions can use
+  // it.
   const css = tmp('globals.css', `@theme { --color-brand: #5e3aee; }`);
-  // Use an empty figma extract so everything that's in code becomes codeOnly.
   const figma = tmp('figma.json', { collections: [], effectStyles: [], textStyles: [] });
-  const outA = path.join(os.tmpdir(), 'diff-default-' + Date.now() + '.json');
-  const outB = path.join(os.tmpdir(), 'diff-seed-' + Date.now() + '.json');
+  const out = path.join(os.tmpdir(), 'diff-' + Date.now() + '.json');
 
-  const defaultRun = spawnSync('node', [CLI, 'compare', '--code', css, '--figma', figma, '--output', outA], { encoding: 'utf8' });
-  assert.equal(defaultRun.status, 0);
-  const diffDefault = JSON.parse(fs.readFileSync(outA, 'utf8'));
-
-  const seedRun = spawnSync('node', [CLI, 'compare', '--code', css, '--figma', figma, '--output', outB, '--include-tailwind'], { encoding: 'utf8' });
-  assert.equal(seedRun.status, 0);
-  const diffSeed = JSON.parse(fs.readFileSync(outB, 'utf8'));
-
-  // Seed mode has dramatically more codeOnly entries — the full Tailwind palette.
-  assert.ok(diffSeed.codeOnly.length > diffDefault.codeOnly.length * 5,
-    `expected seed codeOnly (${diffSeed.codeOnly.length}) >> default codeOnly (${diffDefault.codeOnly.length})`);
-  // Default mode never includes a token tagged fromTailwindDefault.
-  for (const t of diffDefault.codeOnly) {
-    assert.notEqual(t.fromTailwindDefault, true);
-  }
-  // Seed mode DOES include them.
-  assert.ok(diffSeed.codeOnly.some(t => t.fromTailwindDefault === true));
+  const result = spawnSync('node', [CLI, 'compare', '--code', css, '--figma', figma, '--output', out], { encoding: 'utf8' });
+  assert.equal(result.status, 0);
+  const diff = JSON.parse(fs.readFileSync(out, 'utf8'));
+  // Tailwind defaults present (hundreds of them).
+  assert.ok(diff.codeOnly.length > 100, `expected Tailwind defaults to surface, got ${diff.codeOnly.length}`);
+  // User-authored brand color also present, marker cleared.
+  const brand = diff.codeOnly.find(t => t.path === 'brand');
+  assert.ok(brand);
+  assert.equal(brand.fromTailwindDefault, false);
+  // Tailwind-default markers present on the palette tokens.
+  assert.ok(diff.codeOnly.some(t => t.fromTailwindDefault === true));
 });
 
 test('preview: buckets additions by domain when there are many entries', () => {

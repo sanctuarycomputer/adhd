@@ -84,14 +84,12 @@ function tokenKey(t) {
   return t.domain + ':' + t.path;
 }
 
-function compareDesignSystems(code, figma, opts = {}) {
-  // `opts.includeTailwindDefaultsInCodeOnly` (boolean, default false).
-  // When false, the comparator drops Tailwind-default-origin tokens from
-  // `codeOnly` so day-to-day pushes don't try to bake the entire Tailwind
-  // palette into Figma. When true, the full palette surfaces in codeOnly
-  // — the right mode when seeding a fresh Figma file so designers have
-  // every Tailwind utility available as a variable.
-  const includeTailwindInCodeOnly = opts.includeTailwindDefaultsInCodeOnly === true;
+function compareDesignSystems(code, figma) {
+  // `codeOnly` always surfaces every token from the code side, including
+  // Tailwind defaults. Filtering by intent (push the palette vs only my
+  // semantics) lives one layer up in the dispositions wizard — that's
+  // where designer policy belongs. The `fromTailwindDefault` marker
+  // travels through so the action builder can apply per-domain rules.
   const same = [];
   const conflict = [];
   const codeOnly = [];
@@ -185,16 +183,11 @@ function compareDesignSystems(code, figma, opts = {}) {
   }
   const survivedFigmaOnly = figmaOnly.filter(t => !matchedFigma.has(t));
 
-  // Filter Tailwind-default-origin tokens out of codeOnly UNLESS the
-  // caller explicitly asked to include them. Defaulting to filtered keeps
-  // day-to-day pushes focused on authored changes (no 400-entry palette
-  // flood). The `--include-tailwind` push mode flips this for the
-  // one-time seeding case where designers want every Tailwind utility as
-  // a Figma variable. Tokens that surface in `same` or `conflict` are
-  // unaffected — those reflect real state on the Figma side already.
-  const filteredCodeOnly = includeTailwindInCodeOnly
-    ? survivedCodeOnly
-    : survivedCodeOnly.filter(t => t.fromTailwindDefault !== true);
+  // codeOnly carries everything — the dispositions wizard filters at the
+  // action-builder layer. The `fromTailwindDefault` marker is preserved
+  // on each token so domain-aware dispositions (color: semantic-only,
+  // spacing: authored-only) can apply the right per-token rule.
+  const filteredCodeOnly = survivedCodeOnly;
 
   // ── Effect styles ──────────────────────────────────────────────────────
   // Diff by name only. Each side may not have styles at all (older callers).

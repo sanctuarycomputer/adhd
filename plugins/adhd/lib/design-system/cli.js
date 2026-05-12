@@ -26,9 +26,9 @@ function parseArgs(argv) {
 
 function printUsage() {
   console.log(`Usage:
-  cli.js compare           --code <globals.css> --figma <figma.json> --output <diff.json> [--include-tailwind]
-  cli.js apply             --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json>
-  cli.js preview           --diff <diff.json> --direction <push|pull>
+  cli.js compare           --code <globals.css> --figma <figma.json> --output <diff.json>
+  cli.js apply             --diff <diff.json> --resolutions <resolutions.json> --direction <push|pull> --output <actions.json> [--dispositions <path>]
+  cli.js preview           --diff <diff.json> --direction <push|pull> [--actions <actions.json>]
   cli.js assemble-extract  --chunks-dir <dir> --output <figma.json>
 
 compare:
@@ -225,19 +225,15 @@ function main() {
   if (cmd === 'compare') {
     const css = fs.readFileSync(args.code, 'utf8');
     const figmaExtract = JSON.parse(fs.readFileSync(args.figma, 'utf8'));
-    // Parser always learns about Tailwind v4's default theme so we know
-    // which tokens are user-authored vs default (the `fromTailwindDefault`
-    // marker). The COMPARATOR then decides what to include in `codeOnly`:
-    //   - Default: filter out defaults — keep day-to-day pushes focused
-    //   - --include-tailwind: surface the full Tailwind palette in
-    //     codeOnly, for seeding a fresh Figma file with every utility as
-    //     a variable. The seed case is once-per-project; the focused
-    //     diff is once-per-change.
+    // Parser always learns about Tailwind v4's default theme so the
+    // `fromTailwindDefault` marker travels with each token — the
+    // disposition wizard in /adhd:push-tokens uses it to decide which
+    // tokens push (color: semantic-only excludes Tailwind palette, etc.).
+    // Disable via --no-tailwind-defaults for explicit-overrides-only mode.
     const includeTailwindDefaults = !('no-tailwind-defaults' in args);
-    const includeTailwindDefaultsInCodeOnly = 'include-tailwind' in args;
     const codeDS = parseCodeDesignSystem(css, { includeTailwindDefaults });
     const figmaDS = parseFigmaDesignSystem(figmaExtract);
-    const diff = compareDesignSystems(codeDS, figmaDS, { includeTailwindDefaultsInCodeOnly });
+    const diff = compareDesignSystems(codeDS, figmaDS);
     fs.writeFileSync(args.output, JSON.stringify(diff, null, 2));
     process.exit(0);
   }

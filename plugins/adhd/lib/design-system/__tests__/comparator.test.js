@@ -264,10 +264,12 @@ test('canonicalization: distinct domains don\'t collide even when paths canonica
   assert.equal(diff.figmaOnly.length, 1);
 });
 
-test('codeOnly: includeTailwindDefaultsInCodeOnly=true keeps the full palette in codeOnly (seed mode)', () => {
-  // The seed-the-design-system mode: designers want every Tailwind
-  // utility available as a Figma variable. Comparator should NOT filter
-  // origin-tagged tokens out of codeOnly when the flag is set.
+test('codeOnly: surfaces all tokens including Tailwind defaults (filtering is the dispositions layer\'s job)', () => {
+  // Comparator is policy-free: every code-side token appears in codeOnly.
+  // Filtering ("push the Tailwind palette or only my semantics?") lives
+  // in the dispositions wizard, applied at the action-builder layer.
+  // The `fromTailwindDefault` marker travels through so dispositions can
+  // apply per-token rules.
   const code = {
     tokens: [
       { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
@@ -276,31 +278,11 @@ test('codeOnly: includeTailwindDefaultsInCodeOnly=true keeps the full palette in
     styles: { effects: [] },
   };
   const figma = { tokens: [], styles: { effects: [] } };
-  const diff = compareDesignSystems(code, figma, { includeTailwindDefaultsInCodeOnly: true });
-  // Both tokens surface in codeOnly.
-  assert.equal(diff.codeOnly.length, 2);
-  const paths = diff.codeOnly.map(t => t.path).sort();
-  assert.deepEqual(paths, ['brand', 'zinc/500']);
-});
-
-test('codeOnly: filters out Tailwind-default-origin tokens (additive policy)', () => {
-  // Pushing the full Tailwind palette into Figma is rarely intended — both
-  // sides assume the defaults implicitly. The comparator drops
-  // Tailwind-default-origin tokens from codeOnly so push doesn't create
-  // hundreds of redundant variables. User-authored tokens at the same path
-  // keep the flag cleared during parse and DO surface.
-  const code = {
-    tokens: [
-      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
-      { domain: 'color', path: 'brand',     values: { default: { type: 'literal', value: '#5e3aee' } }, fromTailwindDefault: false },
-    ],
-    styles: { effects: [] },
-  };
-  const figma = { tokens: [], styles: { effects: [] } };
   const diff = compareDesignSystems(code, figma);
-  // Only the user-authored token surfaces in codeOnly.
-  assert.equal(diff.codeOnly.length, 1);
-  assert.equal(diff.codeOnly[0].path, 'brand');
+  assert.equal(diff.codeOnly.length, 2);
+  const byPath = Object.fromEntries(diff.codeOnly.map(t => [t.path, t]));
+  assert.equal(byPath['zinc/500'].fromTailwindDefault, true);
+  assert.equal(byPath['brand'].fromTailwindDefault, false);
 });
 
 test('Tailwind-default-origin token with a Figma value mismatch still surfaces as conflict', () => {
