@@ -212,41 +212,93 @@ If BOTH STRUCT011 AND variable-binding errors are present, surface STRUCT011 fir
 
 **If STRUCT015 violations exist (layer binds variable that doesn't exist in code):**
 
-Abort unconditionally — no escape. STRUCT015 reports per-layer: "layer X binds Figma variable Y, but Y isn't in code's design system." Pulling now would generate code that references a CSS variable globals.css never declares — runtime rendering breaks. The designer's two paths forward are equally valid:
+Walk each UNIQUE variable (multiple layers can bind the same variable — prompt once per variable, not once per layer) with `AskUserQuestion`. Each STRUCT015 entry on the lint summary has fields `figmaName`, `figmaValueNormalized` (the hex/px string derived from the Figma value — emit this from the preflight if not already present, see below), and the list of `nodeId`s that bind it.
 
-1. **Rebind the layer** to a variable that DOES exist in code. Right-click the layer's property in Figma → "Apply variable" → pick a real one.
-2. **Adopt the missing variable into code** by running `/adhd:pull-tokens`. Its summary lists every missing variable so the designer chooses whether to bring it in.
+Normalize the Figma value to a write-ready string first. Use a small inline `node -e` against `lib/lint-engine/value-normalizer.js`:
 
-Read each STRUCT015 message verbatim from the preflight report (they already name the layer + variable + suggested fix) and print under a banner:
-
-```
-✗ Cannot pull — <N> layer(s) bind Figma variables that don't exist in code's design system:
-
-<paste each STRUCT015 message verbatim>
-
-Pulling now would generate code referencing CSS variables that globals.css
-never declares — runtime rendering breaks. Either rebind each layer to a
-real variable in Figma, or run /adhd:pull-tokens to add the missing
-variables to code, then re-run /adhd:pull-component.
-```
-
-**If STRUCT016 violations exist (layer binds variable with value-conflict between code and Figma):**
-
-Abort unconditionally — no escape. STRUCT016 fires per-layer when a bound variable has different resolved values on each side. Pulling renders with code's value, so the component looks different in production than in Figma. Reconcile first:
-
-```
-✗ Cannot pull — <N> layer(s) bind variables whose values differ between Figma and code:
-
-<paste each STRUCT016 message verbatim>
-
-The pulled component would render with code's values, drifting from what
-the designer sees in Figma. Pick a direction:
-  • /adhd:pull-tokens — take Figma's values, write them into code
-  • /adhd:push-tokens — send code's values back to Figma
-Reconcile first, then re-run /adhd:pull-component.
+```bash
+node -e '
+  const fs = require("fs");
+  const { normalizeColor, normalizeDimension } = require("plugins/adhd/lib/lint-engine/value-normalizer");
+  const stdout = JSON.parse(fs.readFileSync("/tmp/adhd-pull-component/stdout.json", "utf8"));
+  const missing = (stdout.variable || []).filter(v => v.status === "missing");
+  for (const m of missing) {
+    try {
+      if (m.domain === "color") m.figmaValueNormalized = normalizeColor(m.figma);
+      else m.figmaValueNormalized = normalizeDimension(m.figma);
+    } catch { m.figmaValueNormalized = null; }
+  }
+  fs.writeFileSync("/tmp/adhd-pull-component/missing-resolved.json", JSON.stringify(missing));
+'
 ```
 
-Priority when multiple block-classes are present: STRUCT011 first (variable names), then STRUCT015 (missing), then STRUCT016 (conflicts), then STRUCT003/004/005 (raw values). Most fundamental first — bad names break naming downstream, missing vars break rendering, conflicts cause visual drift, raw values can be escaped.
+For each entry (skip those whose `figmaValueNormalized` is null — value is too complex to write automatically; surface the variable in the final abort summary instead):
+
+```
+Question: "`<figmaName>` is bound in this component but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`. What do you want to do?"
+Header: "Variable missing"
+Options:
+  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
+  - "Abort the pull"
+```
+
+If "Abort," stop and emit the abort message (below). If "Add," record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array.
+
+**If STRUCT016 violations exist (layer binds variable whose value differs from code's):**
+
+Same per-unique-variable pattern. Each entry includes `figma` (raw) and `local` (resolved literal). Normalize both via the same value-normalizer step. Then:
+
+```
+Question: "`<figmaName>` differs between Figma and code:\n  code:  <local-normalized>\n  figma: <figma-normalized>\nWhat do you want to do?"
+Header: "Value conflict"
+Options:
+  - "Take Figma's value (update globals.css)"
+  - "Keep code's value (component renders with code's value; Figma stays divergent)"
+  - "Abort the pull"
+```
+
+If "Abort," same path as STRUCT015 abort. If "Keep code," record nothing (pull continues with code's value — Figma drift is separate). If "Take Figma," record `{ figmaName, value: figma-normalized }` to `actions-input`.
+
+### Build + apply the write actions
+
+For each entry in `actions-input`, resolve the alias chain via the CLI to find where the write should actually land. The resolver handles the shadcn-style exposure pattern (`--color-primary: var(--primary)` in `@theme inline` → write lands at `--primary` in `:root`, not at `--color-primary` in `@theme`), avoiding the trap of overwriting an alias with a literal and breaking dark-mode propagation.
+
+```bash
+node plugins/adhd/lib/pull-component/cli.js resolve-actions \
+  --globals <globals.css path> \
+  --figma-path "<figmaName>" \
+  --value "<value>"
+```
+
+The command returns `{ cssVar, actions: [{ kind, ... }, ...] }`. Concatenate the `actions` arrays across every entry into a single `applyToCss`-shaped action list.
+
+Apply via a `node -e` one-liner against `applyToCss`:
+
+```bash
+node -e '
+  const fs = require("fs");
+  const { applyToCss } = require("plugins/adhd/lib/design-system/code-writer");
+  const css = fs.readFileSync("<globals.css path>", "utf8");
+  const actions = JSON.parse(fs.readFileSync("/tmp/adhd-pull-component/struct015-016-actions.json", "utf8"));
+  fs.writeFileSync("<globals.css path>", applyToCss(css, actions));
+'
+```
+
+After writing, re-run the lint engine (cheap, no MCP call needed — same `cli.js` invocation as before) and confirm zero remaining STRUCT015 / STRUCT016 violations. If any remain (unusual — typically only happens when the resolver hit an alias cycle and fell back to a defensive write), abort with the standard message; the designer needs to look at the file by hand.
+
+### Abort message (used by all "Abort" picks)
+
+```
+✗ Cannot pull — variable issues remain. Recap:
+
+<paste each STRUCT015 + STRUCT016 message that wasn't resolved verbatim>
+
+Either resolve these in Figma (rebind layers to real variables, or
+update Figma's values) and re-run, or pick "Add to globals.css" /
+"Take Figma's value" on the per-variable prompts above.
+```
+
+Priority when multiple block-classes are present: STRUCT011 first (variable names — unconditional abort, no prompts), then STRUCT003/004/005 (raw values — `--allow-unbound` escape), then STRUCT015 + STRUCT016 (interactive prompts).
 
 ## Phase 2.7: Opportunistic variable discovery
 

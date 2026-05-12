@@ -5,6 +5,9 @@ const fs = require('node:fs');
 const { readComponentMapping, addComponentMapping, reverseLookupPath } = require('./config-writer');
 const { computeFingerprint, relevantConfigFields } = require('./fingerprint');
 const { readComponentState, writeComponentState } = require('./config-state');
+const { resolveWriteTarget } = require('./resolve-write-target');
+const { parseTheme } = require('../lint-engine/theme-parser');
+const { figmaToCssVar } = require('../lint-engine/name-normalizer');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -24,6 +27,7 @@ function printUsage() {
   cli.js config-reverse --config <adhd.config.ts> --figma-url <url>
   cli.js fingerprint-check --config <adhd.config.ts> --path <relative-path> --ctx <ctx.json> --vars <vars.json>
   cli.js fingerprint-write --config <adhd.config.ts> --path <relative-path> --ctx <ctx.json> --vars <vars.json>
+  cli.js resolve-actions   --globals <globals.css> --figma-path <figma-path> --value <hex-or-px> [--both-modes]
 
 fingerprint-check:
   Computes the fingerprint of the fresh Figma extract + relevant config bits
@@ -109,6 +113,20 @@ function main() {
       stored,
       match: !!(stored && stored.fingerprint === current),
     }));
+    process.exit(0);
+  }
+
+  if (cmd === 'resolve-actions') {
+    if (!args.globals || !args['figma-path'] || !args.value) {
+      console.error('Usage: resolve-actions --globals <globals.css> --figma-path <path> --value <value> [--both-modes]');
+      process.exit(2);
+    }
+    const css = fs.readFileSync(args.globals, 'utf8');
+    const theme = parseTheme(css);
+    const cssVar = figmaToCssVar(args['figma-path']);
+    const opts = 'both-modes' in args ? { bothModes: true } : {};
+    const actions = resolveWriteTarget(cssVar, args.value, theme, opts);
+    process.stdout.write(JSON.stringify({ cssVar, actions }, null, 2));
     process.exit(0);
   }
 
