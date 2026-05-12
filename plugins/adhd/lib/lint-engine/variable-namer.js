@@ -218,8 +218,111 @@ function checkVariableDomains(varNames) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Canonical target builder — gives each variable a SINGLE concrete rename
+// target that combines the case + domain concerns. This is what
+// `cli.js` emits in STRUCT011 messages: actionable end-state names, not
+// per-segment hints.
+//
+// Three classes of result:
+//   - `ok`         — name is already in the right shape; nothing to do.
+//   - `rename`     — produced a single target; designer renames to that.
+//   - `no-mapping` — no Tailwind v4 domain detected anywhere in the path,
+//                    AND the collection isn't a recognized tier. Surface
+//                    the canonical list so the designer picks one.
+//
+// Conventions assumed:
+//   - "Primitives" / "Semantic" / "Tokens" / "Base" / "Theme" are TIER
+//     collections — they bundle multiple domains by design, so the
+//     internal structure should follow `<Tier>/<Domain>/<...>`. Renames
+//     preserve the tier and just fix case + ensure the domain segment is
+//     canonical.
+//   - Otherwise, when the collection name itself is a Tailwind domain
+//     (Color, Radius, Spacing, …), it's preserved.
+//   - When the collection is unrecognized AND a rest segment names a
+//     domain, the suggestion MOVES the variable into a domain-named
+//     collection — e.g. "Type + Effects/Font-Size/Body" → "Text/body".
+
+const TIER_COLLECTIONS = new Set([
+  'primitives', 'semantic', 'tokens', 'base', 'theme',
+]);
+
+function titleCaseDomain(d) {
+  return d.split('-').map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join('');
+}
+
+function suggestTargetName(name) {
+  const segments = name.split('/');
+  if (segments.length < 2) return { name, kind: 'ok' };
+
+  const collection = segments[0];
+  const rest = segments.slice(1);
+  const collNorm = normalizeCollectionName(collection);
+
+  // (1) Collection is a TIER (Primitives, Semantic, …). Preserve tier,
+  // ensure the first rest segment is a canonical domain, kebab the leaves.
+  if (TIER_COLLECTIONS.has(collNorm)) {
+    const firstRestClass = classifyDomain(rest[0]);
+    let normalizedRest = [...rest];
+    if (firstRestClass.kind === 'synonym') {
+      normalizedRest[0] = firstRestClass.suggestion;
+    } else if (firstRestClass.kind === 'typo' || firstRestClass.kind === 'unknown') {
+      // Tier + unrecognized inner: can't auto-rename safely. Hint the user.
+      return {
+        name, kind: 'no-mapping',
+        reason: `Inside the "${collection}" tier, the segment "${rest[0]}" doesn't match any Tailwind v4 domain (color, spacing, text, font, font-weight, tracking, leading, radius, shadow, breakpoint, ease, animate).`,
+      };
+    }
+    const kebabRest = normalizedRest.map(s => toCase(s, 'kebab-case')).filter(Boolean).join('/');
+    const target = kebabRest ? `${collection}/${kebabRest}` : collection;
+    return target === name ? { name, kind: 'ok' } : { name, kind: 'rename', target };
+  }
+
+  // (2) Collection IS a Tailwind domain or its synonym. Preserve the
+  // collection name verbatim (designer's casing choice) and kebab-case the
+  // rest. A canonical "synonym" rename still suggests the canonical form.
+  const collectionClass = classifyDomain(collNorm);
+  if (collectionClass.kind === 'known' || collectionClass.kind === 'synonym') {
+    const canonicalCollection = collectionClass.kind === 'synonym'
+      ? titleCaseDomain(collectionClass.suggestion)
+      : collection;
+    const kebabRest = rest.map(s => toCase(s, 'kebab-case')).filter(Boolean).join('/');
+    const target = kebabRest ? `${canonicalCollection}/${kebabRest}` : canonicalCollection;
+    return target === name ? { name, kind: 'ok' } : { name, kind: 'rename', target };
+  }
+
+  // (3) Unknown collection. Walk rest looking for a domain hint. If found,
+  // suggest MOVING the variable to a domain-named collection.
+  let targetDomain = null;
+  let domainIndex = -1;
+  for (let i = 0; i < rest.length; i++) {
+    const c = classifyDomain(rest[i]);
+    if (c.kind === 'known' || c.kind === 'synonym') {
+      targetDomain = c.kind === 'known' ? rest[i].toLowerCase() : c.suggestion;
+      domainIndex = i;
+      break;
+    }
+  }
+  if (!targetDomain) {
+    return {
+      name, kind: 'no-mapping',
+      reason: `No Tailwind v4 domain found in path. Expected one of: ${TAILWIND_DOMAINS.join(', ')}. Consider whether this variable maps to one of those domains, or if it should be removed.`,
+    };
+  }
+  const collectionTitle = titleCaseDomain(targetDomain);
+  const kept = rest.filter((_, i) => i !== domainIndex);
+  const kebabRest = kept.map(s => toCase(s, 'kebab-case')).filter(Boolean).join('/');
+  const target = kebabRest ? `${collectionTitle}/${kebabRest}` : collectionTitle;
+  return { name, kind: 'rename', target };
+}
+
+function buildVariableSuggestions(varNames) {
+  return varNames.map(suggestTargetName).filter(s => s.kind !== 'ok');
+}
+
 module.exports = {
   checkVariableNames, caseMatchesSegment, suggestName, toCase,
   checkVariableDomains, classifyDomain, collectionIsDomain,
   normalizeCollectionName, TAILWIND_DOMAINS,
+  suggestTargetName, buildVariableSuggestions, TIER_COLLECTIONS,
 };

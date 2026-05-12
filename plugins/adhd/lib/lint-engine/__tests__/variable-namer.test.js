@@ -176,6 +176,82 @@ test('normalizeCollectionName collapses separators and lowercases', () => {
   assert.equal(normalizeCollectionName('  Spacing  '), 'spacing');
 });
 
+// ---------------------------------------------------------------------------
+// suggestTargetName — actionable per-variable rename targets
+
+const { suggestTargetName } = require('../variable-namer');
+
+test('suggestTargetName: tier collection (Primitives/Semantic) preserves the tier', () => {
+  // The standard two-tier organization. Internal domain segments and leaves
+  // get kebab-cased; the tier itself stays.
+  assert.deepEqual(suggestTargetName('Primitives/color/BrandPrimary'), {
+    name: 'Primitives/color/BrandPrimary', kind: 'rename', target: 'Primitives/color/brand-primary',
+  });
+  assert.deepEqual(suggestTargetName('Primitives/color/brand-500'), {
+    name: 'Primitives/color/brand-500', kind: 'ok',
+  });
+});
+
+test('suggestTargetName: tier collection with unrecognized inner domain → no-mapping', () => {
+  // Tier is fine, but "widget" inside isn't a Tailwind domain — can't auto-rename safely.
+  const r = suggestTargetName('Primitives/widget/foo');
+  assert.equal(r.kind, 'no-mapping');
+  assert.match(r.reason, /Inside the "Primitives" tier, the segment "widget" doesn't match any Tailwind v4 domain/);
+});
+
+test('suggestTargetName: domain-named collection (Color/gold) preserves collection', () => {
+  // Some teams organize by domain at the collection level. No need to inject
+  // a redundant "color" segment.
+  assert.deepEqual(suggestTargetName('Color/gold'), { name: 'Color/gold', kind: 'ok' });
+  assert.deepEqual(suggestTargetName('Radius/sm'), { name: 'Radius/sm', kind: 'ok' });
+  // Case-fix the leaf in this mode too.
+  assert.deepEqual(suggestTargetName('Color/BrandGold'), {
+    name: 'Color/BrandGold', kind: 'rename', target: 'Color/brand-gold',
+  });
+});
+
+test('suggestTargetName: synonym-collection rewrites to canonical Tailwind name', () => {
+  // A collection named "Colors" or "Shadows" gets renormalized to the
+  // canonical domain (Color, Shadow).
+  assert.deepEqual(suggestTargetName('Colors/gold'), {
+    name: 'Colors/gold', kind: 'rename', target: 'Color/gold',
+  });
+  assert.deepEqual(suggestTargetName('Shadows/sm'), {
+    name: 'Shadows/sm', kind: 'rename', target: 'Shadow/sm',
+  });
+});
+
+test('suggestTargetName: bundled collection with domain hint in rest → MOVE to domain collection', () => {
+  // The user's "Type + Effects" case. The engine detects that one of the
+  // inner segments hints at a domain ("Font-Size" → text, "Line-Height" →
+  // leading) and suggests moving the variable to a dedicated collection.
+  // The redundant domain-naming segment is dropped from the path.
+  assert.deepEqual(suggestTargetName('Type + Effects/Font-Size/Body'), {
+    name: 'Type + Effects/Font-Size/Body', kind: 'rename', target: 'Text/body',
+  });
+  assert.deepEqual(suggestTargetName('Type + Effects/Font-Size/Body LG'), {
+    name: 'Type + Effects/Font-Size/Body LG', kind: 'rename', target: 'Text/body-lg',
+  });
+  assert.deepEqual(suggestTargetName('Type + Effects/Line-Height/Line Height 28'), {
+    name: 'Type + Effects/Line-Height/Line Height 28', kind: 'rename', target: 'Leading/line-height-28',
+  });
+});
+
+test('suggestTargetName: bundled collection with no domain hint anywhere → no-mapping', () => {
+  // "Type + Effects/Effects/Opacity 100%" — none of "Type+Effects", "Effects",
+  // or "Opacity 100%" maps to a Tailwind v4 domain. The engine surfaces the
+  // canonical list so the designer picks a destination.
+  const r = suggestTargetName('Type + Effects/Effects/Opacity 100%');
+  assert.equal(r.kind, 'no-mapping');
+  assert.match(r.reason, /No Tailwind v4 domain found in path/);
+  assert.match(r.reason, /Expected one of: color, spacing, text/);
+});
+
+test('suggestTargetName: top-level vars without collection are ok by default', () => {
+  // Can't classify without a path; leave alone.
+  assert.deepEqual(suggestTargetName('spacing'), { name: 'spacing', kind: 'ok' });
+});
+
 test('caseMatchesSegment: kebab accepts lowercase+digits+hyphens, rejects uppercase', () => {
   assert.equal(caseMatchesSegment('brand-primary', 'kebab-case'), true);
   assert.equal(caseMatchesSegment('blue500', 'kebab-case'), true);

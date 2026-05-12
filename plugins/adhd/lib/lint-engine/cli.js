@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const { parseTheme } = require('./theme-parser');
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
-const { checkVariableNames, checkVariableDomains, TAILWIND_DOMAINS } = require('./variable-namer');
+const { buildVariableSuggestions } = require('./variable-namer');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -103,57 +103,45 @@ function main() {
     structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
   }
 
-  // STRUCT011 — variable-name compliance. Combines TWO concerns into one
-  // aggregated violation so the designer sees a single "fix your variable
-  // names" block per lint run:
-  //   - Case: name doesn't follow the project's namingConvention
-  //     (kebab/Pascal/camel).
-  //   - Domain: first segment after the collection doesn't map to a Tailwind v4
-  //     token-domain prefix (color/spacing/text/font/etc.). Suggests a synonym
-  //     or typo correction via the "did you mean?" heuristic.
-  // In whole-file mode there's no scope root, so we omit nodeId — the
+  // STRUCT011 — variable-name compliance. For each variable, produce ONE
+  // concrete rename target that combines case + domain concerns into a
+  // single actionable suggestion. This is the upgrade from the old
+  // two-section emission, which forced designers to reconcile contradictory
+  // hints ("rename Font-Size to font-size" + "did you mean text?") on
+  // their own — too much cognitive load when 10+ variables are flagged.
+  //
+  // The new emission shows: "Type + Effects/Font-Size/Body → Text/body".
+  // One line, complete target. The designer creates the new variable in
+  // the right collection (or renames in place) and moves on.
+  //
+  // Variable names are ALWAYS checked against kebab-case for the leaves,
+  // regardless of the project's `naming` config (which is for component
+  // identifiers, not CSS custom properties).
+  //
+  // In whole-file mode there's no scope root, so nodeId is omitted —
   // violation still appears in the report but doesn't annotate.
-  // Variable names are ALWAYS checked against kebab-case, regardless of the
-  // project's `naming` config. That config is for component identifiers
-  // (`Logo` vs `logo`); CSS custom properties — what Figma variables ultimately
-  // become — are kebab-case-lowercase by Tailwind v4 spec. There's no honest
-  // way to honor `naming: "PascalCase"` for variables and still produce
-  // working utility classes.
-  const VARIABLE_CASE = 'kebab-case';
   const varKeys = Object.keys(varDefs || {});
-  const badCase = checkVariableNames(varKeys, VARIABLE_CASE);
-  const badDomain = checkVariableDomains(varKeys);
-  if (badCase.length > 0 || badDomain.length > 0) {
+  const suggestions = buildVariableSuggestions(varKeys);
+  if (suggestions.length > 0) {
     const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
     const scopedNodeId = isScoped ? designCtx.id : undefined;
-    const sections = [];
-    if (badCase.length > 0) {
-      const shown = badCase.slice(0, 8);
-      const lines = shown.map(v => `  • ${v.name}  →  ${v.suggestion}`);
-      const more = badCase.length > 8 ? `\n  +${badCase.length - 8} more` : '';
-      sections.push(`Case (kebab-case — Tailwind v4 requires lowercase CSS vars):\n${lines.join('\n')}${more}`);
-    }
-    if (badDomain.length > 0) {
-      const shown = badDomain.slice(0, 8);
-      const lines = shown.map(v => {
-        const c = v.classification;
-        if (c.kind === 'synonym') return `  • ${v.name}  —  did you mean "${c.suggestion}"? (Tailwind v4 prefix)`;
-        if (c.kind === 'typo')    return `  • ${v.name}  —  did you mean "${c.suggestion}"? (looks like a typo)`;
-        return `  • ${v.name}  —  unknown domain "${v.domainSegment}"; expected one of: ${TAILWIND_DOMAINS.join(', ')}`;
-      });
-      const more = badDomain.length > 8 ? `\n  +${badDomain.length - 8} more` : '';
-      sections.push(`Tailwind v4 domain:\n${lines.join('\n')}${more}`);
-    }
-    const total = badCase.length + badDomain.length;
+    const shown = suggestions.slice(0, 10);
+    const lines = shown.map(s => {
+      if (s.kind === 'rename') return `  • ${s.name}\n      → ${s.target}`;
+      if (s.kind === 'no-mapping') return `  • ${s.name}\n      ⚠ ${s.reason}`;
+      return `  • ${s.name}`;
+    });
+    const more = suggestions.length > 10 ? `\n\n  +${suggestions.length - 10} more` : '';
     structureViolations.push({
       rule: 'STRUCT011',
       severity: 'warning',
       nodeId: scopedNodeId,
       nodePath: 'Variables',
       message:
-        `${total} variable-naming issue(s):\n` +
-        `${sections.join('\n\n')}\n\n` +
-        `Rename them in Figma (right-click the variable → "Rename") to match.`,
+        `${suggestions.length} variable(s) need renaming for Tailwind v4 alignment:\n\n` +
+        `${lines.join('\n\n')}${more}\n\n` +
+        `For each rename: right-click the variable in Figma → "Rename".\n` +
+        `Tip: you can also create the variable in the suggested collection and point old references at it via aliasing.`,
       deepLink: scopedNodeId
         ? 'https://figma.com/design/' + fileKey + '?node-id=' + scopedNodeId.replace(':', '-')
         : args['target-url'],
