@@ -123,10 +123,13 @@ console.log(out.length);
 
 ### The use_figma script
 
-Pass the violations array to `mcp__plugin_figma_figma__use_figma` with `skillNames: "figma-use"`. The script ensures the category exists, applies current violations, and clears stale ADHD annotations file-wide (so a re-run reflects the current state — fixed violations get their annotations cleared automatically).
+Pass the violations array to `mcp__plugin_figma_figma__use_figma` with `skillNames: "figma-use"`. The script ensures the category exists, applies current violations, and clears stale "lint"-category annotations — **scoped to whatever the current lint covered**. This is important: scoped lints (Phase 2 with a target nodeId) should ONLY touch annotations within the scoped subtree, never wipe annotations on unrelated frames that this run didn't lint. Whole-file lints walk every page.
+
+Inject `SCOPE_ROOT_ID` from Phase 2's resolved target: the nodeId for scoped mode, `null` for whole-file mode. The script branches on it.
 
 ```js
 const VIOLATIONS = /* substituted: contents of /tmp/adhd-lint/violations.json */;
+const SCOPE_ROOT_ID = /* substituted: scoped target's nodeId, or null for whole-file */;
 const CATEGORY_LABEL = "lint";
 const CATEGORY_COLOR = "orange";
 
@@ -144,18 +147,42 @@ for (const v of VIOLATIONS) {
   byNode.get(v.nodeId).push(v);
 }
 
-// 3) Walk every page to find nodes with prior ADHD annotations + apply updates.
-//    Pages load incrementally — use `setCurrentPageAsync` so `findAll` sees their content.
+// 3) Find previously-annotated nodes WITHIN THE LINT'S SCOPE.
+//    Pages load incrementally — use `setCurrentPageAsync` so `findAll`
+//    sees their content. The scope branch is critical: a scoped lint on
+//    UserAvatar must not wipe a STRUCT010 annotation that lives on Logotype
+//    — that frame wasn't part of this run.
 let updated = 0, cleared = 0;
 const touchedIds = new Set();
 
-for (const page of figma.root.children) {
-  await figma.setCurrentPageAsync(page);
-  // Previously-annotated nodes under this page.
-  const prior = page.findAll(n =>
-    "annotations" in n && (n.annotations ?? []).some(a => a.categoryId === cat.id)
-  );
-  for (const n of prior) touchedIds.add(n.id);
+if (SCOPE_ROOT_ID) {
+  // Scoped: walk only the scope's subtree (root + descendants).
+  const scopeRoot = await figma.getNodeByIdAsync(SCOPE_ROOT_ID);
+  if (!scopeRoot) return { error: "Scope root not found", SCOPE_ROOT_ID };
+  // Set page context so findAll sees descendants.
+  let page = scopeRoot;
+  while (page.parent && page.type !== "PAGE") page = page.parent;
+  if (page && page.type === "PAGE") await figma.setCurrentPageAsync(page);
+  // Include the scope root itself if it has prior annotations (STRUCT011's
+  // aggregated message attaches there).
+  if ("annotations" in scopeRoot && (scopeRoot.annotations ?? []).some(a => a.categoryId === cat.id)) {
+    touchedIds.add(scopeRoot.id);
+  }
+  if (typeof scopeRoot.findAll === "function") {
+    const prior = scopeRoot.findAll(n =>
+      "annotations" in n && (n.annotations ?? []).some(a => a.categoryId === cat.id)
+    );
+    for (const n of prior) touchedIds.add(n.id);
+  }
+} else {
+  // Whole-file: walk every page.
+  for (const page of figma.root.children) {
+    await figma.setCurrentPageAsync(page);
+    const prior = page.findAll(n =>
+      "annotations" in n && (n.annotations ?? []).some(a => a.categoryId === cat.id)
+    );
+    for (const n of prior) touchedIds.add(n.id);
+  }
 }
 
 // Union of "previously annotated" and "currently violated" — every node that needs a write.

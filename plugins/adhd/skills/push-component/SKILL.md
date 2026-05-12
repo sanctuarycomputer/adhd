@@ -208,6 +208,7 @@ For Path B, skip the prompt if (a) preflight is clean (no errors blocking the pu
 Inputs (both paths):
 - Engine stdout: `/tmp/adhd-push-component/preflight-report.json`
 - Distill to `/tmp/adhd-push-component/violations.json` using the same `node -e` snippet as lint Phase 6.
+- **`SCOPE_ROOT_ID`** — pass the freshly-pushed Component Set's nodeId (saved in Phase 9 as `componentSetId`). This bounds the annotation script's stale-annotation cleanup to this Component Set's subtree, so a push of UserAvatar doesn't wipe a previously-annotated STRUCT010 on an unrelated Logo Component Set elsewhere in the file.
 
 Phase 10.5 runs AFTER the preflight CLI exits but BEFORE Phase 11's decide-or-rollback — designers see annotations even when push aborts.
 

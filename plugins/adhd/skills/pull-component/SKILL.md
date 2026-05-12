@@ -122,6 +122,7 @@ For Path B, skip the prompt if no violation has a `nodeId` (no actionable annota
 Inputs (both paths):
 - Engine stdout: `/tmp/adhd-pull-component/stdout.json`
 - Distill to `/tmp/adhd-pull-component/violations.json` using the same `node -e` snippet as lint Phase 6.
+- **`SCOPE_ROOT_ID`** — pass the target Component Set's nodeId (from Phase 2's URL extraction). This bounds the annotation script's stale-annotation cleanup to this Component Set's subtree, so a pull of UserAvatar doesn't wipe a previously-annotated STRUCT010 on an unrelated Logo Component Set elsewhere in the file.
 
 Either path runs BEFORE the abort/escape evaluation below, so the designer sees the annotations regardless of whether the pull continues.
 
