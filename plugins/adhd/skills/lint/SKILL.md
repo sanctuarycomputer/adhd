@@ -10,7 +10,7 @@ allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figm
 Validate that a Figma file (or a single frame/component/page) is ready for code translation. Reports two classes of issue:
 
 - **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
-- **Structure issues** — STRUCT001–STRUCT013 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, Tailwind-default duplicates, etc.).
+- **Structure issues** — STRUCT001–STRUCT014 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, Tailwind-default duplicates, alias-equivalent collection duplicates, etc.).
 
 Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
@@ -403,6 +403,147 @@ Or, on `rebound-only`:
 
 ```
 ⚠ Rebound `<duplicateName>` → `<canonicalName>` (<rebound> layer(s)) but could not delete the duplicate: <error>. It's no longer referenced by any visible layer; you can delete it manually if you confirm nothing else uses it.
+```
+
+Continue to Phase 8b if any STRUCT014 violations exist. Otherwise exit normally.
+
+## Phase 8b: Consolidate duplicate collections (`--fix`, STRUCT014)
+
+If `--fix` was passed AND `/tmp/adhd-lint/stdout.json` contains STRUCT014 violations, walk each duplicate group and offer to consolidate. Each STRUCT014 entry has `canonical` (the Tailwind domain) and `collections` (array of `{ name, varCount }` for the duplicate collections in that group, sorted by varCount descending).
+
+If no STRUCT014 violations exist, skip this phase.
+
+### Per-group prompts
+
+For each group, use `AskUserQuestion`. The first option is the most-populated collection (the natural "keep this one" choice):
+
+```
+Question: "<N> Figma collections describe the same domain (`<canonical>`): <list with counts>. Which should be the keeper? Every variable in the others will be moved into the keeper (their layer bindings update automatically), then the empty collections are deleted."
+Header: "Consolidate"
+Options:
+  - "Keep \"<most-populated>\" (<count> vars)"            // first option
+  - "Keep \"<next>\" (<count> vars)"
+  - ... one per remaining collection ...
+  - "Skip — don't consolidate this group"                 // last option
+```
+
+If "Skip," move to the next group. Otherwise record `{ canonical, keeper: '<chosen name>', losers: [<other names>] }` into a running array.
+
+### Apply via use_figma
+
+After every group is decided, write the consolidation plan to `/tmp/adhd-lint/struct014-actions.json` and call `mcp__plugin_figma_figma__use_figma`. The script discovers each collection by name (case-insensitive), iterates every variable in the losers, creates an equivalent in the keeper, rebinds layers, deletes the original.
+
+```js
+const ACTIONS = /* substituted: contents of struct014-actions.json */;
+
+const allCollections = await figma.variables.getLocalVariableCollectionsAsync();
+const findColl = (name) => allCollections.find(c => c.name.toLowerCase().trim() === name.toLowerCase().trim()) || null;
+
+const results = [];
+for (const action of ACTIONS) {
+  const { keeper, losers } = action;
+  const keeperColl = findColl(keeper);
+  if (!keeperColl) {
+    results.push({ canonical: action.canonical, status: "skipped", reason: "keeper collection not found: " + keeper });
+    continue;
+  }
+
+  // Map of variable name (within collection) → variable id, for the keeper.
+  // Used to detect name collisions before creating duplicates within the keeper.
+  const keeperByName = new Map();
+  for (const vid of keeperColl.variableIds) {
+    const v = await figma.variables.getVariableByIdAsync(vid);
+    if (v) keeperByName.set(v.name, v);
+  }
+
+  let moved = 0, skippedCollision = 0, deletedColls = 0;
+  const collisions = [];
+
+  for (const loserName of losers) {
+    const loserColl = findColl(loserName);
+    if (!loserColl) continue;
+    const loserVarIds = [...loserColl.variableIds];
+
+    for (const vid of loserVarIds) {
+      const oldVar = await figma.variables.getVariableByIdAsync(vid);
+      if (!oldVar) continue;
+
+      // Name collision in the keeper? Skip the move and surface the
+      // conflict — we don't want to silently clobber a same-named
+      // variable that has different value or scopes.
+      if (keeperByName.has(oldVar.name)) {
+        collisions.push({ varName: oldVar.name, loserColl: loserName, keeperColl: keeper });
+        skippedCollision++;
+        continue;
+      }
+
+      // Create the replacement in the keeper with the same name + type.
+      const newVar = figma.variables.createVariable(oldVar.name, keeperColl, oldVar.resolvedType);
+      newVar.scopes = oldVar.scopes;
+      newVar.description = oldVar.description;
+
+      // Copy values per mode. The keeper and the loser may have different
+      // mode IDs even with the same mode names — map by name.
+      const keeperModesByName = new Map(keeperColl.modes.map(m => [m.name, m.modeId]));
+      for (const [oldModeId, value] of Object.entries(oldVar.valuesByMode)) {
+        const oldMode = loserColl.modes.find(m => m.modeId === oldModeId);
+        const targetModeId = oldMode && keeperModesByName.get(oldMode.name);
+        if (targetModeId) newVar.setValueForMode(targetModeId, value);
+      }
+      keeperByName.set(newVar.name, newVar);
+
+      // Rebind every layer using the old variable to the new one.
+      for (const page of figma.root.children) {
+        await figma.setCurrentPageAsync(page);
+        const nodes = page.findAll(() => true);
+        for (const node of nodes) {
+          if (!node.boundVariables) continue;
+          for (const [prop, alias] of Object.entries(node.boundVariables)) {
+            if (prop === "fills" || prop === "strokes" || prop === "effects") continue;
+            if (alias && alias.id === oldVar.id) node.setBoundVariable(prop, newVar);
+          }
+          for (const kind of ["fills", "strokes"]) {
+            const arr = node[kind];
+            if (!Array.isArray(arr)) continue;
+            node[kind] = arr.map((paint) => paint?.boundVariables?.color?.id === oldVar.id
+              ? figma.variables.setBoundVariableForPaint(paint, "color", newVar)
+              : paint
+            );
+          }
+        }
+      }
+
+      try { oldVar.remove(); moved++; }
+      catch (e) { results.push({ canonical: action.canonical, status: "remove-failed", varName: oldVar.name, error: String(e) }); }
+    }
+
+    // Delete the loser collection if it's now empty.
+    if (loserColl.variableIds.length === 0) {
+      try { loserColl.remove(); deletedColls++; }
+      catch (e) { results.push({ canonical: action.canonical, status: "collection-remove-failed", collName: loserName, error: String(e) }); }
+    }
+  }
+  results.push({ canonical: action.canonical, keeper, moved, skippedCollision, deletedColls, collisions, status: "ok" });
+}
+
+return { results };
+```
+
+### Report
+
+For each successful group:
+
+```
+✓ Consolidated <N> collections into `<keeper>` (<moved> variables moved, <deletedColls> empty collections removed)
+```
+
+If any name collisions surfaced (`skippedCollision > 0`):
+
+```
+⚠ <count> variable(s) in <loserColl> couldn't be moved into <keeperColl> — a variable with the same name already exists there with a potentially different value. Inspect manually in the Figma variables panel and decide which to keep:
+  - <varName>
+  - <varName>
+  ...
 ```
 
 Then exit normally.

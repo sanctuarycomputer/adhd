@@ -454,6 +454,46 @@ test('STRUCT013: surfaces Figma variables that duplicate Tailwind defaults (stri
   assert.match(v.message, /\/adhd:lint --fix/);
 });
 
+test('STRUCT014: surfaces alias-equivalent collections side by side (Color vs color, Space vs spacing)', () => {
+  // Real scenario from the user's reactor file: prior pushes created
+  // lowercase `color`/`spacing` collections alongside designer's existing
+  // `Color`/`Space`. The new rule surfaces these for /adhd:lint --fix
+  // to consolidate; alias-aware push prevents future duplicates.
+  const varDefs = tmp('vars.json', {
+    'Color/zinc-500': '#71717a',
+    'Color/red-500': '#ef4444',
+    'color/extra-1': '#aaa',
+    'Space/4': '1rem',
+    'spacing/4': '1rem',
+    'spacing/8': '2rem',
+  });
+  const ctx = tmp('ctx.json', { id: '5:1', name: 'X', type: 'FRAME', layoutMode: 'VERTICAL' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'X',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct014 = summary.structure.filter(v => v.rule === 'STRUCT014');
+  assert.equal(struct014.length, 2);
+  const byCanonical = Object.fromEntries(struct014.map(v => [v.canonical, v]));
+  assert.ok(byCanonical['color']);
+  assert.ok(byCanonical['spacing']);
+  // Most-populated collection first in each group.
+  assert.equal(byCanonical['color'].collections[0].name, 'Color');
+  assert.equal(byCanonical['color'].collections[0].varCount, 2);
+  assert.equal(byCanonical['spacing'].collections[0].name, 'spacing');
+  assert.equal(byCanonical['spacing'].collections[0].varCount, 2);
+  // Message names the canonical + lists the colliding collections.
+  assert.match(byCanonical['color'].message, /alias to "color"/);
+  assert.match(byCanonical['color'].message, /\/adhd:lint --fix/);
+});
+
 test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {
   const varDefs = tmp('vars.json', { 'Primitives/color/BrandPrimary': '#000' });
   const ctx = tmp('ctx.json', { mode: 'whole-file', pages: [] });

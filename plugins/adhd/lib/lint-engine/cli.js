@@ -51,6 +51,7 @@ const { checkStructure } = require('./structure-checker');
 const { buildVariableSuggestions } = require('./variable-namer');
 const { checkBindings } = require('./binding-checker');
 const { detectTailwindDuplicates } = require('./tailwind-duplicate-detector');
+const { detectDuplicateCollections } = require('./collection-duplicate-detector');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -278,6 +279,31 @@ function main() {
       figmaVarName: dup.figmaName,
       figmaVarId,
       tailwindCssVar: dup.tailwindCssVar,
+    });
+  }
+
+  // STRUCT014 — duplicate collections (e.g. "Color" + "color" side-by-
+  // side, "Type + Effects" + "typography"). Surface every group so
+  // designers can see what's grown up over time. /adhd:lint --fix
+  // consolidates per group: pick the keeper, move every variable from
+  // the loser collections into it (rebinding existing layer references),
+  // then delete the empty losers.
+  const dupGroups = detectDuplicateCollections(Object.keys(varDefs || {}));
+  for (const group of dupGroups) {
+    const collNames = group.collections.map(c => `"${c.name}" (${c.varCount})`).join(', ');
+    structureViolations.push({
+      rule: 'STRUCT014',
+      severity: 'warning',
+      nodeId: undefined,
+      nodePath: 'Variables',
+      message:
+        `${group.collections.length} Figma collections alias to "${group.canonical}": ${collNames}. ` +
+        `These describe the same token domain but Figma treats them as separate collections, so designers see duplicate-looking groups in the Variables panel and push must guess which to append into.\n\n` +
+        `To apply: run \`/adhd:lint --fix\`. You'll be asked which collection to keep (the most-populated one is suggested); every variable in the others gets moved into the keeper, layer bindings update automatically, and the empty collections are deleted.`,
+      deepLink: args['target-url'],
+      // Extra fields consumed by --fix:
+      canonical: group.canonical,
+      collections: group.collections,
     });
   }
 
