@@ -201,8 +201,10 @@ test('STRUCT011: flags Figma variables whose names violate case OR Tailwind doma
   assert.equal(struct011.nodeId, '5:42');
   // Header counts ALL issues (1 case + 3 domain = 4).
   assert.match(struct011.message, /4 variable-naming issue\(s\)/);
-  // Case section
-  assert.match(struct011.message, /Case \(kebab-case\):/);
+  // Case section. The header explains kebab-case is a Tailwind v4 requirement
+  // (not the project's naming convention) — important since users may have
+  // PascalCase configured for components.
+  assert.match(struct011.message, /Case \(kebab-case — Tailwind v4 requires lowercase CSS vars\)/);
   assert.match(struct011.message, /Primitives\/color\/BrandPrimary +→ +Primitives\/color\/brand-primary/);
   // Domain section with all three "did you mean?" flavours
   assert.match(struct011.message, /Tailwind v4 domain:/);
@@ -211,6 +213,74 @@ test('STRUCT011: flags Figma variables whose names violate case OR Tailwind doma
   assert.match(struct011.message, /Primitives\/widget\/foo.*unknown domain "widget".*expected one of: color, spacing/);
   // Compliant variable is NOT listed.
   assert.doesNotMatch(struct011.message, /text\/default/);
+});
+
+test('STRUCT011: variable case is always kebab-case, regardless of project naming config', () => {
+  // The user's case: project config is `naming: "PascalCase"` (for COMPONENT
+  // identifiers like Logo vs logo). The rule must NOT apply PascalCase to
+  // variable names — CSS custom properties are kebab-lowercase by Tailwind
+  // v4 spec. So `Color/gold` should not be flagged as needing "Color/Gold".
+  const varDefs = tmp('vars.json', {
+    'Color/gold':      '#c5a572',    // kebab-ok (collection-is-domain, lowercase value)
+    'Color/BrandGold': '#c5a572',    // case violation → should suggest brand-gold, NOT BrandGold
+  });
+  const ctx = tmp('ctx.json', { id: '5:1', name: 'X', type: 'FRAME', layoutMode: 'VERTICAL' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  // PascalCase project — must be ignored for variable case checking.
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'PascalCase' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI,
+    '--variable-defs', varDefs,
+    '--design-context', ctx,
+    '--globals-css', cssPath,
+    '--config', configPath,
+    '--target', 'X',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1',
+    '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct011 = summary.structure.find(v => v.rule === 'STRUCT011');
+  assert.ok(struct011, 'expected STRUCT011 to flag BrandGold');
+  // Variable-case section advertises kebab-case (with the rationale), not PascalCase
+  assert.match(struct011.message, /Case \(kebab-case — Tailwind v4 requires lowercase CSS vars\)/);
+  // BrandGold suggestion is kebab, not PascalCase
+  assert.match(struct011.message, /Color\/BrandGold +→ +Color\/brand-gold/);
+  // Color/gold is NOT flagged (already kebab-compliant, even though "gold"
+  // would fail PascalCase if the config were honored).
+  assert.doesNotMatch(struct011.message, /Color\/gold +→/);
+});
+
+test('STRUCT011: collection-name-is-domain (Color/, Radius/, Spacing/) — no domain suggestion', () => {
+  // The user's "Radius/sm flagged as unknown domain" report. Fixed: when the
+  // collection name itself is a Tailwind domain, the variable name doesn't
+  // need another domain prefix.
+  const varDefs = tmp('vars.json', {
+    'Radius/sm':   '4px',
+    'Color/gold':  '#c5a572',
+    'Spacing/md':  '0.75rem',
+  });
+  const ctx = tmp('ctx.json', { id: '5:1', name: 'X', type: 'FRAME', layoutMode: 'VERTICAL' });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI,
+    '--variable-defs', varDefs,
+    '--design-context', ctx,
+    '--globals-css', cssPath,
+    '--config', configPath,
+    '--target', 'X',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1',
+    '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  // No STRUCT011 at all — all three vars are valid (collection IS the domain).
+  assert.equal(summary.structure.filter(v => v.rule === 'STRUCT011').length, 0);
 });
 
 test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {

@@ -177,15 +177,38 @@ function classifyDomain(segment) {
   return { kind: 'unknown' };
 }
 
+// Normalize a collection name for domain-matching: lowercase, collapse
+// separators (`+`, ` `, `-`, `_`) to `-`, drop the rest. "Color" → "color",
+// "Type + Effects" → "type-effects", "Radius" → "radius".
+function normalizeCollectionName(name) {
+  return name.toLowerCase()
+    .replace(/[\s+\-_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
+// True when the collection name itself acts as the Tailwind domain — the
+// variable name within doesn't need another domain prefix. `Color/gold`,
+// `Radius/sm`, `Spacing/sm` are all valid. `Primitives/...` and
+// `Semantic/...` are not (they're not domain names).
+function collectionIsDomain(collection) {
+  const norm = normalizeCollectionName(collection);
+  const classification = classifyDomain(norm);
+  return classification.kind === 'known' || classification.kind === 'synonym';
+}
+
 // Returns an array of `{ name, domainSegment, classification }` for vars whose
 // post-collection first segment doesn't match a known Tailwind v4 domain.
-// Names with no path segments after the collection are skipped (nothing to
-// classify).
+// Skipped:
+//   - Names with no path segments after the collection (nothing to classify).
+//   - Names whose COLLECTION already names the domain (`Color/gold` ok —
+//     "gold" doesn't need its own domain prefix).
 function checkVariableDomains(varNames) {
   const out = [];
   for (const name of varNames) {
     const segments = name.split('/');
     if (segments.length <= 1) continue;
+    if (collectionIsDomain(segments[0])) continue;
     const domainSegment = segments[1]; // first segment AFTER collection
     const classification = classifyDomain(domainSegment);
     if (classification.kind !== 'known') {
@@ -197,5 +220,6 @@ function checkVariableDomains(varNames) {
 
 module.exports = {
   checkVariableNames, caseMatchesSegment, suggestName, toCase,
-  checkVariableDomains, classifyDomain, TAILWIND_DOMAINS,
+  checkVariableDomains, classifyDomain, collectionIsDomain,
+  normalizeCollectionName, TAILWIND_DOMAINS,
 };

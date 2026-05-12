@@ -140,6 +140,42 @@ test('checkVariableDomains: collection-only names (no slash) are skipped', () =>
   assert.deepEqual(checkVariableDomains(['Primitives']), []);
 });
 
+test('checkVariableDomains: collection name IS the domain — skip domain check on the var', () => {
+  // Some teams organize Figma collections by domain ("Color", "Radius", "Spacing")
+  // instead of by tier ("Primitives", "Semantic"). When the collection name
+  // itself matches a Tailwind domain, the variable name doesn't need another
+  // domain prefix. `Color/gold` and `Radius/sm` are valid.
+  const names = ['Color/gold', 'Radius/sm', 'Spacing/sm', 'Shadow/lg'];
+  assert.deepEqual(checkVariableDomains(names), []);
+});
+
+test('checkVariableDomains: collection synonym counts too (Colors/, Shadows/, Screens/)', () => {
+  // If the collection is named with a synonym (plural, alternate), accept it.
+  // Otherwise the rule would tell the designer to add ANOTHER "color" segment
+  // inside a `Colors` collection — busywork.
+  const names = ['Colors/gold', 'Shadows/sm', 'Screens/md'];
+  assert.deepEqual(checkVariableDomains(names), []);
+});
+
+test('checkVariableDomains: case- and whitespace-normalized collection match (Type + Effects is NOT a domain)', () => {
+  // "Type + Effects" → "type-effects" — doesn't match any domain. So the
+  // first segment after the collection still needs to be checked.
+  const names = ['Type + Effects/Font-Size/Body'];
+  const out = checkVariableDomains(names);
+  assert.equal(out.length, 1);
+  // "Font-Size" is a known synonym for "text"
+  assert.equal(out[0].classification.kind, 'synonym');
+  assert.equal(out[0].classification.suggestion, 'text');
+});
+
+test('normalizeCollectionName collapses separators and lowercases', () => {
+  const { normalizeCollectionName } = require('../variable-namer');
+  assert.equal(normalizeCollectionName('Color'), 'color');
+  assert.equal(normalizeCollectionName('Type + Effects'), 'type-effects');
+  assert.equal(normalizeCollectionName('Font Weight'), 'font-weight');
+  assert.equal(normalizeCollectionName('  Spacing  '), 'spacing');
+});
+
 test('caseMatchesSegment: kebab accepts lowercase+digits+hyphens, rejects uppercase', () => {
   assert.equal(caseMatchesSegment('brand-primary', 'kebab-case'), true);
   assert.equal(caseMatchesSegment('blue500', 'kebab-case'), true);

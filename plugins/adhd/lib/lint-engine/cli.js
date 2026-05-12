@@ -113,8 +113,15 @@ function main() {
   //     or typo correction via the "did you mean?" heuristic.
   // In whole-file mode there's no scope root, so we omit nodeId — the
   // violation still appears in the report but doesn't annotate.
+  // Variable names are ALWAYS checked against kebab-case, regardless of the
+  // project's `naming` config. That config is for component identifiers
+  // (`Logo` vs `logo`); CSS custom properties — what Figma variables ultimately
+  // become — are kebab-case-lowercase by Tailwind v4 spec. There's no honest
+  // way to honor `naming: "PascalCase"` for variables and still produce
+  // working utility classes.
+  const VARIABLE_CASE = 'kebab-case';
   const varKeys = Object.keys(varDefs || {});
-  const badCase = checkVariableNames(varKeys, namingConvention);
+  const badCase = checkVariableNames(varKeys, VARIABLE_CASE);
   const badDomain = checkVariableDomains(varKeys);
   if (badCase.length > 0 || badDomain.length > 0) {
     const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
@@ -124,7 +131,7 @@ function main() {
       const shown = badCase.slice(0, 8);
       const lines = shown.map(v => `  • ${v.name}  →  ${v.suggestion}`);
       const more = badCase.length > 8 ? `\n  +${badCase.length - 8} more` : '';
-      sections.push(`Case (${namingConvention}):\n${lines.join('\n')}${more}`);
+      sections.push(`Case (kebab-case — Tailwind v4 requires lowercase CSS vars):\n${lines.join('\n')}${more}`);
     }
     if (badDomain.length > 0) {
       const shown = badDomain.slice(0, 8);
