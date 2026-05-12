@@ -51,6 +51,24 @@ test('STRUCT001: does NOT flag a frame holding a single shape primitive (icon/lo
   }
 });
 
+test('STRUCT001: does NOT flag a frame whose children are all shape primitives (multi-path SVG)', () => {
+  // Real-world case: a Logo Component Set variant that's a composite of multiple
+  // vector paths (e.g. a wordmark with separate paths per letter, or a mark with
+  // multiple boolean-op layers). The whole frame rasterizes to a single SVG;
+  // flexbox doesn't apply. Auto-layout would be incorrect here.
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      { id: '1:2', name: 'path-1', type: 'VECTOR' },
+      { id: '1:3', name: 'path-2', type: 'VECTOR' },
+      { id: '1:4', name: 'mask',   type: 'BOOLEAN_OPERATION' },
+      { id: '1:5', name: 'dot',    type: 'ELLIPSE' },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT001').length, 0);
+});
+
 test('STRUCT001: still flags a frame with a single TEXT child (needs padding/alignment control)', () => {
   const node = makeFrame({
     layoutMode: 'NONE',
@@ -69,12 +87,14 @@ test('STRUCT001: still flags a frame with a single FRAME child', () => {
   assert.ok(violations.find(v => v.rule === 'STRUCT001'));
 });
 
-test('STRUCT001: still flags a frame with 2+ children regardless of types', () => {
+test('STRUCT001: still flags a frame with mixed shapes + non-shape children (needs auto-layout)', () => {
+  // If even one child isn't a shape primitive, the exemption doesn't apply —
+  // the non-shape needs auto-layout for padding/alignment.
   const node = makeFrame({
     layoutMode: 'NONE',
     children: [
-      { id: '1:2', name: 'a', type: 'VECTOR' },
-      { id: '1:3', name: 'b', type: 'VECTOR' },
+      { id: '1:2', name: 'icon-path', type: 'VECTOR' },
+      { id: '1:3', name: 'label',     type: 'TEXT' },
     ],
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });

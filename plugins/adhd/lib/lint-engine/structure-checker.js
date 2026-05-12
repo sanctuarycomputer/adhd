@@ -2,9 +2,11 @@
 
 const AUTO_NAME_RE = /^(Frame|Group|Rectangle|Ellipse|Vector|Line|Star|Polygon)\s+\d+$/;
 
-// Shape primitives that, as a frame's only child, fill the container via constraints
-// and do not benefit from auto-layout (icons, logos, decorative backgrounds).
-const SINGLE_CHILD_SHAPE_EXEMPT = new Set([
+// Shape primitives that don't benefit from auto-layout. A frame whose
+// children are ALL of these types is exempt from STRUCT001 — the frame is
+// going to be rasterized to a single SVG (multi-path icons, logos,
+// illustrations, decorative shapes), so flexbox doesn't apply.
+const SHAPE_PRIMITIVE_TYPES = new Set([
   'VECTOR', 'BOOLEAN_OPERATION', 'ELLIPSE', 'RECTANGLE', 'STAR', 'POLYGON', 'LINE',
 ]);
 
@@ -40,15 +42,16 @@ function visit(node, ctx, parentPath, parent) {
   };
 
   // STRUCT001: auto-layout required.
-  // Exempt: a frame whose ONLY child is a shape primitive (icon / logo / decorative
-  // shape that fills the container via constraints). Multi-child frames and
-  // single-child wrappers around TEXT / FRAME / COMPONENT / INSTANCE still fire —
-  // those typically want auto-layout for padding and alignment.
+  // Exempt: a frame whose children are ALL shape primitives. Covers the icon /
+  // logo / illustration case — single Vector, multi-path Vector compositions,
+  // boolean operations, decorative rectangles, etc. These rasterize to a single
+  // SVG; flexbox doesn't apply. Mixed-content frames (text + shape, frame +
+  // shape, etc.) still fire — those want auto-layout for padding and alignment.
   if ((node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE') &&
       Array.isArray(node.children) && node.children.length > 0 &&
       node.layoutMode === 'NONE') {
-    const exempt = node.children.length === 1 && SINGLE_CHILD_SHAPE_EXEMPT.has(node.children[0].type);
-    if (!exempt) {
+    const allShapes = node.children.every(c => SHAPE_PRIMITIVE_TYPES.has(c.type));
+    if (!allShapes) {
       push('STRUCT001', 'error', 'Frame has children but auto-layout is not enabled.');
     }
   }
