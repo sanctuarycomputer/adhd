@@ -54,7 +54,8 @@ function renderComponentMap(projectRoot, components) {
   const entries = components
     .map((c, i) => {
       const props = JSON.stringify(bakedPropsFor(projectRoot, c.rawPath));
-      return `  { slug: ${JSON.stringify(c.slug)}, rawPath: ${JSON.stringify(c.rawPath)}, module: $cmp${i}, props: ${props} },`;
+      const figmaUrl = c.figmaUrl ? JSON.stringify(c.figmaUrl) : 'null';
+      return `  { slug: ${JSON.stringify(c.slug)}, rawPath: ${JSON.stringify(c.rawPath)}, figmaUrl: ${figmaUrl}, module: $cmp${i}, props: ${props} },`;
     })
     .join('\n');
   return COMPONENT_MAP_TSX

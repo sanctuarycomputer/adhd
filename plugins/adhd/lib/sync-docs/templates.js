@@ -131,6 +131,7 @@ export type PropSchema = {
 export type ComponentEntry = {
   slug: string;
   rawPath: string;
+  figmaUrl: string | null;
   Component: React.ComponentType<Record<string, unknown>> | null;
   props: Record<string, PropSchema>;
 };
@@ -138,6 +139,7 @@ export type ComponentEntry = {
 type RawEntry = {
   slug: string;
   rawPath: string;
+  figmaUrl: string | null;
   module: Record<string, unknown>;
   props: Record<string, PropSchema>;
 };
@@ -158,6 +160,7 @@ const ENTRIES: RawEntry[] = __COMPONENT_ENTRIES__;
 export const components: ComponentEntry[] = ENTRIES.map(e => ({
   slug: e.slug,
   rawPath: e.rawPath,
+  figmaUrl: e.figmaUrl,
   Component: resolveComponent(e.module),
   props: e.props,
 }));
@@ -554,7 +557,7 @@ export default function ComponentPage() {
 
   if (!entry) return <NotInMap slug={slug} />;
 
-  const { rawPath, Component, props } = entry;
+  const { rawPath, figmaUrl, Component, props } = entry;
 
   // Resolve current prop values from the URL. Values are constrained to the
   // three shapes the page knows how to source — string (for union + string
@@ -570,8 +573,16 @@ export default function ComponentPage() {
     else if (def.type === "number") current[name] = Number(v);
   }
 
+  // Render-name precedence: prefer the actual exported function/class name
+  // when it looks like a real identifier (starts with uppercase, multi-char),
+  // otherwise fall back to a PascalCase'd slug. Avoids \`<d />\` and \`<_Logo />\`
+  // when the export got wrapped/minified and Component.name is a single
+  // letter or starts with an underscore.
+  const looksLikeRealName = !!Component?.name && /^[A-Z][A-Za-z0-9]+$/.test(Component.name);
+  const pascalSlug = slug.split(/[-_]+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join("");
+  const componentName = looksLikeRealName ? Component!.name : (pascalSlug || slug);
+
   const importPath = "@/" + rawPath.replace(/\\.tsx?$/, "").replace(/\\/index$/, "");
-  const componentName = Component?.name || slug;
   const importStmt = Component ? \`import \${componentName} from "\${importPath}";\` : null;
   const jsxSnippet = Component
     ? \`<\${componentName}\${Object.entries(current).map(([k, v]) => \` \${k}={\${JSON.stringify(v)}}\`).join("")} />\`
@@ -579,7 +590,21 @@ export default function ComponentPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-2xl font-medium">{slug}</h2>
+      <h2 className="text-2xl font-medium flex items-center gap-2">
+        <span>{componentName}</span>
+        {figmaUrl && (
+          <a
+            href={figmaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center w-6 h-6 rounded text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            title="Open in Figma"
+            aria-label="Open in Figma"
+          >
+            ↗
+          </a>
+        )}
+      </h2>
 
       <section className="rounded border border-zinc-200 dark:border-zinc-800 p-4">
         <h3 className="mb-3 text-xs font-medium uppercase text-zinc-500">Props</h3>

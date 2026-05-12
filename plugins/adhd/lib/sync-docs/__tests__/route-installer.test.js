@@ -152,6 +152,30 @@ test('componentMap.tsx has explicit static imports per registered component', ()
   assert.doesNotMatch(body, /await\s+import\(`/);
 });
 
+test('componentMap.tsx carries the figmaUrl field per component (for the docs-page "open in Figma" link)', () => {
+  const root = makeTempProject();
+  writeLogoFixture(root);
+  installRoute(root, {
+    groupName: '(design-system)', routeSegment: '-docs', renderMode: 'dev-only',
+    components: [
+      { slug: 'logo', rawPath: 'components/design-system/logo/index.tsx',
+        importPath: '@/components/design-system/logo',
+        figmaUrl: 'https://www.figma.com/design/abc?node-id=1-1' },
+      { slug: 'button', rawPath: 'components/button.tsx',
+        importPath: '@/components/button', figmaUrl: null },
+    ],
+    cssEntry: 'app/globals.css',
+  });
+  const body = fs.readFileSync(
+    path.join(root, 'app', '(design-system)', '-docs', 'componentMap.tsx'),
+    'utf8',
+  );
+  // Logo entry carries the URL literal
+  assert.match(body, /slug: "logo".*figmaUrl: "https:\/\/www\.figma\.com\/design\/abc\?node-id=1-1"/);
+  // Button entry has null when no figma URL was provided
+  assert.match(body, /slug: "button".*figmaUrl: null/);
+});
+
 test('componentMap.tsx bakes prop schemas read from each component source at sync time', () => {
   // The component page no longer does fs reads — props are baked here. Test
   // verifies that the LogoProps interface (size: union, inverted: boolean,

@@ -71,8 +71,26 @@ export default config;
     slug: 'logo',
     rawPath: 'components/design-system/logo/index.tsx',
     importPath: '@/components/design-system/logo',
+    figmaUrl: 'x',
   }]);
   assert.equal(r.cssEntry, 'app/globals.css');
+});
+
+test('readConfig extracts figma.url per component, falling back to null when absent', () => {
+  const root = makeProject(`
+const config = {
+  components: {
+    "components/logo/index.tsx":   { figma: { url: "https://www.figma.com/design/abc?node-id=1-1" } },
+    "components/button/index.tsx": { /* no figma block */ },
+  },
+};
+export default config;
+`);
+  const r = readConfig(root);
+  const logo = r.components.find(c => c.slug === 'logo');
+  const button = r.components.find(c => c.slug === 'button');
+  assert.equal(logo.figmaUrl, 'https://www.figma.com/design/abc?node-id=1-1');
+  assert.equal(button.figmaUrl, null);
 });
 
 test('readConfig throws if adhd.config.ts is missing', () => {

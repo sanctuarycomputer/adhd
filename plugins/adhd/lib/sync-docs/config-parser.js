@@ -57,6 +57,19 @@ function parseCssEntry(src) {
   return m ? m[1] : 'app/globals.css';
 }
 
+// Extract the `figma.url` value for a given component-path key. Returns
+// `null` when the entry has no `figma: { url: "..." }` block — the docs
+// route's "open in Figma" link is then suppressed for that component.
+// Targeted regex scoped to the value block that follows the path key.
+function parseFigmaUrlForPath(src, p) {
+  const escapedPath = p.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+  const re = new RegExp(
+    '"' + escapedPath + '"\\s*:\\s*\\{[^}]*figma\\s*:\\s*\\{[^}]*url\\s*:\\s*"([^"]+)"',
+  );
+  const m = re.exec(src);
+  return m ? m[1] : null;
+}
+
 // Derive a URL slug from a component path. Mirrors the runtime helper used in
 // previous template versions so existing URL contracts are unchanged.
 //   src/components/Logo/index.tsx → "logo"
@@ -83,6 +96,7 @@ function readConfig(projectRoot) {
     slug: slugFor(rawPath),
     rawPath,
     importPath: importPathFor(rawPath),
+    figmaUrl: parseFigmaUrlForPath(src, rawPath),
   }));
   return {
     components,
@@ -90,4 +104,4 @@ function readConfig(projectRoot) {
   };
 }
 
-module.exports = { readConfig, parseComponents, parseCssEntry, slugFor, importPathFor };
+module.exports = { readConfig, parseComponents, parseCssEntry, parseFigmaUrlForPath, slugFor, importPathFor };

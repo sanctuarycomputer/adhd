@@ -115,6 +115,34 @@ test('COMPONENT_MAP_TSX has the substitution placeholders the installer fills in
   assert.match(COMPONENT_MAP_TSX, /export type PropSchema/);
 });
 
+test('COMPONENT_MAP_TSX declares figmaUrl on the ComponentEntry shape', () => {
+  // Powers the "open in Figma" link on each component page. Null when the
+  // user hasn't set a Figma URL for that component in adhd.config.ts.
+  assert.match(COMPONENT_MAP_TSX, /figmaUrl:\s*string \| null/);
+});
+
+test('COMPONENT_PAGE_TSX renders a Figma link with ↗ when figmaUrl is present', () => {
+  // Link is opt-in: only shown when the entry's figmaUrl isn't null.
+  // Opens in a new tab (target="_blank"), uses rel="noopener noreferrer"
+  // for security.
+  assert.match(COMPONENT_PAGE_TSX, /figmaUrl &&[\s\S]*<a/);
+  assert.match(COMPONENT_PAGE_TSX, /href=\{figmaUrl\}/);
+  assert.match(COMPONENT_PAGE_TSX, /target="_blank"/);
+  assert.match(COMPONENT_PAGE_TSX, /rel="noopener noreferrer"/);
+  // The northeast-arrow glyph is the link content
+  assert.match(COMPONENT_PAGE_TSX, /↗/);
+});
+
+test('COMPONENT_PAGE_TSX falls back to PascalCase slug when Component.name looks garbled', () => {
+  // The runtime check rejects names that are single letters (minifier output
+  // like "d") or start with non-uppercase chars (anonymous fn wrappers).
+  // Falls back to the slug PascalCase'd so the snippet reads "<Logotype />"
+  // not "<d />" or "<logotype />".
+  assert.match(COMPONENT_PAGE_TSX, /looksLikeRealName/);
+  assert.match(COMPONENT_PAGE_TSX, /\/\^\[A-Z\]\[A-Za-z0-9\]\+\$\//);
+  assert.match(COMPONENT_PAGE_TSX, /pascalSlug/);
+});
+
 test('COMPONENT_MAP_TSX resolves a renderable function via default-then-named fallback', () => {
   assert.match(COMPONENT_MAP_TSX, /function resolveComponent/);
   assert.match(COMPONENT_MAP_TSX, /mod\.default/);
