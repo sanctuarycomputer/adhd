@@ -1,5 +1,39 @@
 'use strict';
 
+// Exported mirror of the inline `tokenScopesFor` inside WRITE_SCRIPT.
+// The Figma plugin sandbox can't `require`, so the script needs an
+// inline copy. We keep this JS-side function as the testable mirror —
+// the WRITE_SCRIPT template is grep-asserted to contain the same key
+// patterns so the two can't silently drift.
+function tokenScopesFor(domain, path) {
+  if (domain !== 'typography') {
+    const NON_TYPO_SCOPES = {
+      color: ['FRAME_FILL', 'SHAPE_FILL', 'TEXT_FILL', 'STROKE_COLOR'],
+      spacing: ['GAP', 'WIDTH_HEIGHT'],
+      radius: ['CORNER_RADIUS'],
+      shadow: ['EFFECT_FLOAT'],
+      opacity: ['OPACITY'],
+      'border-width': ['STROKE_FLOAT'],
+      'z-index': ['ALL_SCOPES'],
+      breakpoint: ['ALL_SCOPES'],
+      container: ['WIDTH_HEIGHT'],
+      blur: ['EFFECT_FLOAT'],
+      perspective: ['ALL_SCOPES'],
+      aspect: ['ALL_SCOPES'],
+      ease: ['ALL_SCOPES'],
+      animate: ['ALL_SCOPES'],
+    };
+    return NON_TYPO_SCOPES[domain] || ['ALL_SCOPES'];
+  }
+  if (path.startsWith('text/') && path.endsWith('/line-height')) return ['LINE_HEIGHT'];
+  if (path.startsWith('text/')) return ['FONT_SIZE'];
+  if (path.startsWith('font-weight/')) return ['FONT_WEIGHT'];
+  if (path.startsWith('font/')) return ['FONT_FAMILY'];
+  if (path.startsWith('leading/')) return ['LINE_HEIGHT'];
+  if (path.startsWith('tracking/')) return ['LETTER_SPACING'];
+  return ['ALL_SCOPES'];
+}
+
 /**
  * JS string injected into use_figma. Reads `__ACTIONS__` (a JSON array
  * of { kind, ... }) and applies each one to the Figma file. Returns
@@ -39,9 +73,15 @@ const SCOPES = {
 };
 
 // Narrow typography scopes from the Figma path (e.g. 'text/xs' → FONT_SIZE,
-// 'font/sans' → FONT_FAMILY). Keep ALL_SCOPES as fallback.
+// 'font/sans' → FONT_FAMILY). Keep ALL_SCOPES as fallback. The
+// 'text/<size>/line-height' companion paths (Tailwind v4 ships paired
+// line-height values with every text size) must check BEFORE the
+// 'text/' branch — otherwise the LINE_HEIGHT companions get the
+// FONT_SIZE scope and Figma rejects them with "Invalid scope for this
+// variable type."
 function tokenScopesFor(domain, path) {
   if (domain !== 'typography') return SCOPES[domain] || ['ALL_SCOPES'];
+  if (path.startsWith('text/') && path.endsWith('/line-height')) return ['LINE_HEIGHT'];
   if (path.startsWith('text/')) return ['FONT_SIZE'];
   if (path.startsWith('font-weight/')) return ['FONT_WEIGHT'];
   if (path.startsWith('font/')) return ['FONT_FAMILY'];
@@ -251,4 +291,4 @@ for (const a of actions) {
 return { applied, skipped, errors };
 `;
 
-module.exports = { WRITE_SCRIPT };
+module.exports = { WRITE_SCRIPT, tokenScopesFor };

@@ -52,14 +52,35 @@ const STRING_DOMAINS = new Set(['aspect', 'ease', 'animate']);
 function dimensionToPx(raw) {
   if (raw == null) return null;
   const s = String(raw).trim();
-  // Reject expressions: calc(...), var(...), comma-separated lists, etc.
-  if (/[(),]/.test(s)) return null;
-  const m = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
-  if (!m) return null;
-  const n = parseFloat(m[1]);
-  const unit = m[2] || '';
-  if (unit === 'rem' || unit === 'em') return n * 16;
-  return n; // px or unitless
+  // Simple length / unitless number.
+  const simple = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
+  if (simple) {
+    const n = parseFloat(simple[1]);
+    const unit = simple[2] || '';
+    if (unit === 'rem' || unit === 'em') return n * 16;
+    return n;
+  }
+  // Two-operand calc() — common for Tailwind v4's text-size line-height
+  // companions like `calc(1 / 0.75)` (ratio) and `calc(1rem * 2)` (px).
+  // Each operand re-enters dimensionToPx so we get rem→px conversion for
+  // free. We don't support nested calls or more than two operands — a
+  // narrow window that covers Tailwind's shipped patterns without
+  // turning into a full CSS expression evaluator.
+  const calc = /^calc\(\s*([^()]+?)\s+([+\-*/])\s+([^()]+?)\s*\)$/.exec(s);
+  if (calc) {
+    const a = dimensionToPx(calc[1]);
+    const b = dimensionToPx(calc[3]);
+    if (a == null || b == null) return null;
+    switch (calc[2]) {
+      case '+': return a + b;
+      case '-': return a - b;
+      case '*': return a * b;
+      case '/': return b === 0 ? null : a / b;
+    }
+  }
+  // var(...) or any other expression we can't evaluate — let the caller
+  // fall through to STRING typing.
+  return null;
 }
 
 // Decide the Figma variable type for a (domain, value) pair. Returns one of

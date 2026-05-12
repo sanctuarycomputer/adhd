@@ -100,6 +100,64 @@ test('font-family typography tokens are skipped (text-styles channel, not variab
   assert.match(actions[0].reason, /font-family/);
 });
 
+test('text/<size>/line-height with calc(num / num) value → FLOAT create-variable (was STRING + FONT_SIZE → rejected)', () => {
+  // Tailwind v4 ships every text-size with a paired line-height that's
+  // defined as a calc ratio: `--text-xs--line-height: calc(1 / 0.75)`.
+  // Pre-fix: dimensionToPx rejected calc(), so the action got typed as
+  // STRING; the write script then narrowed text/* to FONT_SIZE; Figma
+  // refused with "Invalid scope for this variable type." The two fixes
+  // landing together make these tokens push as FLOAT with LINE_HEIGHT
+  // scope (the scope half is enforced inside WRITE_SCRIPT — covered in
+  // figma-write-script.test.js).
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'typography',
+      path: 'text/xs/line-height',
+      values: { default: { type: 'literal', value: 'calc(1 / 0.75)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { typography: 'all' } });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].kind, 'create-variable');
+  assert.equal(actions[0].type, 'FLOAT');
+  // 1 / 0.75 ≈ 1.333…
+  assert.ok(Math.abs(actions[0].resolvedByMode.default - (1 / 0.75)) < 1e-9);
+});
+
+test('dimensionToPx via action builder: calc(1rem * 2) resolves to 32 (rem→px through both operands)', () => {
+  // Another shape Tailwind uses internally — e.g. `calc(var(--spacing) * 4)`
+  // surface analogues. With var() stripped (the @theme-inline resolver
+  // handles those), the remaining calc(num<unit> * num) should evaluate.
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'spacing', path: 'double',
+      values: { default: { type: 'literal', value: 'calc(1rem * 2)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { spacing: 'all' } });
+  assert.equal(actions[0].type, 'FLOAT');
+  assert.equal(actions[0].resolvedByMode.default, 32);
+});
+
+test('dimensionToPx via action builder: unresolvable calc (var ref or nested) falls through to STRING', () => {
+  // calc(var(--gap) * 2) can't be evaluated at this layer — var() refs
+  // are resolved earlier in code-parser's @theme-inline pass. Whatever
+  // leaks through here stays STRING (and the scope-narrowing branch
+  // catches whether that's a valid combination per-domain).
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'spacing', path: 'tricky',
+      values: { default: { type: 'literal', value: 'calc(var(--gap) * 2)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { spacing: 'all' } });
+  // FLOAT_DOMAINS includes spacing, but the value isn't resolvable → STRING.
+  assert.equal(actions[0].type, 'STRING');
+});
+
 test('font-weight typography tokens still push as variables (only font families skip)', () => {
   // `--font-weight-bold` lives under the typography domain but it's a
   // scalar value designers consume as a Tailwind utility — variables are
