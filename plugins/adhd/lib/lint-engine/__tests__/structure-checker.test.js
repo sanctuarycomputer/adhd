@@ -235,7 +235,7 @@ test('STRUCT008: flags auto-named layers like "Frame 47"', () => {
   assert.ok(violations.find(v => v.rule === 'STRUCT008'));
 });
 
-test('STRUCT010: flags a Component Set with children that have empty variantProperties', () => {
+test('STRUCT010: flags a Component Set with children that have empty variantProperties + diagnostic message', () => {
   const node = {
     id: '1:1',
     name: 'Button',
@@ -247,7 +247,13 @@ test('STRUCT010: flags a Component Set with children that have empty variantProp
     ],
   };
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
-  assert.ok(violations.find(v => v.rule === 'STRUCT010'));
+  const struct010 = violations.find(v => v.rule === 'STRUCT010');
+  assert.ok(struct010);
+  // Message names the count, suggests a property example, and calls out the
+  // codegen consequence so the designer understands the fix is non-optional.
+  assert.match(struct010.message, /2 variant\(s\) but no variant property/);
+  assert.match(struct010.message, /Properties panel/);
+  assert.match(struct010.message, /2 separate components/);
 });
 
 test('STRUCT010: does not flag a Component Set with declared variant properties', () => {
@@ -407,19 +413,41 @@ test('STRUCT006: flags a FRAME with wasInstance: true (warning, not error)', () 
   assert.equal(struct006.severity, 'warning');
 });
 
-test('STRUCT007: flags sibling components sharing a name prefix outside a Component Set', () => {
+test('STRUCT007: flags sibling components sharing a name prefix outside a Component Set with diagnostic message', () => {
   const node = makeFrame({
     type: 'FRAME',
     children: [
-      { id: '1:2', name: 'Button/primary', type: 'COMPONENT' },
-      { id: '1:3', name: 'Button/secondary', type: 'COMPONENT' },
+      { id: '1:2', name: 'Logo/light', type: 'COMPONENT' },
+      { id: '1:3', name: 'Logo/dark', type: 'COMPONENT' },
     ],
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   const struct007 = violations.find(v => v.rule === 'STRUCT007');
   assert.ok(struct007, 'expected STRUCT007 violation');
   assert.equal(struct007.severity, 'warning');
-  assert.match(struct007.message, /Button\/\.\.\./);
+  // The message names the prefix, the specific siblings, and the codegen
+  // consequence — so a designer reading the annotation in Figma understands
+  // what to fix AND why it matters.
+  assert.match(struct007.message, /"Logo\/"/);
+  assert.match(struct007.message, /"light"/);
+  assert.match(struct007.message, /"dark"/);
+  assert.match(struct007.message, /look like variants/i);
+  assert.match(struct007.message, /Combine as Variants/);
+  assert.match(struct007.message, /code generation/i);
+});
+
+test('STRUCT007: truncates the suffix list to four with a "+N more" hint when there are many', () => {
+  const node = makeFrame({
+    type: 'FRAME',
+    children: Array.from({ length: 7 }, (_, i) => ({
+      id: `1:${10 + i}`, name: `Logo/v${i + 1}`, type: 'COMPONENT',
+    })),
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const struct007 = violations.find(v => v.rule === 'STRUCT007');
+  assert.ok(struct007);
+  // First four suffixes shown, then "+3 more"
+  assert.match(struct007.message, /"v1", "v2", "v3", "v4", \+3 more/);
 });
 
 test('STRUCT007: does not flag a single child component (no siblings to group)', () => {

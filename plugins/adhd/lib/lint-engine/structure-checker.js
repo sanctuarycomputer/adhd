@@ -162,7 +162,14 @@ function visit(node, ctx, parentPath, parent) {
     }
   }
 
-  // STRUCT007: sibling components share a name prefix but aren't wrapped in a Component Set
+  // STRUCT007: sibling components share a name prefix but aren't wrapped in a
+  // Component Set. The wording calls out the suspected variant intent and the
+  // codegen consequence — a designer who organized siblings as "Logo/light"
+  // and "Logo/dark" was almost certainly trying to model a variant axis, and
+  // we want them to know that without the Component Set wrapper each sibling
+  // becomes a separately-imported component instead of one component with
+  // prop axes. Strong copy here is the difference between code gen quietly
+  // doing the wrong thing and the designer fixing the source.
   if (Array.isArray(node.children) && node.type !== 'COMPONENT_SET') {
     const components = node.children.filter(c => c.type === 'COMPONENT');
     const byPrefix = {};
@@ -173,8 +180,20 @@ function visit(node, ctx, parentPath, parent) {
     }
     for (const [prefix, group] of Object.entries(byPrefix)) {
       if (group.length >= 2) {
+        // Pull the suffix from each sibling for the message (e.g. "light", "dark").
+        // Cap the displayed list at 4 and add a count suffix if there are more.
+        const suffixes = group.map(c => {
+          const rest = c.name.slice(prefix.length + 1); // strip "prefix/"
+          return rest || c.name;
+        });
+        const shown = suffixes.slice(0, 4).map(s => `"${s}"`).join(', ');
+        const more = suffixes.length > 4 ? `, +${suffixes.length - 4} more` : '';
         push('STRUCT007', 'warning',
-          `${group.length} sibling components named "${prefix}/..." should be wrapped in a Component Set.`);
+          `${group.length} sibling components share the "${prefix}/" prefix (${shown}${more}). ` +
+          `These look like variants of "${prefix}". Wrap them in a Component Set ` +
+          `(select all → right-click → "Combine as Variants") and add a variant property — ` +
+          `otherwise code generation imports them as ${group.length} separate components instead of one ` +
+          `"${prefix}" component with a prop axis.`);
         break;
       }
     }
@@ -189,7 +208,9 @@ function visit(node, ctx, parentPath, parent) {
     );
     if (!hasDefs && allChildrenEmpty) {
       push('STRUCT010', 'error',
-        'Component Set has no variant properties declared. Define variant axes (size, state, etc.).');
+        `Component Set has ${node.children.length} variant(s) but no variant property declared. ` +
+        `Add one in the Figma Properties panel (e.g. theme = light | dark, size = sm | md | lg) — ` +
+        `without it, code generation can't tell the variants apart and will import them as ${node.children.length} separate components.`);
     }
   }
 
