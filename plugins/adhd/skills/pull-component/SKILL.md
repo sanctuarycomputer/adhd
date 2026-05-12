@@ -188,7 +188,7 @@ If BOTH STRUCT011 AND variable-binding errors are present, surface STRUCT011 fir
 
 Once preflight passes (no STRUCT011, no unbound errors or escape engaged), check the lint engine's variable mismatches in `/tmp/adhd-pull-component/stdout.json`. The categorizer reports two interesting statuses for our purpose:
 
-- **`status: "missing"`** — Figma has the variable, code's `globals.css` doesn't. New to the design system.
+- **`status: "missing"`** — Figma has the variable, code's `globals.css` doesn't. New to the design system. (The lint engine merges Tailwind v4's default theme into the comparison BEFORE evaluating "missing" — so vars like `Color/white` that Tailwind already provides won't surface here. Never propose adding something to globals.css that Tailwind covers implicitly.)
 - **`status: "conflict"`** — both sides have the variable but values disagree. NOT touched by pull-component; this is `/adhd:pull-design-system`'s job.
 
 Split missing further by the categorizer's `mode` field:

@@ -18,7 +18,34 @@
  */
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { parseTheme } = require('./theme-parser');
+
+// Tailwind v4 ships a full default @theme: --color-white, --color-black,
+// --color-red-500, --spacing, the --text-* / --leading-* scales, etc.
+// `lib/design-system/tailwind-defaults.css` carries the canonical copy
+// (already used by push/pull-design-system via parseCodeDesignSystem).
+// We merge those defaults into the user's parsed primitives BEFORE the
+// variable comparator runs — otherwise a Figma `Color/white` variable
+// would surface as "missing in code" even though Tailwind covers it,
+// and downstream surfaces (lint reports, pull-component Phase 2.7
+// discovery prompts) would suggest writing `--color-white: #fff` to
+// globals.css — pure clutter, no value.
+const TAILWIND_DEFAULTS_PATH = path.resolve(__dirname, '..', 'design-system', 'tailwind-defaults.css');
+
+function loadTailwindDefaultPrimitives() {
+  let css;
+  try { css = fs.readFileSync(TAILWIND_DEFAULTS_PATH, 'utf8'); }
+  catch { return {}; }
+  // The defaults file uses `@theme default {` and `@theme default inline {`
+  // (Tailwind's syntax for the canonical reference theme). parseTheme only
+  // matches plain `@theme {` / `@theme inline {`, so rewrite the headers
+  // before parsing.
+  const normalized = css
+    .replace(/@theme\s+default\s+inline\s*\{/g, '@theme inline {')
+    .replace(/@theme\s+default\s*\{/g, '@theme {');
+  return parseTheme(normalized).primitives;
+}
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
 const { buildVariableSuggestions } = require('./variable-namer');
@@ -79,7 +106,13 @@ function main() {
   const namingConvention = readNamingConvention(args['config']);
   const fileKey = extractFileKey(args['target-url']);
 
-  const theme = parseTheme(cssText);
+  const userTheme = parseTheme(cssText);
+  const tailwindDefaults = loadTailwindDefaultPrimitives();
+  // User's @theme wins on key collision (override always beats default).
+  const theme = {
+    ...userTheme,
+    primitives: { ...tailwindDefaults, ...userTheme.primitives },
+  };
   const variableViolations = categorizeVariables(varDefs, theme);
 
   let structureViolations = [];

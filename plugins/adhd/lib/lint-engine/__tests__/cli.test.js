@@ -266,6 +266,40 @@ test('STRUCT011: collection-name-is-domain (Color/, Radius/, Spacing/) — no do
   assert.equal(summary.structure.filter(v => v.rule === 'STRUCT011').length, 0);
 });
 
+test('Tailwind-default variables are NEVER reported as missing in code', () => {
+  // Tailwind v4 ships `--color-white`, `--color-black`, the spacing
+  // multiplier, the --text-* scale, etc. by default. If a Figma file has
+  // a variable that maps to one of those (e.g. `Color/white` = #ffffff),
+  // the comparator must NOT surface it as `status: 'missing'` — the user
+  // would then see a "add this to globals.css" prompt for a token Tailwind
+  // already provides. Pure clutter.
+  const varDefs = tmp('vars.json', {
+    'Primitives/color/white':  '#ffffff',    // Tailwind default → must NOT be missing
+    'Primitives/color/black':  '#000000',    // Tailwind default → must NOT be missing
+    'Primitives/color/custom': '#5e3aee',    // genuinely missing
+  });
+  const ctx = tmp('ctx.json', { id: '5:1', name: 'X', type: 'FRAME', layoutMode: 'VERTICAL' });
+  // globals.css has nothing — relying entirely on Tailwind defaults.
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--design-context', ctx, '--globals-css', cssPath,
+    '--config', configPath, '--target', 'X',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const missing = summary.variable.filter(v => v.status === 'missing');
+  // Only the custom brand color should be "missing" — white/black are covered by Tailwind.
+  assert.equal(missing.length, 1, 'only the non-default variable should be flagged as missing');
+  assert.equal(missing[0].token, 'color/custom');
+  // The defaults are absent from the missing list.
+  assert.equal(missing.filter(v => v.token === 'color/white').length, 0);
+  assert.equal(missing.filter(v => v.token === 'color/black').length, 0);
+});
+
 test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {
   const varDefs = tmp('vars.json', { 'Primitives/color/BrandPrimary': '#000' });
   const ctx = tmp('ctx.json', { mode: 'whole-file', pages: [] });
