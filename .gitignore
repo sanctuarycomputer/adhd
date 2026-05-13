@@ -1,0 +1,18 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+#
+# Repo-level ignores only. The Next.js example app has its own
+# .gitignore at example/.gitignore for its build/dependency artifacts.
+
+# Generated DTCG export (in case anyone runs the CLI from the repo root)
+adhd-export-for-figma.json
+
+# Env files (can opt-in for committing if needed)
+.env*
+
+# Misc
+.DS_Store
+*.pem
+
+# Claude Code session state (worktrees, local settings, etc.)
+# .claude-plugin/ at root is the marketplace metadata and IS tracked.
+.claude/

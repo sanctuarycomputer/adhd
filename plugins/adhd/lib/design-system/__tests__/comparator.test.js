@@ -1,0 +1,310 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { compareDesignSystems } = require('../comparator');
+
+const codeOnly = {
+  tokens: [
+    { domain: 'color', path: 'gold/100', values: { default: { type: 'literal', value: '#faf0c5' } } },
+  ],
+  exposure: [],
+  styles: { effects: [], text: [] },
+};
+
+test('classifies a token as same when both sides match exactly', () => {
+  const figma = JSON.parse(JSON.stringify(codeOnly));
+  const r = compareDesignSystems(codeOnly, figma);
+  assert.equal(r.same.length, 1);
+  assert.equal(r.conflict.length, 0);
+});
+
+test('classifies as conflict when same path different value', () => {
+  const figma = {
+    ...codeOnly,
+    tokens: [{ domain: 'color', path: 'gold/100', values: { default: { type: 'literal', value: '#000000' } } }],
+  };
+  const r = compareDesignSystems(codeOnly, figma);
+  assert.equal(r.conflict.length, 1);
+  assert.equal(r.conflict[0].path, 'gold/100');
+  assert.equal(r.conflict[0].mode, 'default');
+});
+
+test('classifies as code-only when figma lacks the token', () => {
+  const figma = { tokens: [], exposure: [], styles: { effects: [], text: [] } };
+  const r = compareDesignSystems(codeOnly, figma);
+  assert.equal(r.codeOnly.length, 1);
+  assert.equal(r.figmaOnly.length, 0);
+});
+
+test('classifies as figma-only when code lacks the token', () => {
+  const empty = { tokens: [], exposure: [], styles: { effects: [], text: [] } };
+  const r = compareDesignSystems(empty, codeOnly);
+  assert.equal(r.figmaOnly.length, 1);
+  assert.equal(r.codeOnly.length, 0);
+});
+
+test('treats hex case as equal', () => {
+  const code = {
+    tokens: [{ domain: 'color', path: 'x', values: { default: { type: 'literal', value: '#ABCDEF' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'x', values: { default: { type: 'literal', value: '#abcdef' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.same.length, 1);
+});
+
+test('treats matching aliases as equal (alias to alias)', () => {
+  const code = {
+    tokens: [{ domain: 'color', path: 'brand/surface', values: { light: { type: 'alias', target: 'gold/100' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = JSON.parse(JSON.stringify(code));
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.same.length, 1);
+});
+
+test('alias vs literal in same token is a conflict (broken alias)', () => {
+  const code = {
+    tokens: [{ domain: 'color', path: 'brand/surface', values: { light: { type: 'alias', target: 'gold/100' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'brand/surface', values: { light: { type: 'literal', value: '#faf0c5' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 1);
+});
+
+test('exposure-only entries do not appear in any classification', () => {
+  const code = {
+    tokens: [{ domain: 'color', path: 'brand/surface', values: { light: { type: 'alias', target: 'gold/100' } } }],
+    exposure: [{ cssVar: '--color-brand-surface', target: 'brand-surface' }],
+    styles: { effects: [], text: [] },
+  };
+  const figma = JSON.parse(JSON.stringify(code));
+  figma.exposure = [];
+  const r = compareDesignSystems(code, figma);
+  // brand/surface is `same`; exposure is silently filtered out (never compared)
+  assert.equal(r.same.length, 1);
+  assert.equal(r.conflict.length, 0);
+  assert.equal(r.codeOnly.length, 0);
+  assert.equal(r.figmaOnly.length, 0);
+});
+
+test('effect styles: classifies code-only / figma-only / same by name', () => {
+  const code = {
+    tokens: [], exposure: [],
+    styles: {
+      effects: [{ name: 'md' }, { name: 'lg' }, { name: 'inset-shadow/xs' }],
+      text: [],
+    },
+  };
+  const figma = {
+    tokens: [], exposure: [],
+    styles: {
+      effects: [{ name: 'md' }, { name: 'old-style' }],
+      text: [],
+    },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.ok(r.styles);
+  assert.ok(r.styles.effects);
+  assert.equal(r.styles.effects.same.length, 1);
+  assert.equal(r.styles.effects.same[0].name, 'md');
+  assert.equal(r.styles.effects.codeOnly.length, 2);
+  assert.deepEqual(
+    r.styles.effects.codeOnly.map(s => s.name).sort(),
+    ['inset-shadow/xs', 'lg'],
+  );
+  assert.equal(r.styles.effects.figmaOnly.length, 1);
+  assert.equal(r.styles.effects.figmaOnly[0].name, 'old-style');
+});
+
+test('comparator returns styles.effects shape even when both sides have empty effects', () => {
+  const empty = { tokens: [], exposure: [], styles: { effects: [], text: [] } };
+  const r = compareDesignSystems(empty, empty);
+  assert.deepEqual(r.styles.effects, { same: [], codeOnly: [], figmaOnly: [] });
+});
+
+test('comparing per mode independently — token can be same in light, conflict in dark', () => {
+  const code = {
+    tokens: [{
+      domain: 'color', path: 'brand/surface',
+      values: {
+        light: { type: 'alias', target: 'gold/100' },
+        dark:  { type: 'alias', target: 'gold/900' },
+      },
+    }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{
+      domain: 'color', path: 'brand/surface',
+      values: {
+        light: { type: 'alias', target: 'gold/100' },
+        dark:  { type: 'alias', target: 'gold/100' }, // wrong dark!
+      },
+    }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.same.length, 1, 'light is same');
+  assert.equal(r.conflict.length, 1, 'dark is a conflict');
+  assert.equal(r.conflict[0].mode, 'dark');
+});
+
+// ── Regression: literal value normalization across CSS/Figma representations ──
+// Code stores raw CSS strings ("0.25rem", "#fff"); Figma extract converts FLOAT
+// variables to numeric and the figma-parser re-emits them with a "px" suffix
+// ("4px"). Before normalization these strict-string-compared as conflicts,
+// burying real conflicts under a flood of phantom ones.
+test('valuesEqual: "0.25rem" and "4px" are equal (rem → px conversion)', () => {
+  const code = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '0.25rem' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '4px' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 0, 'rem and px should canonicalize to the same px value');
+  assert.equal(r.same.length, 1);
+});
+
+test('valuesEqual: short hex "#fff" equals long hex "#ffffff"', () => {
+  const code = {
+    tokens: [{ domain: 'color', path: 'white', values: { default: { type: 'literal', value: '#fff' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'white', values: { default: { type: 'literal', value: '#ffffff' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 0, 'short hex should canonicalize to long hex');
+  assert.equal(r.same.length, 1);
+});
+
+test('valuesEqual: still flags real value differences after normalization', () => {
+  const code = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '0.25rem' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'spacing', path: '1', values: { default: { type: 'literal', value: '8px' } } }],
+    exposure: [], styles: { effects: [], text: [] },
+  };
+  const r = compareDesignSystems(code, figma);
+  assert.equal(r.conflict.length, 1, 'genuinely different values must still conflict');
+  assert.equal(r.same.length, 0);
+});
+
+test('canonicalization: code path "gold/25" and figma path "gold-25" reconcile to `same` (round-trip dup fix)', () => {
+  // The lossy-CSS-var bug: pull-tokens wrote `--color-gold-25` for a
+  // Figma variable named `Color/gold-25` (single leaf with internal
+  // hyphen). On push, code-parser tokenizes the CSS var as path `gold/25`
+  // (split-on-first-hyphen interpretation). Without canonicalization, the
+  // comparator sees `gold/25` in code and `gold-25` in Figma as distinct
+  // tokens — push would create a duplicate Figma variable. Canonicalization
+  // pairs them up by CSS-var equivalence.
+  const code = {
+    tokens: [{ domain: 'color', path: 'gold/25', values: { default: { type: 'literal', value: '#c5a572' } } }],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'gold-25', values: { default: { type: 'literal', value: '#c5a572' } } }],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.same.length, 1);
+  assert.equal(diff.codeOnly.length, 0);
+  assert.equal(diff.figmaOnly.length, 0);
+});
+
+test('canonicalization: alias targets match across "neutral/0" (code) and "neutral-0" (figma)', () => {
+  // Same root cause, alias edition. A Figma variable that aliases
+  // `neutral-0` pulls into code as `var(--color-neutral-0)`, which the
+  // code-parser interprets as alias-target `neutral/0`. Both should
+  // compare equal so push doesn't see a phantom conflict.
+  const code = {
+    tokens: [{ domain: 'color', path: 'background', values: { light: { type: 'alias', target: 'neutral/0' } } }],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'color', path: 'background', values: { light: { type: 'alias', target: 'neutral-0' } } }],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.same.length, 1);
+  assert.equal(diff.conflict.length, 0);
+});
+
+test('canonicalization: distinct domains don\'t collide even when paths canonicalize the same', () => {
+  // `color/gold/25` and `shadow/gold/25` would both reduce to similar
+  // CSS-var-equivalent forms — but their domain prefix differs
+  // (--color-gold-25 vs --shadow-gold-25). They must stay distinct.
+  const code = {
+    tokens: [{ domain: 'color', path: 'gold/25', values: { default: { type: 'literal', value: '#c5a572' } } }],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [{ domain: 'shadow', path: 'gold/25', values: { default: { type: 'literal', value: '0 1px 2px black' } } }],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  // Neither moves to `same` — different domains, different CSS vars.
+  assert.equal(diff.same.length, 0);
+  assert.equal(diff.codeOnly.length, 1);
+  assert.equal(diff.figmaOnly.length, 1);
+});
+
+test('codeOnly: surfaces all tokens including Tailwind defaults (filtering is the dispositions layer\'s job)', () => {
+  // Comparator is policy-free: every code-side token appears in codeOnly.
+  // Filtering ("push the Tailwind palette or only my semantics?") lives
+  // in the dispositions wizard, applied at the action-builder layer.
+  // The `fromTailwindDefault` marker travels through so dispositions can
+  // apply per-token rules.
+  const code = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
+      { domain: 'color', path: 'brand',    values: { default: { type: 'literal', value: '#5e3aee' } }, fromTailwindDefault: false },
+    ],
+    styles: { effects: [] },
+  };
+  const figma = { tokens: [], styles: { effects: [] } };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.codeOnly.length, 2);
+  const byPath = Object.fromEntries(diff.codeOnly.map(t => [t.path, t]));
+  assert.equal(byPath['zinc/500'].fromTailwindDefault, true);
+  assert.equal(byPath['brand'].fromTailwindDefault, false);
+});
+
+test('Tailwind-default-origin token with a Figma value mismatch still surfaces as conflict', () => {
+  // The filter is codeOnly-specific. If Figma has a different value for a
+  // Tailwind default (designer overrode `--color-zinc-500`), that's real
+  // state and stays in `conflict`.
+  const code = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#71717a' } }, fromTailwindDefault: true },
+    ],
+    styles: { effects: [] },
+  };
+  const figma = {
+    tokens: [
+      { domain: 'color', path: 'zinc/500', values: { default: { type: 'literal', value: '#888888' } } },
+    ],
+    styles: { effects: [] },
+  };
+  const diff = compareDesignSystems(code, figma);
+  assert.equal(diff.codeOnly.length, 0);
+  assert.equal(diff.conflict.length, 1);
+  assert.equal(diff.conflict[0].path, 'zinc/500');
+});
+
+

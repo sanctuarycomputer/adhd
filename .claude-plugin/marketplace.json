@@ -1,0 +1,13 @@
+{
+  "name": "adhd-reference",
+  "owner": {
+    "name": "Hugh Francis"
+  },
+  "plugins": [
+    {
+      "name": "adhd",
+      "source": "./plugins/adhd",
+      "description": "Push, pull, and lint design tokens between Tailwind v4 and Figma; push and pull React components with preflight validation; install a live design-system docs route into your Next.js consumer app."
+    }
+  ]
+}

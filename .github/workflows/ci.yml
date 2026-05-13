@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  lib-tests:
+    name: lib unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run lint-engine tests
+        run: node --test plugins/adhd/lib/lint-engine/__tests__/
+      - name: Run design-system tests
+        run: node --test plugins/adhd/lib/design-system/__tests__/
+      - name: Run push-component tests
+        run: node --test plugins/adhd/lib/push-component/__tests__/
+      - name: Run pull-component tests
+        run: node --test plugins/adhd/lib/pull-component/__tests__/
+      - name: Run sync-docs tests
+        run: node --test plugins/adhd/lib/sync-docs/__tests__/
+
+  hygiene:
+    name: project hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install example dependencies
+        run: npm ci
+        working-directory: example
+      - name: Lint example
+        run: npm run lint
+        working-directory: example
+      - name: Build example
+        run: npm run build
+        working-directory: example
+      - name: Validate skill frontmatter
+        run: node scripts/validate-skill-frontmatter.js

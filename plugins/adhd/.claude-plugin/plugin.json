@@ -1,0 +1,8 @@
+{
+  "name": "adhd",
+  "description": "Agent-driven harmonious development: sync design tokens between Tailwind v4 and a Figma file.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Hugh Francis"
+  }
+}
