@@ -33,7 +33,7 @@ Pass these forward as defaults for Phases 1, 2, and 3.
 
 ## Phase 0.5: Verify the official Figma plugin is installed and authenticated
 
-ADHD requires the `figma@claude-plugins-official` Claude Code plugin — every other skill (`/adhd:lint`, `/adhd:push-design-system`, `/adhd:pull-design-system`, `/adhd:push-component`, `/adhd:pull-component`) drives Figma exclusively through it via `mcp__plugin_figma_figma__*`. This phase verifies it's installed and authenticated up front, so users hit setup errors here (when they can act on them) rather than mid-pipeline.
+ADHD requires the `figma@claude-plugins-official` Claude Code plugin — every other skill (`/adhd:lint`, `/adhd:push-tokens`, `/adhd:pull-tokens`, `/adhd:push-component`, `/adhd:pull-component`) drives Figma exclusively through it via `mcp__plugin_figma_figma__*`. This phase verifies it's installed and authenticated up front, so users hit setup errors here (when they can act on them) rather than mid-pipeline.
 
 Call `mcp__plugin_figma_figma__whoami`. It's read-only and returns the authenticated Figma user's identity.
 
@@ -234,6 +234,29 @@ Then run /adhd:sync --dry-run to preview your first diff (Figma → code).
 ```
 
 If running on a healthy config that didn't change, print `Config unchanged.` instead of the saved-to message.
+
+## Phase 6 (optional): Sync the design-system docs route
+
+Use `AskUserQuestion`:
+
+```
+Question: "Generate the design-system docs route now? It's a live page that
+reads your adhd.config.ts and globals.css. Mini-Storybook for designers;
+not indexed by search engines."
+Header: "Docs route"
+Options:
+  - "Yes, generate it now"
+  - "No, maybe later"
+```
+
+On "Yes": execute the phases of `/adhd:sync-docs` inline.
+See `plugins/adhd/skills/sync-docs/SKILL.md` for the
+detailed phase list (validate environment → detect existing install → ask install
+choices → detect Next.js config → detect collisions → patch next.config.ts →
+write files → patch robots.txt → final report).
+
+On "No": print `Run /adhd:sync-docs later to generate it.`
+Exit normally.
 
 ## Reference: Common errors and fix-up guidance
 

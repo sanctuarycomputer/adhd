@@ -80,25 +80,99 @@ test('spacing token with 0.25rem produces FLOAT create-variable with resolved va
   assert.equal(actions[0].resolvedByMode.default, 4);
 });
 
-test('font-family typography token produces STRING create-variable', () => {
+test('font-family typography tokens are skipped (text-styles channel, not variables)', () => {
+  // Font families belong in Figma's text-style system, not its variable
+  // system. The disposition classifier hardcodes this skip so it applies
+  // even when the user picks "push all typography" — text styles are the
+  // right channel period.
   const diff = {
     same: [], conflict: [], figmaOnly: [],
     codeOnly: [{
       domain: 'typography',
       path: 'font/sans',
-      values: {
-        default: { type: 'literal', value: 'ui-sans-serif, system-ui, sans-serif' },
-      },
+      values: { default: { type: 'literal', value: 'ui-sans-serif, system-ui, sans-serif' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { typography: 'all' } });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].kind, 'skip-by-disposition');
+  assert.equal(actions[0].path, 'font/sans');
+  assert.match(actions[0].reason, /font-family/);
+});
+
+test('text/<size>/line-height with calc(num / num) value → FLOAT create-variable (was STRING + FONT_SIZE → rejected)', () => {
+  // Tailwind v4 ships every text-size with a paired line-height that's
+  // defined as a calc ratio: `--text-xs--line-height: calc(1 / 0.75)`.
+  // Pre-fix: dimensionToPx rejected calc(), so the action got typed as
+  // STRING; the write script then narrowed text/* to FONT_SIZE; Figma
+  // refused with "Invalid scope for this variable type." The two fixes
+  // landing together make these tokens push as FLOAT with LINE_HEIGHT
+  // scope (the scope half is enforced inside WRITE_SCRIPT — covered in
+  // figma-write-script.test.js).
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'typography',
+      path: 'text/xs/line-height',
+      values: { default: { type: 'literal', value: 'calc(1 / 0.75)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { typography: 'all' } });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].kind, 'create-variable');
+  assert.equal(actions[0].type, 'FLOAT');
+  // 1 / 0.75 ≈ 1.333…
+  assert.ok(Math.abs(actions[0].resolvedByMode.default - (1 / 0.75)) < 1e-9);
+});
+
+test('dimensionToPx via action builder: calc(1rem * 2) resolves to 32 (rem→px through both operands)', () => {
+  // Another shape Tailwind uses internally — e.g. `calc(var(--spacing) * 4)`
+  // surface analogues. With var() stripped (the @theme-inline resolver
+  // handles those), the remaining calc(num<unit> * num) should evaluate.
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'spacing', path: 'double',
+      values: { default: { type: 'literal', value: 'calc(1rem * 2)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { spacing: 'all' } });
+  assert.equal(actions[0].type, 'FLOAT');
+  assert.equal(actions[0].resolvedByMode.default, 32);
+});
+
+test('dimensionToPx via action builder: unresolvable calc (var ref or nested) falls through to STRING', () => {
+  // calc(var(--gap) * 2) can't be evaluated at this layer — var() refs
+  // are resolved earlier in code-parser's @theme-inline pass. Whatever
+  // leaks through here stays STRING (and the scope-narrowing branch
+  // catches whether that's a valid combination per-domain).
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'spacing', path: 'tricky',
+      values: { default: { type: 'literal', value: 'calc(var(--gap) * 2)' } },
+    }],
+  };
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { spacing: 'all' } });
+  // FLOAT_DOMAINS includes spacing, but the value isn't resolvable → STRING.
+  assert.equal(actions[0].type, 'STRING');
+});
+
+test('font-weight typography tokens still push as variables (only font families skip)', () => {
+  // `--font-weight-bold` lives under the typography domain but it's a
+  // scalar value designers consume as a Tailwind utility — variables are
+  // the right home. Only the `font/<family>` path triggers the skip.
+  const diff = {
+    same: [], conflict: [], figmaOnly: [],
+    codeOnly: [{
+      domain: 'typography',
+      path: 'font-weight/bold',
+      values: { default: { type: 'literal', value: '700' } },
     }],
   };
   const actions = buildFigmaActions(diff, [], 'push');
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, 'create-variable');
-  assert.equal(actions[0].type, 'STRING');
-  assert.equal(
-    actions[0].resolvedByMode.default,
-    'ui-sans-serif, system-ui, sans-serif',
-  );
 });
 
 test('shadow token produces a create-effect-style action', () => {
@@ -199,6 +273,8 @@ test('color token still emits COLOR-typed create-variable (regression guard)', (
 });
 
 test('opacity token (0.05) → FLOAT in `opacity` collection', () => {
+  // Opacity defaults to skip (Tailwind's class-modifier pattern), so this
+  // test passes an opt-in disposition to exercise the create-variable shape.
   const diff = {
     same: [], conflict: [], figmaOnly: [],
     codeOnly: [{
@@ -206,7 +282,7 @@ test('opacity token (0.05) → FLOAT in `opacity` collection', () => {
       values: { default: { type: 'literal', value: '0.05' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { opacity: 'push' } });
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, 'create-variable');
   assert.equal(actions[0].collection, 'opacity');
@@ -236,7 +312,7 @@ test('z-index token (50, unitless) → FLOAT in `z-index` collection', () => {
       values: { default: { type: 'literal', value: '50' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'z-index');
   assert.equal(actions[0].type, 'FLOAT');
   assert.equal(actions[0].resolvedByMode.default, 50);
@@ -250,7 +326,7 @@ test('breakpoint token (40rem) → FLOAT converted to 640 px', () => {
       values: { default: { type: 'literal', value: '40rem' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'breakpoint');
   assert.equal(actions[0].type, 'FLOAT');
   assert.equal(actions[0].resolvedByMode.default, 640);
@@ -264,7 +340,7 @@ test('aspect token (16 / 9) → STRING in `aspect` collection', () => {
       values: { default: { type: 'literal', value: '16 / 9' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'aspect');
   assert.equal(actions[0].type, 'STRING');
   assert.equal(actions[0].resolvedByMode.default, '16 / 9');
@@ -278,7 +354,7 @@ test('ease cubic-bezier → STRING in `ease` collection', () => {
       values: { default: { type: 'literal', value: 'cubic-bezier(0.4, 0, 0.2, 1)' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'ease');
   assert.equal(actions[0].type, 'STRING');
   assert.equal(actions[0].resolvedByMode.default, 'cubic-bezier(0.4, 0, 0.2, 1)');
@@ -292,7 +368,7 @@ test('animate shorthand → STRING in `animate` collection', () => {
       values: { default: { type: 'literal', value: 'spin 1s linear infinite' } },
     }],
   };
-  const actions = buildFigmaActions(diff, [], 'push');
+  const actions = buildFigmaActions(diff, [], 'push', { dispositions: { utilityDomains: 'push' } });
   assert.equal(actions[0].collection, 'animate');
   assert.equal(actions[0].type, 'STRING');
 });

@@ -51,6 +51,72 @@ test('STRUCT001: does NOT flag a frame holding a single shape primitive (icon/lo
   }
 });
 
+test('STRUCT001: does NOT flag a frame whose subtree is shape-only through nested containers', () => {
+  // The user's real-world case: a Logo Component Set whose outer frame holds
+  // "light" and "dark" sub-frames, each containing only vector paths. The whole
+  // outer frame rasterizes to a single SVG — flexbox doesn't apply, even though
+  // the immediate children are FRAMEs (not shapes) themselves.
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      {
+        id: '1:2', name: 'light', type: 'FRAME', layoutMode: 'NONE',
+        children: [
+          { id: '1:3', name: 'path-1', type: 'VECTOR' },
+          { id: '1:4', name: 'path-2', type: 'VECTOR' },
+        ],
+      },
+      {
+        id: '1:5', name: 'dark', type: 'COMPONENT', layoutMode: 'NONE',
+        children: [
+          { id: '1:6', name: 'path-1', type: 'VECTOR' },
+          { id: '1:7', name: 'mask', type: 'BOOLEAN_OPERATION' },
+        ],
+      },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  // STRUCT001 must not fire on the OUTER frame (it's a shape-only composition).
+  const outerStruct001 = violations.find(v => v.rule === 'STRUCT001' && v.nodeId === node.id);
+  assert.equal(outerStruct001, undefined, 'outer frame should be exempt — entire subtree is shape-only');
+});
+
+test('STRUCT001: still flags a deeply-nested frame if a leaf is non-shape (TEXT)', () => {
+  // One TEXT leaf anywhere in the subtree breaks the shape-only predicate.
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      {
+        id: '1:2', name: 'badge', type: 'FRAME', layoutMode: 'NONE',
+        children: [
+          { id: '1:3', name: 'path', type: 'VECTOR' },
+          { id: '1:4', name: 'label', type: 'TEXT' },
+        ],
+      },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.ok(violations.find(v => v.rule === 'STRUCT001'));
+});
+
+test('STRUCT001: does NOT flag a frame whose children are all shape primitives (multi-path SVG)', () => {
+  // Real-world case: a Logo Component Set variant that's a composite of multiple
+  // vector paths (e.g. a wordmark with separate paths per letter, or a mark with
+  // multiple boolean-op layers). The whole frame rasterizes to a single SVG;
+  // flexbox doesn't apply. Auto-layout would be incorrect here.
+  const node = makeFrame({
+    layoutMode: 'NONE',
+    children: [
+      { id: '1:2', name: 'path-1', type: 'VECTOR' },
+      { id: '1:3', name: 'path-2', type: 'VECTOR' },
+      { id: '1:4', name: 'mask',   type: 'BOOLEAN_OPERATION' },
+      { id: '1:5', name: 'dot',    type: 'ELLIPSE' },
+    ],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT001').length, 0);
+});
+
 test('STRUCT001: still flags a frame with a single TEXT child (needs padding/alignment control)', () => {
   const node = makeFrame({
     layoutMode: 'NONE',
@@ -69,21 +135,65 @@ test('STRUCT001: still flags a frame with a single FRAME child', () => {
   assert.ok(violations.find(v => v.rule === 'STRUCT001'));
 });
 
-test('STRUCT001: still flags a frame with 2+ children regardless of types', () => {
+test('STRUCT001: still flags a frame with mixed shapes + non-shape children (needs auto-layout)', () => {
+  // If even one child isn't a shape primitive, the exemption doesn't apply —
+  // the non-shape needs auto-layout for padding/alignment.
   const node = makeFrame({
     layoutMode: 'NONE',
     children: [
-      { id: '1:2', name: 'a', type: 'VECTOR' },
-      { id: '1:3', name: 'b', type: 'VECTOR' },
+      { id: '1:2', name: 'icon-path', type: 'VECTOR' },
+      { id: '1:3', name: 'label',     type: 'TEXT' },
     ],
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   assert.ok(violations.find(v => v.rule === 'STRUCT001'));
 });
 
-test('STRUCT003: flags a fill with raw hex (no boundVariables)', () => {
+test('STRUCT003: flags a fill with raw hex (no boundVariables) and names the color', () => {
+  // The user's case: a layer with #FFFFFF in the Figma fills panel, no variable
+  // bound. The previous generic copy ("Fill is a raw color") was easy to skim
+  // past when many violations fired at once; now the message includes the hex.
   const node = makeFrame({
-    fills: [{ type: 'SOLID', color: { r: 0.37, g: 0.23, b: 0.93 } }],
+    fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const v = violations.find(x => x.rule === 'STRUCT003');
+  assert.ok(v);
+  assert.match(v.message, /#FFFFFF/);
+  assert.match(v.message, /bind it to a color variable or apply a paint style/);
+});
+
+test('STRUCT003: does NOT fire on a layer bound to a paint style (legacy design-token mechanism)', () => {
+  // Paint styles pre-date variables but are still valid design tokens. A layer
+  // with a non-empty fillStyleId is bound — STRUCT003 shouldn't ask the
+  // designer to migrate to a variable just for the lint to pass.
+  const node = makeFrame({
+    fillStyleId: 'S:abc123,1:0',
+    fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }],
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  assert.equal(violations.filter(v => v.rule === 'STRUCT003').length, 0);
+});
+
+test('STRUCT003: flags __MIXED__ fills (per-range mixed paints — could hide raw values)', () => {
+  // Figma returns `figma.mixed` for `node.fills` on TEXT with multiple paint
+  // segments. The serializer coerces that Symbol to "__MIXED__" so it survives
+  // JSON.stringify (Symbols don't). Without this rule firing, the violation
+  // would silently disappear from the report — which is exactly what the user
+  // hit on their Logo Component Set.
+  const node = makeFrame({ fills: '__MIXED__' });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const v = violations.find(x => x.rule === 'STRUCT003');
+  assert.ok(v);
+  assert.match(v.message, /mixed across ranges/);
+});
+
+test('STRUCT003: a MIXED fillStyleId still falls through to the fills check', () => {
+  // Some ranges styled, others not. We can't trust the style binding covers
+  // every range, so the fills check still runs and catches any raw paint.
+  const node = makeFrame({
+    fillStyleId: '__MIXED__',
+    fills: [{ type: 'SOLID', color: { r: 1, g: 0, b: 0 } }],
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   assert.ok(violations.find(v => v.rule === 'STRUCT003'));
@@ -215,7 +325,7 @@ test('STRUCT008: flags auto-named layers like "Frame 47"', () => {
   assert.ok(violations.find(v => v.rule === 'STRUCT008'));
 });
 
-test('STRUCT010: flags a Component Set with children that have empty variantProperties', () => {
+test('STRUCT010: flags a Component Set with children that have empty variantProperties + diagnostic message', () => {
   const node = {
     id: '1:1',
     name: 'Button',
@@ -227,7 +337,13 @@ test('STRUCT010: flags a Component Set with children that have empty variantProp
     ],
   };
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
-  assert.ok(violations.find(v => v.rule === 'STRUCT010'));
+  const struct010 = violations.find(v => v.rule === 'STRUCT010');
+  assert.ok(struct010);
+  // Message names the count, suggests a property example, and calls out the
+  // codegen consequence so the designer understands the fix is non-optional.
+  assert.match(struct010.message, /2 variant\(s\) but no variant property/);
+  assert.match(struct010.message, /Properties panel/);
+  assert.match(struct010.message, /2 separate components/);
 });
 
 test('STRUCT010: does not flag a Component Set with declared variant properties', () => {
@@ -387,19 +503,41 @@ test('STRUCT006: flags a FRAME with wasInstance: true (warning, not error)', () 
   assert.equal(struct006.severity, 'warning');
 });
 
-test('STRUCT007: flags sibling components sharing a name prefix outside a Component Set', () => {
+test('STRUCT007: flags sibling components sharing a name prefix outside a Component Set with diagnostic message', () => {
   const node = makeFrame({
     type: 'FRAME',
     children: [
-      { id: '1:2', name: 'Button/primary', type: 'COMPONENT' },
-      { id: '1:3', name: 'Button/secondary', type: 'COMPONENT' },
+      { id: '1:2', name: 'Logo/light', type: 'COMPONENT' },
+      { id: '1:3', name: 'Logo/dark', type: 'COMPONENT' },
     ],
   });
   const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
   const struct007 = violations.find(v => v.rule === 'STRUCT007');
   assert.ok(struct007, 'expected STRUCT007 violation');
   assert.equal(struct007.severity, 'warning');
-  assert.match(struct007.message, /Button\/\.\.\./);
+  // The message names the prefix, the specific siblings, and the codegen
+  // consequence — so a designer reading the annotation in Figma understands
+  // what to fix AND why it matters.
+  assert.match(struct007.message, /"Logo\/"/);
+  assert.match(struct007.message, /"light"/);
+  assert.match(struct007.message, /"dark"/);
+  assert.match(struct007.message, /look like variants/i);
+  assert.match(struct007.message, /Combine as Variants/);
+  assert.match(struct007.message, /code generation/i);
+});
+
+test('STRUCT007: truncates the suffix list to four with a "+N more" hint when there are many', () => {
+  const node = makeFrame({
+    type: 'FRAME',
+    children: Array.from({ length: 7 }, (_, i) => ({
+      id: `1:${10 + i}`, name: `Logo/v${i + 1}`, type: 'COMPONENT',
+    })),
+  });
+  const violations = checkStructure(node, { fileKey: FIGMA_FILE_KEY, namingConvention: 'kebab-case' });
+  const struct007 = violations.find(v => v.rule === 'STRUCT007');
+  assert.ok(struct007);
+  // First four suffixes shown, then "+3 more"
+  assert.match(struct007.message, /"v1", "v2", "v3", "v4", \+3 more/);
 });
 
 test('STRUCT007: does not flag a single child component (no siblings to group)', () => {

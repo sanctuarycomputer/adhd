@@ -162,15 +162,19 @@ Call `mcp__plugin_figma_figma__use_figma` with that content as the `code` parame
 
 ## Phase 10: Run preflight lint
 
-Extract the new Component Set's structural data using `mcp__plugin_figma_figma__use_figma` (similar to /adhd:lint's Phase 3 extraction).
+Extract the new Component Set's structural data using `mcp__plugin_figma_figma__use_figma`. Match /adhd:lint's Phase 3 extraction shape — including the `varIdMap` sibling that bridges Figma variable IDs to their `<collection>/<name>` form. Without it the lint engine can't run STRUCT011 per-layer / STRUCT012 / STRUCT015 / STRUCT016 (every per-layer binding rule depends on the bridge), and Phase 10.7's "Take code's value" path can't find the Figma variable id to update.
 
-Save to `/tmp/adhd-push-component/ctx.json` (the design context) and `/tmp/adhd-push-component/vars.json` (referenced variables).
+Save to:
+- `/tmp/adhd-push-component/ctx.json` (the design context)
+- `/tmp/adhd-push-component/vars.json` (resolved variable values by name)
+- `/tmp/adhd-push-component/varidmap.json` (Figma id → name)
 
 Run:
 ```bash
 node plugins/adhd/lib/push-component/cli.js preflight \
   --design-context /tmp/adhd-push-component/ctx.json \
   --variable-defs /tmp/adhd-push-component/vars.json \
+  --var-id-map /tmp/adhd-push-component/varidmap.json \
   --globals-css example/app/globals.css \
   --config adhd.config.ts \
   --output /tmp/adhd-push-component/preflight-report.md
@@ -178,25 +182,152 @@ node plugins/adhd/lib/push-component/cli.js preflight \
 
 Read the report. Parse out error count and warning count.
 
+The preflight CLI also writes a JSON sidecar with the engine's full structured output at `/tmp/adhd-push-component/preflight-report.json` (same path as the report, `.md` → `.json`). Phase 10.7 and the abort-time annotation helper both read from it.
+
+## Phase 10.5: Abort-time annotation helper
+
+Not a phase the SKILL invokes top-down — a helper called by Phase 10.7 and Phase 11 whenever push aborts due to violations. Pushes every blocking violation to Figma as a "lint"-category annotation BEFORE the rollback completes, so designers see what needs fixing the next time they open the file. Same mechanic as `/adhd:lint` Phase 6:
+
+1. Distill `/tmp/adhd-push-component/preflight-report.json` to `/tmp/adhd-push-component/violations.json` (same `node -e` snippet as lint Phase 6 — filters to `nodeId`-bearing entries).
+2. Call `mcp__plugin_figma_figma__use_figma` with the annotation script, passing `SCOPE_ROOT_ID = <componentSetId saved in Phase 9>`. Stale-annotation cleanup is bounded to this Component Set's subtree — never wipes unrelated frames.
+3. If there are zero `nodeId`-bearing violations, skip silently.
+
+On successful pushes (no abort, Phase 11 takes the finalize path), the same helper runs with `VIOLATIONS = []` so any prior-run annotations are cleared and Figma reflects the new clean state.
+
+## Phase 10.7: Interactive STRUCT015 / STRUCT016 resolution
+
+Only runs when preflight has STRUCT015 or STRUCT016 violations. Mirrors `/adhd:pull-component`'s Phase 2.5 resolution prompts but with the Figma direction wired in: "Take code's value" pushes to Figma, "Take Figma's value" writes to `globals.css` via the same alias-aware resolver.
+
+Skip this phase if neither STRUCT015 nor STRUCT016 fired — Phase 11's clean-preflight or generic-error flow handles the rest.
+
+### Per-variable prompts (deduplicate by figmaName)
+
+Read `/tmp/adhd-push-component/preflight-report.json`. Group STRUCT015 + STRUCT016 violations by `figmaVarName` so a variable bound by multiple layers prompts ONCE, not once per layer. Normalize each Figma value to a write-ready string using `lib/lint-engine/value-normalizer.js` (same `node -e` snippet `/adhd:pull-component` uses); skip variables whose value won't normalize (rare — surfaces them in Phase 11 instead).
+
+For each unique STRUCT015 variable. The violation's `canonicalCandidate` (set when the value strictly equals a Tailwind canonical) and `looksSemantic` (set when the path looks semantic — brand, accent, etc.) drive which options appear and how they're labeled, same as `/adhd:pull-component`'s Phase 2.5.
+
+```
+Question: "`<figmaName>` is bound by this push but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`.<canonical-hint-if-any> What do you want to do?"
+Header: "Variable missing"
+Options:
+  <only when canonicalCandidate is set:>
+  - "Auto-fix in Figma — rebind to `<canonicalCandidate>` (same value, no visual change)"
+  <always, with label varying by looksSemantic:>
+  - "Add in code as `--<cssVar>`"
+    when looksSemantic=true, replace the label with:
+  - "Add as semantic — keep `<figmaName>` in code (recommended for brand / accent / surface tokens)"
+  <always:>
+  - "Don't sync — annotate and roll back"
+  - "Roll back the push (no annotation change)"
+```
+
+The "Auto-fix" pick gets queued into `auto-fix-input` and applied via the same use_figma rebind script `/adhd:pull-component` Phase 2.5 uses. Subsequently, "Add" picks go to `code-side-actions`; "Don't sync" / "Roll back" picks set `abortIntent = true`.
+
+For each unique STRUCT016 variable:
+
+```
+Question: "`<figmaName>` differs between Figma and code:\n  code:  <local-normalized>\n  figma: <figma-normalized>\nWhat do you want to do?"
+Header: "Value conflict"
+Options:
+  - "Take code's value (update Figma to match code)"
+  - "Take Figma's value (write to globals.css; alias-aware)"
+  - "Don't sync — leave the annotation in Figma and roll back"
+  - "Roll back the push (no annotation change)"
+```
+
+For each "Add" / "Take code's value" / "Take Figma's value" pick, record into one of two arrays:
+- `code-side-actions`: every "Add to globals.css" and "Take Figma's value" pick. Same shape as `/adhd:pull-component`'s actions — feed into `lib/pull-component/cli.js resolve-actions` per entry to get alias-aware `set-primitive` / `set-semantic` actions, concatenate into one list.
+- `figma-side-actions`: every "Take code's value" pick. Shape: `{ figmaVarId, mode, value, valueDomain }` (need the Figma variable id; look it up by inverting `/tmp/adhd-push-component/varidmap.json` — same map the lint engine produced).
+
+For each "Don't sync" or "Roll back" pick, set `abortIntent = true` and continue collecting picks (so subsequent prompts still get answered — the designer might want to record decisions on the rest before the rollback fires). The two abort-flavored picks differ only in whether annotations get pushed: "Don't sync" guarantees they land (via the Phase 10.5 helper); "Roll back" leaves annotations as-is.
+
+If `abortIntent === true` after the prompt loop, skip the apply step and fall through to Phase 11's rollback path. The Phase 10.5 helper handles annotations for the "Don't sync" picks.
+
+### Apply code-side actions
+
+Same as `/adhd:pull-component`: one `node -e` invocation of `applyToCss` against the concatenated `code-side-actions` list. Writes are alias-aware via `resolveWriteTarget`.
+
+### Apply Figma-side actions
+
+Substitute `__ACTIONS__` with the `figma-side-actions` JSON and call `mcp__plugin_figma_figma__use_figma` with the script below. Each action updates one variable's value for one mode. Color and float values are converted from the code-side hex / dimension form into the channel-object / px-number form Figma's API expects.
+
+```js
+const ACTIONS = __ACTIONS__;
+
+function hexToRgb(h) {
+  let c = h.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  const r = parseInt(c.slice(0, 2), 16) / 255;
+  const g = parseInt(c.slice(2, 4), 16) / 255;
+  const b = parseInt(c.slice(4, 6), 16) / 255;
+  const a = c.length === 8 ? parseInt(c.slice(6, 8), 16) / 255 : 1;
+  return { r, g, b, a };
+}
+
+function dimensionToPx(raw) {
+  const s = String(raw).trim();
+  const m = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
+  if (!m) return Number(s);
+  const n = parseFloat(m[1]);
+  const unit = m[2] || '';
+  if (unit === 'rem' || unit === 'em') return n * 16;
+  return n;
+}
+
+const results = [];
+for (const a of ACTIONS) {
+  try {
+    const v = await figma.variables.getVariableByIdAsync(a.figmaVarId);
+    if (!v) { results.push({ ...a, status: 'skipped', reason: 'variable not found' }); continue; }
+    const col = await figma.variables.getVariableCollectionByIdAsync(v.variableCollectionId);
+    // Match the requested mode by name (case-insensitive). For mode-less
+    // (primitive) variables fall back to the collection's first mode —
+    // those collections have exactly one mode.
+    const wantMode = (a.mode || col.modes[0].name).toLowerCase();
+    const target = col.modes.find(m => m.name.toLowerCase() === wantMode) || col.modes[0];
+
+    let figmaValue;
+    if (v.resolvedType === 'COLOR') figmaValue = hexToRgb(a.value);
+    else if (v.resolvedType === 'FLOAT') figmaValue = dimensionToPx(a.value);
+    else figmaValue = a.value;
+
+    v.setValueForMode(target.modeId, figmaValue);
+    results.push({ ...a, status: 'ok' });
+  } catch (e) {
+    results.push({ ...a, status: 'error', error: String(e) });
+  }
+}
+return { results };
+```
+
+### Re-run preflight + report
+
+After both apply steps land, re-invoke `plugins/adhd/lib/push-component/cli.js preflight` (cheap — no MCP call, same inputs against the updated `globals.css` + the same Figma extract). Confirm zero remaining STRUCT015 / STRUCT016 violations. If any survive (rare — usually an alias-cycle fallback or a normalization edge case), Phase 11 handles them via its existing keep-with-errors / roll-back prompt. Otherwise fall through to Phase 11 with a clean preflight.
+
+Print a one-line summary before continuing:
+
+```
+✓ Resolved <N> variable issue(s) — <X> code-side write(s), <Y> Figma-side update(s).
+```
+
 ## Phase 11: Decide and finalize OR roll back
 
-If preflight has zero errors: print "✓ Preflight clean" plus warning summary, then proceed to Phase 12.
+Three sub-paths into this phase:
 
-If preflight has errors: print the report. Use `AskUserQuestion`:
-- "Keep the pushed page (you can fix in Figma manually)"
-- "Roll back — delete the captured page and exit"
+1. **Preflight clean, no `abortIntent`.** Call the Phase 10.5 helper with `VIOLATIONS = []` to clear any prior-run annotations, print "✓ Preflight clean" plus the warning summary, then proceed to Phase 12.
 
-If user picks roll back:
+2. **`abortIntent === true`** (from Phase 10.7's per-variable prompts). Call the Phase 10.5 helper to push annotations for the unresolved blocking violations (no AskUserQuestion needed — the designer already made the call). Then run the rollback script below, print "Rolled back. Annotations pushed to Figma for the unresolved violations. Fix in Figma and re-run." Exit 1.
+
+3. **Preflight has errors that didn't go through Phase 10.7's resolution loop** (e.g. STRUCT011 / STRUCT012 / unescaped STRUCT003-5). Same path as (2) — annotations land, rollback fires. No "Keep with errors" prompt; if blocking violations weren't resolvable through the structured prompts in Phase 10.7, the only safe action is rollback.
+
+The rollback script:
+
 ```js
 // run via use_figma
 const page = await figma.getNodeByIdAsync(PAGE_ID);
 page.remove();
 return { rolledBack: true };
 ```
-
-Then print "Rolled back. No changes to Figma. Fix the issues in your component and re-run." Exit with code 1.
-
-If user picks keep, proceed to Phase 12.
 
 ## Phase 11.5: Write component mapping to adhd.config.ts
 

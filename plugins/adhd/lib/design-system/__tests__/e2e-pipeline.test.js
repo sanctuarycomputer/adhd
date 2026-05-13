@@ -23,12 +23,12 @@ function loadFixture(name) {
   return JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
 }
 
-function pipeline(figmaFixtureName, { resolutions = [], direction = 'push' } = {}) {
+function pipeline(figmaFixtureName, { resolutions = [], direction = 'push', dispositions = null } = {}) {
   const css = fs.readFileSync(GLOBALS, 'utf8');
   const codeDS = parseCodeDesignSystem(css, { includeTailwindDefaults: true });
   const figmaDS = parseFigmaDesignSystem(loadFixture(figmaFixtureName));
   const diff = compareDesignSystems(codeDS, figmaDS);
-  const actions = buildFigmaActions(diff, resolutions, direction);
+  const actions = buildFigmaActions(diff, resolutions, direction, { dispositions });
   return { codeDS, figmaDS, diff, actions };
 }
 
@@ -36,15 +36,17 @@ function countKind(actions, kind) {
   return actions.filter(a => a.kind === kind).length;
 }
 
-test('e2e: clean sync — diff has no codeOnly/conflict/figmaOnly variables', () => {
+test('e2e: clean sync — diff has zero conflict/figmaOnly variables', () => {
+  // With the comparator surfacing all code-side tokens (including Tailwind
+  // defaults), codeOnly is no longer a tight "diff of what's missing" — it
+  // becomes "everything in code minus what Figma already has." When both
+  // sides hold the full palette the diff still has no conflict/figmaOnly,
+  // but codeOnly may contain shadow-domain tokens (shadows live on the
+  // effect-style channel, never the variable channel). The action layer
+  // is where filtering happens — see the empty-figma test below.
   const { diff } = pipeline('figma-full-tailwind.json');
   assert.equal(diff.conflict.length, 0, 'expected zero conflicts');
   assert.equal(diff.figmaOnly.length, 0, 'expected zero figmaOnly');
-  // Shadows are emitted as effect styles, not variables, so they always look
-  // "codeOnly" on the variable side. Confirm every codeOnly is a shadow.
-  for (const t of diff.codeOnly) {
-    assert.equal(t.domain, 'shadow', `unexpected non-shadow codeOnly: ${t.domain}:${t.path}`);
-  }
   assert.equal(diff.styles.effects.same.length > 0, true, 'expected effect styles to match');
   assert.equal(diff.styles.effects.codeOnly.length, 0, 'effect-style codeOnly should be empty');
 });
@@ -57,17 +59,44 @@ test('e2e: push against synced figma produces zero create-variable actions', () 
   assert.equal(countKind(actions, 'create-effect-style'), 0);
 });
 
-test('e2e: empty figma — push produces create-variable actions for every variable token', () => {
-  const { diff, actions } = pipeline('figma-empty.json', { direction: 'push' });
+test('e2e: empty figma — dispositions filter the push (semantic-only color + authored-only spacing)', () => {
+  // The interesting case: comparator surfaces every code-side token
+  // (palette + authored) but the dispositions wizard's "semantic-only"
+  // and "authored-only" picks filter Tailwind defaults out at the
+  // action-builder layer. This test exercises the same workflow the user
+  // performs by clicking through the wizard.
+  const { diff, actions } = pipeline('figma-empty.json', {
+    direction: 'push',
+    dispositions: {
+      color: 'semantic-only',
+      typography: 'all',
+      spacing: 'authored-only',
+      radiusAndBorder: 'push',
+      shadow: 'effect-styles',
+      opacity: 'skip',
+      utilityDomains: 'skip',
+    },
+  });
   assert.equal(diff.same.length, 0);
   assert.equal(diff.conflict.length, 0);
   assert.equal(diff.figmaOnly.length, 0);
-  assert.ok(diff.codeOnly.length > 400, `expected hundreds of codeOnly, got ${diff.codeOnly.length}`);
-  // codeOnly with non-shadow domains → create-variable; shadows → create-effect-style.
-  const nonShadowCodeOnly = diff.codeOnly.filter(t => t.domain !== 'shadow').length;
-  assert.equal(countKind(actions, 'create-variable'), nonShadowCodeOnly,
-    'create-variable count should equal non-shadow codeOnly count');
-  assert.ok(countKind(actions, 'create-effect-style') > 0, 'expected some effect-style creates for shadows');
+  // Comparator surfaces hundreds of tokens (the full Tailwind palette + authored).
+  assert.ok(diff.codeOnly.length > 100, `expected full palette to surface, got ${diff.codeOnly.length}`);
+  // Action layer applies dispositions: Tailwind palette colors filtered
+  // out, Tailwind spacing scale filtered out, opacity + utilities skipped.
+  // What remains: authored color tokens, full typography (sizes + weights
+  // + leading + tracking — all from Tailwind), authored spacing, radii,
+  // border widths, shadow as effect-styles.
+  const createCount = countKind(actions, 'create-variable');
+  const skipCount = countKind(actions, 'skip-by-disposition');
+  const effectCount = countKind(actions, 'create-effect-style');
+  assert.ok(createCount > 0, `expected some pushes, got ${createCount}`);
+  assert.ok(skipCount > 100, `expected many skip-by-disposition (Tailwind palette + opacity + utilities), got ${skipCount}`);
+  assert.ok(effectCount > 0, `expected shadow effect-styles, got ${effectCount}`);
+  // Every skip carries a disposition-derived reason.
+  for (const a of actions.filter(a => a.kind === 'skip-by-disposition')) {
+    assert.ok(a.reason && a.reason.length > 0, `skip action missing reason: ${JSON.stringify(a)}`);
+  }
 });
 
 test('e2e: empty figma — pull is a no-op (nothing in figma to pull)', () => {

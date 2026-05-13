@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseShadow } = require('./shadow-parser');
+const { classifyToken } = require('./dispositions');
 
 const DOMAIN_COLLECTION = {
   color: 'color',
@@ -51,14 +52,35 @@ const STRING_DOMAINS = new Set(['aspect', 'ease', 'animate']);
 function dimensionToPx(raw) {
   if (raw == null) return null;
   const s = String(raw).trim();
-  // Reject expressions: calc(...), var(...), comma-separated lists, etc.
-  if (/[(),]/.test(s)) return null;
-  const m = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
-  if (!m) return null;
-  const n = parseFloat(m[1]);
-  const unit = m[2] || '';
-  if (unit === 'rem' || unit === 'em') return n * 16;
-  return n; // px or unitless
+  // Simple length / unitless number.
+  const simple = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(s);
+  if (simple) {
+    const n = parseFloat(simple[1]);
+    const unit = simple[2] || '';
+    if (unit === 'rem' || unit === 'em') return n * 16;
+    return n;
+  }
+  // Two-operand calc() — common for Tailwind v4's text-size line-height
+  // companions like `calc(1 / 0.75)` (ratio) and `calc(1rem * 2)` (px).
+  // Each operand re-enters dimensionToPx so we get rem→px conversion for
+  // free. We don't support nested calls or more than two operands — a
+  // narrow window that covers Tailwind's shipped patterns without
+  // turning into a full CSS expression evaluator.
+  const calc = /^calc\(\s*([^()]+?)\s+([+\-*/])\s+([^()]+?)\s*\)$/.exec(s);
+  if (calc) {
+    const a = dimensionToPx(calc[1]);
+    const b = dimensionToPx(calc[3]);
+    if (a == null || b == null) return null;
+    switch (calc[2]) {
+      case '+': return a + b;
+      case '-': return a - b;
+      case '*': return a * b;
+      case '/': return b === 0 ? null : a / b;
+    }
+  }
+  // var(...) or any other expression we can't evaluate — let the caller
+  // fall through to STRING typing.
+  return null;
 }
 
 // Decide the Figma variable type for a (domain, value) pair. Returns one of
@@ -107,7 +129,8 @@ function pathToCssVar(domain, path) {
   return DOMAIN_PREFIX[domain] + dashed;
 }
 
-function buildFigmaActions(diff, resolutions, direction) {
+function buildFigmaActions(diff, resolutions, direction, opts = {}) {
+  const dispositions = opts.dispositions || null;
   const resolutionMap = new Map();
   for (const r of resolutions) {
     resolutionMap.set(r.path + ':' + (r.mode ?? 'default'), r.winner);
@@ -126,8 +149,24 @@ function buildFigmaActions(diff, resolutions, direction) {
       // not extract.collections), but include here for forward-compat.
       ...(((diff.styles && diff.styles.effects && diff.styles.effects.same) || []).map(s => s.name)),
     ]);
-    // Code-only: create in Figma
+    // Code-only: create in Figma. Each token is classified through the
+    // user's push-token dispositions (collected via the wizard in
+    // /adhd:push-tokens — see dispositions.js). Three outcomes:
+    //   - 'push'         → create-variable
+    //   - 'effect-style' → create-effect-style (shadow)
+    //   - 'skip'         → skip-by-disposition with reason (visible in
+    //                       the dry-run + final report, no Figma write)
     for (const t of diff.codeOnly) {
+      const verdict = classifyToken(t, dispositions);
+      if (verdict.action === 'skip') {
+        actions.push({
+          kind: 'skip-by-disposition',
+          domain: t.domain,
+          path: t.path,
+          reason: verdict.reason,
+        });
+        continue;
+      }
       // Shadow tokens map to Figma effect styles, not variables. Parse the
       // CSS shadow string and emit a create-effect-style action.
       if (t.domain === 'shadow') {
@@ -314,4 +353,5 @@ module.exports = {
   figmaTypeForToken,
   dimensionToPx,
   resolveFigmaValue,
+  DOMAIN_COLLECTION,
 };

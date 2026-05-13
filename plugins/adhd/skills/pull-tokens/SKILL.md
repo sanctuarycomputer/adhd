@@ -1,23 +1,25 @@
 ---
-description: "Pull the design system (variables + named styles) from the configured Figma file into globals.css. Two-way diff with per-attribute conflict prompts; additive (never deletes from code). Reads adhd.config.ts at the repo root."
+description: "Pull design tokens (variables + named styles) from the configured Figma file into globals.css. Two-way diff with per-attribute conflict prompts; additive (never deletes from code). Reads adhd.config.ts at the repo root. Pass --dry-run to preview without writing."
 disable-model-invocation: true
-argument-hint: ""
+argument-hint: "[--dry-run]"
 allowed-tools: Read Write Edit Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
-# ADHD Pull Design System
+# ADHD Pull Tokens
 
 Pulls Figma's design tokens (variables + named styles) into the codebase's `globals.css`. Compares both sides; for each conflicting variable, prompts the user; for variables that exist only in Figma, creates them in code; for variables that exist only in code, leaves them alone (additive policy).
+
+Pass `--dry-run` to see exactly what would be added or overwritten without making any changes — no prompts, no writes, no commits.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-push-pull-design-system.md`
 
 ## Phase 1: Validate config
 
-(Same as /adhd:push-design-system Phase 1.)
+(Same as /adhd:push-tokens Phase 1.)
 
 ## Phase 2: Read both sides
 
-(Same as /adhd:push-design-system Phase 2 — read globals.css, run extract script via use_figma, save both to `/tmp/adhd-pull/`. Use Strategy B — chunked extraction — for any non-trivial design system; the MCP truncates single-shot responses around 20–30 KB and a full Tailwind v4 color collection blows past that limit. The push SKILL documents the chunked manifest + slice + `cli.js assemble-extract` flow.)
+(Same as /adhd:push-tokens Phase 2 — read globals.css, run extract script via use_figma, save both to `/tmp/adhd-pull/`. Use Strategy B — chunked extraction — for any non-trivial design system; the MCP truncates single-shot responses around 20–30 KB and a full Tailwind v4 color collection blows past that limit. The push SKILL documents the chunked manifest + slice + `cli.js assemble-extract` flow.)
 
 ## Phase 3: Run the comparator
 
@@ -29,6 +31,20 @@ node plugins/adhd/lib/design-system/cli.js compare \
 ```
 
 If `conflict.length === 0` and `figmaOnly.length === 0`, print "Code is already in sync with Figma. No changes." and exit 0.
+
+## Phase 3b: Dry run (only if `--dry-run` was passed)
+
+If the user invoked `/adhd:pull-tokens --dry-run`, print the preview from the comparator and exit BEFORE the prompt loop. The dry run is a pure discovery tool — no `AskUserQuestion`, no writes, no commits, no MCP traffic beyond Phase 2's extract:
+
+```bash
+node plugins/adhd/lib/design-system/cli.js preview \
+  --diff /tmp/adhd-pull/diff.json \
+  --direction pull
+```
+
+The preview lists every variable that would be added to `globals.css` (one row per mode), every variable whose Figma/code values differ (showing both — the dry run intentionally doesn't pre-resolve in favor of either side), and the count of code-only variables that would stay untouched per the additive policy. Echo the output verbatim to the user, then print a one-line summary: `Dry run complete. Re-run without --dry-run to apply (you'll be prompted on each conflict).` Exit 0.
+
+If `--dry-run` was NOT passed, skip this phase and continue to Phase 4.
 
 ## Phase 4: Resolve conflicts
 
@@ -101,6 +117,29 @@ Print:
   - <M> conflicts resolved
   - <K> code-only variables left untouched (additive policy)
 ```
+
+## Phase 10: Offer to sync the docs route
+
+Runs only on success (skip if no changes were applied to `globals.css`). The docs route reads `globals.css` at request time, so the new tokens will appear without any code change — but if the user has also been editing components, re-syncing refreshes `componentMap.tsx`'s baked prop schemas at the same time.
+
+```bash
+node plugins/adhd/lib/sync-docs/cli.js detect-install --app-dir .
+```
+
+- **Empty output** (route not installed): skip this phase silently.
+- **Non-empty output** (route installed): use `AskUserQuestion`:
+
+```
+Question: "Re-sync the design-system docs route now? Tokens propagate live, but a re-sync also regenerates componentMap.tsx in case your components changed."
+Header: "Sync docs"
+Options:
+  - "Yes, re-sync now"
+  - "No, skip"
+```
+
+On "Yes": execute the phases of `/adhd:sync-docs` inline. See `plugins/adhd/skills/sync-docs/SKILL.md`. Existing install choices are preserved.
+
+On "No": print `Run /adhd:sync-docs later to refresh the docs route.` Exit normally.
 
 ## Common errors
 

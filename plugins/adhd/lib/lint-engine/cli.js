@@ -18,9 +18,54 @@
  */
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { parseTheme } = require('./theme-parser');
+const { synthesizeTailwindUtilityScale } = require('../design-system/code-parser');
+
+// Tailwind v4 ships a full default @theme: --color-white, --color-black,
+// --color-red-500, --spacing, the --text-* / --leading-* scales, etc.
+// `lib/design-system/tailwind-defaults.css` carries the canonical copy
+// (already used by push/pull-tokens via parseCodeDesignSystem).
+// We merge those defaults into the user's parsed primitives BEFORE the
+// variable comparator runs — otherwise a Figma `Color/white` variable
+// would surface as "missing in code" even though Tailwind covers it,
+// and downstream surfaces (lint reports, pull-component Phase 2.7
+// discovery prompts) would suggest writing `--color-white: #fff` to
+// globals.css — pure clutter, no value.
+const TAILWIND_DEFAULTS_PATH = path.resolve(__dirname, '..', 'design-system', 'tailwind-defaults.css');
+
+function loadTailwindDefaultPrimitives() {
+  let css;
+  try { css = fs.readFileSync(TAILWIND_DEFAULTS_PATH, 'utf8'); }
+  catch { return {}; }
+  // The defaults file uses `@theme default {` and `@theme default inline {`
+  // (Tailwind's syntax for the canonical reference theme). parseTheme only
+  // matches plain `@theme {` / `@theme inline {`, so rewrite the headers
+  // before parsing.
+  const normalized = css
+    .replace(/@theme\s+default\s+inline\s*\{/g, '@theme inline {')
+    .replace(/@theme\s+default\s*\{/g, '@theme {');
+  const parsed = parseTheme(normalized).primitives;
+  // Tailwind v4 doesn't ship explicit `--spacing-N` / `--radius-{none,full}`
+  // / `--opacity-N` variables in the @theme block — most utility classes
+  // derive from `--spacing` at build time (`p-4` → `calc(var(--spacing) * 4)`).
+  // The design-system code-parser synthesizes these for push/pull-tokens; the
+  // lint engine needs the same view or it falsely flags `spacing/0`,
+  // `radius/full`, `opacity-50`, etc. as missing from code.
+  for (const t of synthesizeTailwindUtilityScale()) {
+    if (!(t.cssVar in parsed)) {
+      parsed[t.cssVar] = t.values.default.value;
+    }
+  }
+  return parsed;
+}
 const { categorizeVariables } = require('./variable-categorizer');
 const { checkStructure } = require('./structure-checker');
+const { buildVariableSuggestions } = require('./variable-namer');
+const { checkBindings } = require('./binding-checker');
+const { detectTailwindDuplicates } = require('./tailwind-duplicate-detector');
+const { detectDuplicateCollections } = require('./collection-duplicate-detector');
+const { findCanonicalForValue, looksSemantic } = require('./canonical-matcher');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -78,7 +123,22 @@ function main() {
   const namingConvention = readNamingConvention(args['config']);
   const fileKey = extractFileKey(args['target-url']);
 
-  const theme = parseTheme(cssText);
+  // Optional: serializer-produced { '<VariableID>': '<collection>/<name>' }
+  // map. Required for per-layer STRUCT011 annotations and STRUCT012
+  // cross-domain detection; absent in older SKILL versions, in which case
+  // we fall back to the legacy aggregated STRUCT011 emission.
+  let varIdMap = {};
+  if (args['var-id-map']) {
+    try { varIdMap = readJson(args['var-id-map']); } catch { varIdMap = {}; }
+  }
+
+  const userTheme = parseTheme(cssText);
+  const tailwindDefaults = loadTailwindDefaultPrimitives();
+  // User's @theme wins on key collision (override always beats default).
+  const theme = {
+    ...userTheme,
+    primitives: { ...tailwindDefaults, ...userTheme.primitives },
+  };
   const variableViolations = categorizeVariables(varDefs, theme);
 
   let structureViolations = [];
@@ -100,6 +160,212 @@ function main() {
     }
   } else {
     structureViolations = checkStructure(designCtx, { fileKey, namingConvention });
+  }
+
+  // STRUCT011 (variable naming) + STRUCT012 (cross-domain bindings).
+  //
+  // Both rules need to know which LAYER uses each variable so the annotation
+  // lands on the offender instead of the scope root — designers asked for
+  // this so they can walk a list of annotations and fix them one by one
+  // without hunting through the layer tree. The binding-checker walks the
+  // node tree and emits one violation per (layer, variable) pair.
+  //
+  // STRUCT012 catches the cross-domain case STRUCT011 misses: a `Spacing/4`
+  // variable (well-named for its domain) bound to letter-spacing. The
+  // variable's name is fine, but the binding crosses Tailwind's token-domain
+  // boundary. We infer each variable's intended domain from its name and
+  // compare to the property's expected domain.
+  //
+  // Variable names are ALWAYS checked against kebab-case for the leaves,
+  // regardless of the project's `naming` config (which is for component
+  // identifiers, not CSS custom properties).
+  //
+  // Fallback: when the SKILL didn't emit a varIdMap (older versions), we
+  // can't bridge per-node bindings to variable names, so STRUCT011 falls
+  // back to the legacy aggregated emission and STRUCT012 stays silent.
+  const varKeys = Object.keys(varDefs || {});
+  const suggestions = buildVariableSuggestions(varKeys);
+  const badSuggestionsByName = {};
+  for (const s of suggestions) badSuggestionsByName[s.name] = s;
+  const hasIdMap = Object.keys(varIdMap).length > 0;
+
+  if (hasIdMap) {
+    // Bridge the variable-categorizer's file-level missing/conflict
+    // findings into per-layer STRUCT015/STRUCT016 errors. The
+    // categorizer says "this variable is missing in code" at the file
+    // level; the binding-checker says "this specific layer binds that
+    // variable" — together, designers get an annotation right where
+    // they need to act.
+    //
+    // Figma collection names appear once in the categorizer's
+    // `token` field (collection-stripped) but the SKILL's vars.json
+    // keys include the collection. Build the set both ways so the
+    // binding-checker matches whichever form varIdMap emits.
+    const missingVarNames = new Set();
+    const conflictsByName = {};
+    // Per-missing-variable metadata that powers the per-variable
+    // resolution prompts in pull-component / push-component. The
+    // canonical candidate (when present) drives the "Auto-fix: rebind
+    // to <canonical>" option; the looksSemantic flag drives the
+    // emphasis on the "Add as semantic variable" option.
+    const missingVarMeta = {};
+    for (const v of variableViolations) {
+      if (v.status === 'missing') {
+        missingVarNames.add(v.token); // collection-stripped form
+        // `token` is the collection-stripped form (e.g. `Font-Size/Body`),
+        // which retains enough structure for the typography-family
+        // disambiguator to do its job. Pass v.domain explicitly so the
+        // matcher doesn't need to re-infer from a path missing its
+        // collection prefix.
+        missingVarMeta[v.token] = {
+          canonicalCandidate: findCanonicalForValue(v.token, v.figma, theme.primitives, { domain: v.domain }),
+          looksSemantic: looksSemantic(v.token),
+          figmaValue: v.figma,
+        };
+      } else if (v.status === 'conflict') {
+        conflictsByName[v.token] = { local: v.local, figma: v.figma, mode: v.mode };
+      }
+    }
+    // Re-key with collection prefixes too: walk varIdMap values, for
+    // each, also test the collection-stripped form against the set.
+    // The binding-checker is the single consumer — instead of doing
+    // two-form lookups everywhere, pre-expand the sets here.
+    for (const fullName of Object.values(varIdMap)) {
+      const stripped = fullName.split('/').slice(1).join('/');
+      if (missingVarNames.has(stripped)) missingVarNames.add(fullName);
+      if (conflictsByName[stripped]) conflictsByName[fullName] = conflictsByName[stripped];
+    }
+
+    const bindingViolations = [];
+    const opts = { fileKey, varIdMap, badSuggestionsByName, missingVarNames, conflictsByName, missingVarMeta };
+    if (designCtx && designCtx.mode === 'whole-file' && Array.isArray(designCtx.pages)) {
+      for (const page of designCtx.pages) {
+        for (const node of page.nodes) {
+          const v = checkBindings(node, opts);
+          for (const x of v) x._page = page.name;
+          bindingViolations.push(...v);
+        }
+      }
+    } else if (designCtx) {
+      bindingViolations.push(...checkBindings(designCtx, opts));
+    }
+    structureViolations.push(...bindingViolations);
+  } else if (suggestions.length > 0) {
+    // Legacy aggregated STRUCT011 emission, kept as a graceful fallback
+    // when the SKILL hasn't been upgraded to emit varIdMap. Pre-existing
+    // behavior — single violation on the scope root listing every bad name.
+    const isScoped = designCtx && designCtx.mode !== 'whole-file' && designCtx.id;
+    const scopedNodeId = isScoped ? designCtx.id : undefined;
+    const renames = suggestions.filter(s => s.kind === 'rename');
+    const ambiguous = suggestions.filter(s => s.kind === 'ambiguous');
+    const noMapping = suggestions.filter(s => s.kind === 'no-mapping');
+    const byTarget = new Map();
+    for (const s of renames) {
+      const collection = s.target.split('/')[0];
+      if (!byTarget.has(collection)) byTarget.set(collection, []);
+      byTarget.get(collection).push(s);
+    }
+    const sortedTargets = [...byTarget.keys()].sort();
+    const sections = [];
+    for (const collection of sortedTargets) {
+      const items = byTarget.get(collection);
+      const lines = items.map(s => `  • ${s.name}\n      → ${s.target}`);
+      sections.push(`→ Move to "${collection}" collection (${items.length} var${items.length === 1 ? '' : 's'}):\n${lines.join('\n')}`);
+    }
+    if (ambiguous.length > 0) {
+      const lines = ambiguous.map(s =>
+        `  • ${s.name}\n` +
+        `      ⚠ Ambiguous — ${s.primaryReason}, but ${s.alternateReason}. Pick based on actual usage:\n` +
+        `        Primary:    → ${s.target}\n` +
+        `        Alternate:  → ${s.alternate}`,
+      );
+      sections.push(`⚠ Ambiguous (${ambiguous.length}) — path and leaf disagree on the target domain:\n${lines.join('\n\n')}`);
+    }
+    if (noMapping.length > 0) {
+      const lines = noMapping.map(s => `  • ${s.name}\n      ⚠ ${s.reason}`);
+      sections.push(`⚠ No Tailwind v4 mapping (${noMapping.length}):\n${lines.join('\n\n')}`);
+    }
+    structureViolations.push({
+      rule: 'STRUCT011',
+      severity: 'warning',
+      nodeId: scopedNodeId,
+      nodePath: 'Variables',
+      message:
+        `${suggestions.length} variable-naming issue(s). Suggested restructure:\n\n` +
+        `${sections.join('\n\n')}\n\n` +
+        `How to apply each move in Figma:\n` +
+        `  1. Open the Variables panel; create any missing target collections.\n` +
+        `  2. Right-click the source variable → "Move to..." → pick the target collection. Figma auto-rewires existing references.\n` +
+        `  3. Inside the target, rename to drop redundant path segments (the variable's path within the new collection becomes its full name).\n` +
+        `\n` +
+        `Use Figma's "Move to..." (not "Rename") — Rename only works within the same collection, but most of these are moves across collections.`,
+      deepLink: scopedNodeId
+        ? 'https://figma.com/design/' + fileKey + '?node-id=' + scopedNodeId.replace(':', '-')
+        : args['target-url'],
+    });
+  }
+
+  // STRUCT013 — Figma variable duplicates a Tailwind v4 default.
+  //
+  // Surfaces when a designer has both the canonical Tailwind variable
+  // (e.g. `Color/zinc-500`) AND a same-value duplicate sitting alongside.
+  // Strict match — name AND value must align — so semantic vars like
+  // `Color/MyZinc` (same value, different intent) are NOT flagged.
+  //
+  // The fix is "consolidate": rebind every layer using the duplicate to
+  // the canonical Tailwind variable, then delete the duplicate. The
+  // /adhd:lint wizard walks each candidate through AskUserQuestion
+  // before applying — never auto-rewires.
+  const duplicates = detectTailwindDuplicates(varDefs, tailwindDefaults);
+  for (const dup of duplicates) {
+    // varIdMap is { id: name }; invert to find the duplicate's Figma ID
+    // (used by --fix to rebind layers). Absent when the SKILL hasn't
+    // emitted varIdMap — STRUCT013 still surfaces, just without an ID
+    // hint for the migration script.
+    let figmaVarId = null;
+    for (const [id, name] of Object.entries(varIdMap || {})) {
+      if (name === dup.figmaName) { figmaVarId = id; break; }
+    }
+    structureViolations.push({
+      rule: 'STRUCT013',
+      severity: 'warning',
+      nodeId: undefined, // file-level concern; doesn't annotate a layer
+      nodePath: 'Variables',
+      message:
+        `Figma variable "${dup.figmaName}" (= ${dup.value}) duplicates Tailwind default \`${dup.tailwindCssVar}\`. ` +
+        `Same value, same canonical name — consolidating removes the duplicate without changing what gets rendered.\n\n` +
+        `To apply: run \`/adhd:lint\`. The wizard walks each candidate; pick "Auto-fix in Figma" to rebind every layer that uses "${dup.figmaName}" to \`${dup.tailwindCssVar}\` and delete the duplicate.`,
+      deepLink: args['target-url'],
+      // Extra fields consumed by --fix (ignored by the report formatter):
+      figmaVarName: dup.figmaName,
+      figmaVarId,
+      tailwindCssVar: dup.tailwindCssVar,
+    });
+  }
+
+  // STRUCT014 — duplicate collections (e.g. "Color" + "color" side-by-
+  // side, "Type + Effects" + "typography"). Surface every group so
+  // designers can see what's grown up over time. /adhd:lint's wizard
+  // consolidates per group: pick the keeper, move every variable from
+  // the loser collections into it (rebinding existing layer references),
+  // then delete the empty losers.
+  const dupGroups = detectDuplicateCollections(Object.keys(varDefs || {}));
+  for (const group of dupGroups) {
+    const collNames = group.collections.map(c => `"${c.name}" (${c.varCount})`).join(', ');
+    structureViolations.push({
+      rule: 'STRUCT014',
+      severity: 'warning',
+      nodeId: undefined,
+      nodePath: 'Variables',
+      message:
+        `${group.collections.length} Figma collections alias to "${group.canonical}": ${collNames}. ` +
+        `These describe the same token domain but Figma treats them as separate collections, so designers see duplicate-looking groups in the Variables panel and push must guess which to append into.\n\n` +
+        `To apply: run \`/adhd:lint\`. The wizard asks which collection to keep (the most-populated one is suggested); every variable in the others gets moved into the keeper, layer bindings update automatically, and the empty collections are deleted.`,
+      deepLink: args['target-url'],
+      // Extra fields consumed by --fix:
+      canonical: group.canonical,
+      collections: group.collections,
+    });
   }
 
   const meta = {

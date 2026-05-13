@@ -1,5 +1,83 @@
 'use strict';
 
+// Collection-name aliases. Figma users name their collections however
+// they like — "Color", "Colors", "Colour", "Type + Effects", "Borders",
+// "Space" — but our canonical names are the lowercase Tailwind domain
+// keys ("color", "typography", "border-width", "spacing"). Without
+// alias-aware lookup, pushing into a file where the designer has
+// "Color" (capital C) creates a parallel "color" collection — Figma
+// treats names case-sensitively. The aliases below mirror common
+// real-world variations + Tailwind's own multi-word names.
+//
+// Match is case-insensitive on lowercase+trimmed Figma names. First
+// canonical that finds an existing collection wins; subsequent pushes
+// targeting the same canonical reuse that collection.
+const COLLECTION_ALIASES = {
+  color:          ['color', 'colors', 'colour', 'colours'],
+  spacing:        ['spacing', 'space', 'spaces'],
+  radius:         ['radius', 'radii', 'rounded', 'corner radius'],
+  shadow:         ['shadow', 'shadows', 'effects'],
+  opacity:        ['opacity', 'alpha'],
+  'border-width': ['border-width', 'border width', 'borders', 'border', 'strokes', 'stroke'],
+  typography:     ['typography', 'type', 'text', 'text styles', 'type + effects', 'text + effects', 'fonts'],
+  'z-index':      ['z-index', 'z'],
+  breakpoint:     ['breakpoint', 'breakpoints', 'screens', 'media'],
+  container:      ['container', 'containers'],
+  blur:           ['blur'],
+  perspective:    ['perspective'],
+  aspect:         ['aspect', 'aspects', 'aspect ratio', 'ratios'],
+  ease:           ['ease', 'easing', 'easings', 'transitions', 'transition'],
+  animate:        ['animate', 'animation', 'animations'],
+};
+
+// Given the canonical domain name and the list of existing Figma
+// collection names, return the existing name that aliases to the
+// canonical (if any). Returns null when nothing matches — caller should
+// create a new collection with the canonical name.
+function findCollectionAlias(canonical, existingNames) {
+  const aliases = COLLECTION_ALIASES[canonical];
+  if (!aliases) return null;
+  for (const existing of existingNames) {
+    const norm = String(existing).toLowerCase().trim();
+    if (aliases.includes(norm)) return existing;
+  }
+  return null;
+}
+
+// Exported mirror of the inline `tokenScopesFor` inside WRITE_SCRIPT.
+// The Figma plugin sandbox can't `require`, so the script needs an
+// inline copy. We keep this JS-side function as the testable mirror —
+// the WRITE_SCRIPT template is grep-asserted to contain the same key
+// patterns so the two can't silently drift.
+function tokenScopesFor(domain, path) {
+  if (domain !== 'typography') {
+    const NON_TYPO_SCOPES = {
+      color: ['FRAME_FILL', 'SHAPE_FILL', 'TEXT_FILL', 'STROKE_COLOR'],
+      spacing: ['GAP', 'WIDTH_HEIGHT'],
+      radius: ['CORNER_RADIUS'],
+      shadow: ['EFFECT_FLOAT'],
+      opacity: ['OPACITY'],
+      'border-width': ['STROKE_FLOAT'],
+      'z-index': ['ALL_SCOPES'],
+      breakpoint: ['ALL_SCOPES'],
+      container: ['WIDTH_HEIGHT'],
+      blur: ['EFFECT_FLOAT'],
+      perspective: ['ALL_SCOPES'],
+      aspect: ['ALL_SCOPES'],
+      ease: ['ALL_SCOPES'],
+      animate: ['ALL_SCOPES'],
+    };
+    return NON_TYPO_SCOPES[domain] || ['ALL_SCOPES'];
+  }
+  if (path.startsWith('text/') && path.endsWith('/line-height')) return ['LINE_HEIGHT'];
+  if (path.startsWith('text/')) return ['FONT_SIZE'];
+  if (path.startsWith('font-weight/')) return ['FONT_WEIGHT'];
+  if (path.startsWith('font/')) return ['FONT_FAMILY'];
+  if (path.startsWith('leading/')) return ['LINE_HEIGHT'];
+  if (path.startsWith('tracking/')) return ['LETTER_SPACING'];
+  return ['ALL_SCOPES'];
+}
+
 /**
  * JS string injected into use_figma. Reads `__ACTIONS__` (a JSON array
  * of { kind, ... }) and applies each one to the Figma file. Returns
@@ -39,9 +117,15 @@ const SCOPES = {
 };
 
 // Narrow typography scopes from the Figma path (e.g. 'text/xs' → FONT_SIZE,
-// 'font/sans' → FONT_FAMILY). Keep ALL_SCOPES as fallback.
+// 'font/sans' → FONT_FAMILY). Keep ALL_SCOPES as fallback. The
+// 'text/<size>/line-height' companion paths (Tailwind v4 ships paired
+// line-height values with every text size) must check BEFORE the
+// 'text/' branch — otherwise the LINE_HEIGHT companions get the
+// FONT_SIZE scope and Figma rejects them with "Invalid scope for this
+// variable type."
 function tokenScopesFor(domain, path) {
   if (domain !== 'typography') return SCOPES[domain] || ['ALL_SCOPES'];
+  if (path.startsWith('text/') && path.endsWith('/line-height')) return ['LINE_HEIGHT'];
   if (path.startsWith('text/')) return ['FONT_SIZE'];
   if (path.startsWith('font-weight/')) return ['FONT_WEIGHT'];
   if (path.startsWith('font/')) return ['FONT_FAMILY'];
@@ -104,8 +188,46 @@ const collections = await figma.variables.getLocalVariableCollectionsAsync();
 const collectionByName = {};
 for (const c of collections) collectionByName[c.name] = c;
 
+// Alias table — see the JS-side mirror at the top of this file.
+// Inline here because the Figma plugin sandbox can't require().
+// Drift-guarded by a test in __tests__/figma-write-script.test.js.
+const COLLECTION_ALIASES = {
+  color:          ['color', 'colors', 'colour', 'colours'],
+  spacing:        ['spacing', 'space', 'spaces'],
+  radius:         ['radius', 'radii', 'rounded', 'corner radius'],
+  shadow:         ['shadow', 'shadows', 'effects'],
+  opacity:        ['opacity', 'alpha'],
+  'border-width': ['border-width', 'border width', 'borders', 'border', 'strokes', 'stroke'],
+  typography:     ['typography', 'type', 'text', 'text styles', 'type + effects', 'text + effects', 'fonts'],
+  'z-index':      ['z-index', 'z'],
+  breakpoint:     ['breakpoint', 'breakpoints', 'screens', 'media'],
+  container:      ['container', 'containers'],
+  blur:           ['blur'],
+  perspective:    ['perspective'],
+  aspect:         ['aspect', 'aspects', 'aspect ratio', 'ratios'],
+  ease:           ['ease', 'easing', 'easings', 'transitions', 'transition'],
+  animate:        ['animate', 'animation', 'animations'],
+};
+
+function resolveExistingCollection(canonical) {
+  if (collectionByName[canonical]) return collectionByName[canonical];
+  const aliases = COLLECTION_ALIASES[canonical];
+  if (!aliases) return null;
+  for (const c of collections) {
+    const norm = String(c.name).toLowerCase().trim();
+    if (aliases.includes(norm)) return c;
+  }
+  return null;
+}
+
 async function ensureCollection(name, withModes) {
-  if (collectionByName[name]) return collectionByName[name];
+  const existing = resolveExistingCollection(name);
+  if (existing) {
+    // Cache under the canonical key too so repeat calls in this run
+    // hit the fast path.
+    collectionByName[name] = existing;
+    return existing;
+  }
   const col = figma.variables.createVariableCollection(name);
   if (withModes && withModes.length > 1) {
     col.renameMode(col.modes[0].modeId, withModes[0]);
@@ -116,6 +238,7 @@ async function ensureCollection(name, withModes) {
     col.renameMode(col.modes[0].modeId, withModes[0]);
   }
   collectionByName[name] = col;
+  collections.push(col);
   return col;
 }
 
@@ -251,4 +374,4 @@ for (const a of actions) {
 return { applied, skipped, errors };
 `;
 
-module.exports = { WRITE_SCRIPT };
+module.exports = { WRITE_SCRIPT, tokenScopesFor, findCollectionAlias, COLLECTION_ALIASES };

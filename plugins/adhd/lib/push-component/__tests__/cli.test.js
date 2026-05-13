@@ -203,4 +203,58 @@ test('preflight subcommand produces a lint report', () => {
   assert.equal(result.status, 0, result.stderr);
   const report = fs.readFileSync(out, 'utf8');
   assert.match(report, /ADHD/);
+
+  // The preflight CLI also writes a JSON sidecar next to the markdown report
+  // (containing the engine's full structured output with per-violation nodeIds).
+  // This is what /adhd:push-component reads when --annotate is set.
+  const sidecar = out.replace(/\.md$/, '.json');
+  assert.ok(fs.existsSync(sidecar), 'expected JSON sidecar next to report');
+  const parsed = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
+  assert.ok(Array.isArray(parsed.structure));
+  assert.ok(Array.isArray(parsed.variable));
+});
+
+test('preflight forwards --var-id-map to the lint engine (required for STRUCT015/016 per-layer)', () => {
+  // Without varidmap the lint engine can't bridge node-level
+  // boundVariables (referenced by Figma id) to the variable names it
+  // reasons about — and Phase 10.7's interactive resolution depends on
+  // those rules firing. This guard test ensures the flag survives the
+  // push-component → lint-engine subprocess hop.
+  const ctx = tmp('ctx.json', JSON.stringify({
+    id: '5:1', name: 'X', type: 'COMPONENT_SET',
+    componentPropertyDefinitions: { size: { type: 'VARIANT', defaultValue: 'sm', variantOptions: ['xs', 'sm'] } },
+    children: [
+      {
+        id: '5:2', name: 'X/size=xs', type: 'COMPONENT', variantProperties: { size: 'xs' }, layoutMode: 'VERTICAL',
+        boundVariables: { letterSpacing: { id: 'VAR:bad', type: 'VARIABLE_ALIAS' } },
+        children: [],
+      },
+      {
+        id: '5:3', name: 'X/size=sm', type: 'COMPONENT', variantProperties: { size: 'sm' }, layoutMode: 'VERTICAL',
+        children: [],
+      },
+    ],
+  }));
+  // Figma variable bound at letter-spacing is in the spacing domain — STRUCT012.
+  const vars = tmp('vars.json', JSON.stringify({ 'Spacing/4': '1rem' }));
+  const idMap = tmp('varidmap.json', JSON.stringify({ 'VAR:bad': 'Spacing/4' }));
+  const css = tmp('globals.css', '@theme {}');
+  const cfg = tmp('adhd.config.ts', 'export default { naming: "kebab-case" };');
+  const out = tmp('report.md', '');
+  const result = spawnSync('node', [
+    CLI, 'preflight',
+    '--design-context', ctx,
+    '--variable-defs', vars,
+    '--var-id-map', idMap,
+    '--globals-css', css,
+    '--config', cfg,
+    '--output', out,
+  ], { encoding: 'utf8' });
+
+  const sidecar = JSON.parse(fs.readFileSync(out.replace(/\.md$/, '.json'), 'utf8'));
+  // STRUCT012 fires per-layer for the cross-domain binding. Confirms the
+  // varidmap forwarding worked end-to-end through the spawnSync call.
+  const struct012 = sidecar.structure.filter(v => v.rule === 'STRUCT012');
+  assert.ok(struct012.length > 0, 'STRUCT012 should fire when var-id-map enables per-layer binding checks');
+  assert.equal(result.status, 1);
 });

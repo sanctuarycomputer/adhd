@@ -49,6 +49,102 @@ test('does not emit violations for variables that match', () => {
   assert.equal(matches.length, 0);
 });
 
+test('Figma\'s raw {r,g,b,a} object compares equal to code\'s #hex (regression for the "primary" false-conflict)', () => {
+  // The user's reactor file kept reporting STRUCT016 on color/primary:
+  // "code #0a0a0a vs figma #0a0a0a — same value." Root cause was two
+  // bugs stacked: (1) the figma side arrives as {r:0.039,g:0.039,b:0.039,a:1}
+  // (Figma's raw color form, channels 0..1), and (2) inferDomain was
+  // receiving the COLLECTION-STRIPPED token ("primary"), so it returned
+  // "unknown" instead of "color" — meaning valuesMatch dispatched to
+  // the strict-equality default branch and never normalized the rgb
+  // object to hex.
+  const violations = categorizeVariables(
+    { 'color/primary': { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    { primitives: { '--color-primary': '#0a0a0a' }, exposure: {}, light: {}, dark: {} },
+  );
+  assert.equal(violations.length, 0);
+});
+
+test('synthesized Tailwind scale (spacing/0, radius/full, etc.) is recognized via the cli\'s default-loader, not just the @theme parser', () => {
+  // Regression for the user-reported false STRUCT015 on spacing/0:
+  // Tailwind v4 doesn\'t ship explicit `--spacing-N` variables in its
+  // @theme block — it has `--spacing: 0.25rem` and synthesizes the rest
+  // at build time. The lint engine's loadTailwindDefaultPrimitives must
+  // call synthesizeTailwindUtilityScale to mirror that, or else `spacing/0`
+  // (a perfectly canonical Tailwind path) shows up as missing-in-code.
+  //
+  // This test runs against the categorizer with a manually-built theme
+  // that mirrors what the cli's loader produces — guards the join point
+  // between the two modules.
+  const { synthesizeTailwindUtilityScale } = require('../../design-system/code-parser');
+  const primitives = {};
+  for (const t of synthesizeTailwindUtilityScale()) {
+    primitives[t.cssVar] = t.values.default.value;
+  }
+  const theme = { primitives, exposure: {}, light: {}, dark: {} };
+
+  // Canonical Tailwind paths match the synthesized scale → no violations.
+  assert.equal(categorizeVariables({ 'spacing/0': 0 }, theme).length, 0);
+  assert.equal(categorizeVariables({ 'spacing/4': 16 }, theme).length, 0);
+  assert.equal(categorizeVariables({ 'radius/full': '9999px' }, theme).length, 0);
+
+  // Non-canonical paths still flag as missing (correct — `spacing/space/0`
+  // isn\'t a Tailwind path; the designer needs to rename).
+  const v = categorizeVariables({ 'spacing/space/0': 0 }, theme);
+  assert.equal(v.length, 1);
+  assert.equal(v[0].status, 'missing');
+});
+
+test('shadcn pattern: --color-primary aliases --primary in :root, figma rgb-object resolves through the alias chain', () => {
+  // Pre-fix, the categorizer found `--color-primary: var(--primary)` in
+  // the @theme inline exposure layer, compared its raw `var(--primary)`
+  // string against Figma\'s `{r,g,b,a}` object, normalizeColor threw on
+  // the alias string, valuesMatch caught and returned false, and STRUCT016
+  // fired as a "false-positive" conflict on every shadcn setup. Fix:
+  // resolve the local alias through the :root layer and compare against
+  // the literal `--primary` value.
+  const css = `
+    :root { --primary: #0a0a0a; }
+    @theme inline { --color-primary: var(--primary); }
+  `;
+  const { parseTheme } = require('../theme-parser');
+  const theme = parseTheme(css);
+  const v = categorizeVariables(
+    { 'color/primary': { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    theme,
+  );
+  assert.equal(v.length, 0);
+});
+
+test('shadcn pattern: real value drift through an alias still surfaces as conflict', () => {
+  // Sanity check: the alias-resolution fix doesn\'t mask actual drift.
+  // If figma\'s value resolves to a different color than the alias chain
+  // points to, STRUCT016 must still fire.
+  const css = `
+    :root { --primary: #0a0a0a; }
+    @theme inline { --color-primary: var(--primary); }
+  `;
+  const { parseTheme } = require('../theme-parser');
+  const theme = parseTheme(css);
+  const v = categorizeVariables(
+    { 'color/primary': { r: 1, g: 0, b: 0, a: 1 } },  // real red, not the black alias target
+    theme,
+  );
+  assert.equal(v.length, 1);
+  assert.equal(v[0].status, 'conflict');
+});
+
+test('Capitalized Figma collection names still resolve their domain ("Color/primary" → color)', () => {
+  // Designer's collection is "Color" (capital C). Pre-fix, inferDomain
+  // was case-sensitive and missed this — domain came back "unknown" and
+  // the conflict surfaced even when values matched.
+  const violations = categorizeVariables(
+    { 'Color/primary': { r: 0.039, g: 0.039, b: 0.039, a: 1 } },
+    { primitives: { '--color-primary': '#0a0a0a' }, exposure: {}, light: {}, dark: {} },
+  );
+  assert.equal(violations.length, 0);
+});
+
 test('treats hex case as semantically identical', () => {
   const violations = categorizeVariables(
     { 'Primitives/color/x': '#5E3AEE' },
@@ -72,7 +168,7 @@ test('missing variables include a suggested-fix hint', () => {
   );
   const m = violations.find(v => v.status === 'missing');
   assert.ok(m);
-  assert.equal(m.hint, 'Run /adhd:pull-design-system to import this token.');
+  assert.equal(m.hint, 'Run /adhd:pull-tokens to import this token.');
 });
 
 test('does NOT flag a conflict when both sides are aliases (semantic→primitive)', () => {
