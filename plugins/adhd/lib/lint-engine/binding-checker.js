@@ -156,19 +156,32 @@ function checkBindings(rootNode, opts) {
   // Callers build these from the variable-categorizer's output.
   const missingVarNames = opts.missingVarNames instanceof Set ? opts.missingVarNames : new Set(opts.missingVarNames || []);
   const conflicts = opts.conflictsByName || {};
+  // Per-missing-variable metadata — { canonicalCandidate, looksSemantic,
+  // figmaValue } keyed by the categorizer's collection-stripped token AND
+  // (after cli.js's pre-expansion) the full `<collection>/<name>` form.
+  // Used to attach auto-fix info to STRUCT015 violations so the SKILL
+  // prompts can surface the right options per variable.
+  const missingMeta = opts.missingVarMeta || {};
   const fileKey = opts.fileKey;
 
   walk(rootNode, '', (node, nodePath) => {
     const seen = new Set();
-    const push = (rule, severity, varName, message) => {
+    const push = (rule, severity, varName, message, meta) => {
       const key = rule + '::' + varName;
       if (seen.has(key)) return;
       seen.add(key);
-      out.push({
+      const entry = {
         rule, severity,
         nodeId: node.id, nodePath, message,
         deepLink: deepLink(fileKey, node.id),
-      });
+      };
+      // Optional auto-fix metadata — surfaces in the JSON sidecar so
+      // the SKILL can build per-variable resolution prompts that
+      // include the canonical-rebind option when one exists.
+      if (meta && meta.canonicalCandidate) entry.canonicalCandidate = meta.canonicalCandidate;
+      if (meta && meta.looksSemantic) entry.looksSemantic = true;
+      if (meta && meta.figmaValue !== undefined) entry.figmaValueRaw = meta.figmaValue;
+      out.push(entry);
     };
 
     const handleBinding = (prop, alias) => {
@@ -196,10 +209,15 @@ function checkBindings(rootNode, opts) {
       }
 
       if (missingVarNames.has(varName)) {
+        // Look up the per-variable meta the cli built — find the entry
+        // whose key matches by collection-stripped form OR by full name.
+        const stripped = varName.includes('/') ? varName.split('/').slice(1).join('/') : varName;
+        const meta = missingMeta[varName] || missingMeta[stripped] || null;
         push('STRUCT015', 'error', varName,
           `Layer binds "${varName}" (to ${prop}), but that variable doesn't exist in code's design system. ` +
           `Pulling this component would generate code referencing a CSS variable globals.css never declares — rendering breaks at runtime.\n\n` +
-          `Fix in Figma: rebind the layer to a variable that IS in code, OR run /adhd:pull-tokens first to add this variable to globals.css. The pull-tokens flow shows the missing variable in its summary so you can choose whether to take it on.`);
+          `Fix in Figma: rebind the layer to a variable that IS in code, OR run /adhd:pull-tokens first to add this variable to globals.css. The pull-tokens flow shows the missing variable in its summary so you can choose whether to take it on.`,
+          meta);
       }
 
       const conflict = conflicts[varName];

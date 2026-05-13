@@ -220,16 +220,31 @@ node -e '
 
 For each entry (skip those whose `figmaValueNormalized` is null — value is too complex to write automatically; surface the variable in the final abort summary instead):
 
+Each STRUCT015 violation in the preflight JSON may carry two optional fields the prompt builder reads:
+
+- `canonicalCandidate` — set when the Figma value strictly equals a Tailwind canonical (e.g. `Font-Size/Body = 14px` ↔ `--text-sm = 0.875rem`). Surfaces the "Auto-fix: rebind in Figma" option.
+- `looksSemantic` — set when the Figma path looks semantic (`brand`, `accent`, `surface`, `background`, `primary`, etc.). Used to label the "Add as semantic" option prominently, so a brand color that coincidentally matches a Tailwind palette entry doesn't get accidentally rebound.
+
+Build the option list per violation. Always include the abort-flavored picks. Only surface "Auto-fix" when `canonicalCandidate` is present. Label "Add to globals.css" as "Add as semantic variable" when `looksSemantic` is true.
+
 ```
-Question: "`<figmaName>` is bound in this component but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`. What do you want to do?"
+Question: "`<figmaName>` is bound in this component but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`.<canonical-hint-if-any> What do you want to do?"
 Header: "Variable missing"
 Options:
-  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
+  <only when canonicalCandidate is set:>
+  - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
+  <always:>
+  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
   - "Don't sync — leave the annotation in Figma and abort"
   - "Abort the pull (no annotation change)"
 ```
 
-If "Add," record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array and continue to the next prompt. If "Don't sync" or "Abort," set `abortIntent = true` and continue collecting picks (so subsequent prompts still get answered — the designer might still want to record decisions on the rest before the run aborts). The difference between the two abort-flavored picks: "Don't sync" guarantees annotations land (via the helper above); "Abort" leaves annotations as-is (already-on if a prior run annotated them, off otherwise).
+The `<canonical-hint-if-any>` is "Tailwind's `<canonicalCandidate>` has the same value." appended to the question text when a canonical exists; omit otherwise.
+
+Pick handling:
+- **Auto-fix**: record `{ figmaName, canonicalCandidate, figmaValue }` to a running `auto-fix-input` array. Applied via use_figma in the "Apply OR abort" step below (rebind every layer + delete the source variable, same mechanic as STRUCT013 / STRUCT014 `--fix`).
+- **Add (semantic or not)**: record `{ figmaName, value: figmaValueNormalized }` to a running `actions-input` array.
+- **Don't sync / Abort**: set `abortIntent = true` and continue collecting picks. The difference: "Don't sync" guarantees annotations land via the helper above; "Abort" leaves annotations as-is.
 
 **If STRUCT016 violations exist (layer binds variable whose value differs from code's):**
 
@@ -267,7 +282,92 @@ value" on the per-variable prompts above.
 
 3. Exit 1.
 
-**Otherwise**, every STRUCT015 / STRUCT016 prompt was resolved (every pick was "Add" / "Take Figma's value"). Apply the queued writes:
+**Otherwise**, every STRUCT015 / STRUCT016 prompt was resolved (every pick was "Auto-fix" / "Add" / "Take Figma's value"). Apply the queued writes — Figma-side first, then code-side.
+
+### Apply auto-fix actions (Figma side)
+
+For each entry in `auto-fix-input`, run a use_figma rebind that mirrors STRUCT013's consolidation pattern: find the source variable by name, find or create the canonical destination variable in the right collection, walk every layer (across all pages) rewriting bindings from source → canonical, then delete the now-unreferenced source. Skip the entry if the source can't be found (already-rebound or deleted between extract and fix). Surface any rebind failures (paint mutations on instance overrides, etc.) in the final report — the rest of the run still proceeds.
+
+Substitute `__ACTIONS__` with the `auto-fix-input` JSON. Each entry is `{ figmaName: "typography/Font-Size/Body", canonicalCandidate: "--text-sm", figmaValue: 14 }`. The script handles the figma-side mutation:
+
+```js
+const ACTIONS = __ACTIONS__;
+
+// Resolve the canonical's Figma name from its --css-var form.
+// "--text-sm" → looking for a variable named "text/sm" (drop the
+// leading `--` and replace single hyphens with slashes, but only for
+// the canonical Tailwind families — leave the last segment intact so
+// "text-sm" doesn't become "text/sm"). For Tailwind's known prefixes
+// the split rule is: prefix + remaining → "<prefix>/<remaining>".
+function canonicalFigmaName(cssVar) {
+  const PREFIXES = ['color', 'spacing', 'radius', 'text', 'leading', 'tracking', 'font-weight', 'font', 'shadow', 'opacity', 'border-width', 'breakpoint', 'container', 'ease', 'animate', 'blur'];
+  const stripped = cssVar.replace(/^--/, '');
+  for (const p of PREFIXES.sort((a, b) => b.length - a.length)) {
+    if (stripped === p) return p;
+    if (stripped.startsWith(p + '-')) return p + '/' + stripped.slice(p.length + 1);
+  }
+  return stripped;
+}
+
+const allCollections = await figma.variables.getLocalVariableCollectionsAsync();
+async function findVarByName(name) {
+  for (const col of allCollections) {
+    for (const vid of col.variableIds) {
+      const v = await figma.variables.getVariableByIdAsync(vid);
+      if (v && v.name === name) return v;
+    }
+  }
+  return null;
+}
+
+const results = [];
+for (const action of ACTIONS) {
+  const source = await findVarByName(action.figmaName);
+  if (!source) {
+    results.push({ ...action, status: 'skipped', reason: 'source variable not found' });
+    continue;
+  }
+  const canonicalName = canonicalFigmaName(action.canonicalCandidate);
+  let canonical = await findVarByName(canonicalName);
+  if (!canonical) {
+    // Create the canonical in the same collection as the source so the
+    // designer's existing organization is respected. (If they pushed
+    // Tailwind tokens into a different collection earlier, the
+    // alias-aware collection lookup in figma-write-script handles it.)
+    canonical = figma.variables.createVariable(canonicalName, source.variableCollectionId, source.resolvedType);
+    canonical.scopes = source.scopes;
+    for (const [modeId, val] of Object.entries(source.valuesByMode)) {
+      canonical.setValueForMode(modeId, val);
+    }
+  }
+
+  let rebound = 0;
+  for (const page of figma.root.children) {
+    await figma.setCurrentPageAsync(page);
+    const nodes = page.findAll(() => true);
+    for (const node of nodes) {
+      if (!node.boundVariables) continue;
+      for (const [prop, alias] of Object.entries(node.boundVariables)) {
+        if (prop === 'fills' || prop === 'strokes' || prop === 'effects') continue;
+        if (alias && alias.id === source.id) { node.setBoundVariable(prop, canonical); rebound++; }
+      }
+      for (const kind of ['fills', 'strokes']) {
+        const arr = node[kind];
+        if (!Array.isArray(arr)) continue;
+        node[kind] = arr.map((paint) => paint?.boundVariables?.color?.id === source.id
+          ? figma.variables.setBoundVariableForPaint(paint, 'color', canonical)
+          : paint
+        );
+      }
+    }
+  }
+  try { source.remove(); results.push({ ...action, canonicalName, rebound, status: 'ok' }); }
+  catch (e) { results.push({ ...action, canonicalName, rebound, status: 'rebound-only', error: String(e) }); }
+}
+return { results };
+```
+
+### Apply add / take-Figma actions (code side)
 
 For each entry in `actions-input`, resolve the alias chain via the CLI to find where the write should actually land. The resolver handles the shadcn-style exposure pattern (`--color-primary: var(--primary)` in `@theme inline` → write lands at `--primary` in `:root`, not at `--color-primary` in `@theme`), avoiding the trap of overwriting an alias with a literal and breaking dark-mode propagation.
 

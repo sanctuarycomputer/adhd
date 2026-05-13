@@ -65,6 +65,7 @@ const { buildVariableSuggestions } = require('./variable-namer');
 const { checkBindings } = require('./binding-checker');
 const { detectTailwindDuplicates } = require('./tailwind-duplicate-detector');
 const { detectDuplicateCollections } = require('./collection-duplicate-detector');
+const { findCanonicalForValue, looksSemantic } = require('./canonical-matcher');
 const { formatReport } = require('./report-formatter');
 
 function parseArgs(argv) {
@@ -202,12 +203,25 @@ function main() {
     // binding-checker matches whichever form varIdMap emits.
     const missingVarNames = new Set();
     const conflictsByName = {};
+    // Per-missing-variable metadata that powers the per-variable
+    // resolution prompts in pull-component / push-component. The
+    // canonical candidate (when present) drives the "Auto-fix: rebind
+    // to <canonical>" option; the looksSemantic flag drives the
+    // emphasis on the "Add as semantic variable" option.
+    const missingVarMeta = {};
     for (const v of variableViolations) {
-      // Split by status: only `missing` entries go into missingVarNames,
-      // only `conflict` entries seed conflictsByName. Crossing them
-      // would over-fire STRUCT015 on every conflicting variable too.
       if (v.status === 'missing') {
         missingVarNames.add(v.token); // collection-stripped form
+        // `token` is the collection-stripped form (e.g. `Font-Size/Body`),
+        // which retains enough structure for the typography-family
+        // disambiguator to do its job. Pass v.domain explicitly so the
+        // matcher doesn't need to re-infer from a path missing its
+        // collection prefix.
+        missingVarMeta[v.token] = {
+          canonicalCandidate: findCanonicalForValue(v.token, v.figma, theme.primitives, { domain: v.domain }),
+          looksSemantic: looksSemantic(v.token),
+          figmaValue: v.figma,
+        };
       } else if (v.status === 'conflict') {
         conflictsByName[v.token] = { local: v.local, figma: v.figma, mode: v.mode };
       }
@@ -223,7 +237,7 @@ function main() {
     }
 
     const bindingViolations = [];
-    const opts = { fileKey, varIdMap, badSuggestionsByName, missingVarNames, conflictsByName };
+    const opts = { fileKey, varIdMap, badSuggestionsByName, missingVarNames, conflictsByName, missingVarMeta };
     if (designCtx && designCtx.mode === 'whole-file' && Array.isArray(designCtx.pages)) {
       for (const page of designCtx.pages) {
         for (const node of page.nodes) {

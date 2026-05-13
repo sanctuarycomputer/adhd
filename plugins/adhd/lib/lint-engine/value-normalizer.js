@@ -1,9 +1,12 @@
 'use strict';
 
+const { oklchStringToHex } = require('../design-system/oklch');
+
 const HEX_3 = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i;
 const HEX_6 = /^#([0-9a-f]{6})$/i;
 const HEX_8 = /^#([0-9a-f]{8})$/i;
 const RGB_RE = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i;
+const OKLCH_RE = /^oklch\(/i;
 
 function normalizeColor(input) {
   // Figma's raw color form — `{r, g, b, a}` with each channel 0..1. The
@@ -23,6 +26,16 @@ function normalizeColor(input) {
     throw new TypeError('normalizeColor: expected string or color object, got ' + typeof input);
   }
   const trimmed = input.trim();
+
+  // Tailwind v4's default theme ships every color in oklch() form
+  // (--color-red-500: oklch(63.7% 0.237 25.331), etc.). Without this
+  // branch the matcher can\'t cross-reference Figma hex / rgb values
+  // against the canonical scale — every comparison falls into the
+  // throw → caught → false-conflict path.
+  if (OKLCH_RE.test(trimmed)) {
+    try { return oklchStringToHex(trimmed).toLowerCase(); }
+    catch { /* fall through to other formats / throw below */ }
+  }
 
   const m3 = HEX_3.exec(trimmed);
   if (m3) {

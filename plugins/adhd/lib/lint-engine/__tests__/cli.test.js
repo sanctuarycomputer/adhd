@@ -454,6 +454,63 @@ test('STRUCT013: surfaces Figma variables that duplicate Tailwind defaults (stri
   assert.match(v.message, /\/adhd:lint --fix/);
 });
 
+test('STRUCT015: violation carries canonicalCandidate + looksSemantic when a Tailwind canonical matches the value', () => {
+  // The user-driven "auto-fix" pathway: when a missing variable\'s
+  // value matches an existing Tailwind canonical, surface that
+  // canonical on the violation so the SKILL can offer "Rebind to
+  // <canonical>" as a fourth option. Semantic-named variables (brand,
+  // accent, etc.) get a looksSemantic=true flag so the SKILL emphasizes
+  // the "Add as semantic" option for those, even when a coincidental
+  // value match exists.
+  const varDefs = tmp('vars.json', {
+    // Non-canonical name, value matches Tailwind --text-sm (0.875rem = 14px).
+    'typography/Font-Size/Body': 14,
+    // Semantic name, value matches Tailwind --color-white (literal #fff).
+    // Picked --color-white because it ships as a plain hex in the defaults;
+    // most Tailwind v4 colors ship as oklch() which converts to v4\'s
+    // redesigned palette, not the legacy hex values designers might type.
+    'color/brand': '#ffffff',
+  });
+  const idMap = tmp('varidmap.json', {
+    'VAR:fontBody': 'typography/Font-Size/Body',
+    'VAR:brand':    'color/brand',
+  });
+  const ctx = tmp('ctx.json', {
+    id: '5:1', name: 'Card', type: 'FRAME', layoutMode: 'VERTICAL',
+    fills: [{ type: 'SOLID', boundVariables: { color: { id: 'VAR:brand' } } }],
+    children: [
+      { id: '5:2', name: 'T', type: 'TEXT', boundVariables: { fontSize: { id: 'VAR:fontBody' } } },
+    ],
+  });
+  const cssPath = tmp('globals.css', `@theme {} :root {} :root[data-theme="dark"] {}`);
+  const configPath = tmp('adhd.config.ts', `export default { naming: 'kebab-case' };`);
+  const reportPath = path.join(os.tmpdir(), 'adhd-report-' + Date.now() + '.md');
+
+  const result = spawnSync('node', [
+    CLI, '--variable-defs', varDefs, '--var-id-map', idMap, '--design-context', ctx,
+    '--globals-css', cssPath, '--config', configPath, '--target', 'Card',
+    '--target-url', 'https://figma.com/design/abc?node-id=5-1', '--output', reportPath,
+  ], { encoding: 'utf8' });
+
+  const summary = JSON.parse(result.stdout);
+  const struct015 = summary.structure.filter(v => v.rule === 'STRUCT015');
+  // One per layer × one variable each = 2 STRUCT015.
+  assert.equal(struct015.length, 2);
+
+  const byVar = Object.fromEntries(struct015.map(v => [v.message.match(/binds "([^"]+)"/)[1], v]));
+  // Font-Size/Body has a canonical match (--text-sm), NOT semantic.
+  const body = byVar['typography/Font-Size/Body'];
+  assert.equal(body.canonicalCandidate, '--text-sm');
+  assert.notEqual(body.looksSemantic, true);
+  // color/brand has a value-match (--color-white) AND looks semantic.
+  // Matcher returns the match; SKILL uses looksSemantic to emphasize the
+  // "Add as semantic" option in the prompt — so a brand color that
+  // happens to be white doesn't get accidentally rebound to `--color-white`.
+  const brand = byVar['color/brand'];
+  assert.equal(brand.canonicalCandidate, '--color-white');
+  assert.equal(brand.looksSemantic, true);
+});
+
 test('STRUCT015 + STRUCT016: per-layer errors when a layer binds a missing/conflicting Figma variable', () => {
   // The user's main complaint: a component binds Figma variables like
   // "Font-Size/Body" that don't exist in code, but lint reported

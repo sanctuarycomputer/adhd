@@ -20,6 +20,7 @@ function inferDomain(figmaPath) {
   if (lc.startsWith('space/')   || lc.includes('/space/'))   return 'spacing';
   if (lc.startsWith('radius/')  || lc.includes('/radius/'))  return 'radius';
   if (lc.startsWith('shadow/')  || lc.includes('/shadow/'))  return 'shadow';
+  if (lc.startsWith('typography/') || lc.includes('/typography/')) return 'typography';
   if (lc.startsWith('font/')    || lc.includes('/font/') ||
       lc.includes('text-') || lc.includes('line-height')) return 'typography';
   return 'unknown';

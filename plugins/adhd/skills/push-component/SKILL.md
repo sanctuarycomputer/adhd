@@ -204,16 +204,21 @@ Skip this phase if neither STRUCT015 nor STRUCT016 fired — Phase 11's clean-pr
 
 Read `/tmp/adhd-push-component/preflight-report.json`. Group STRUCT015 + STRUCT016 violations by `figmaVarName` so a variable bound by multiple layers prompts ONCE, not once per layer. Normalize each Figma value to a write-ready string using `lib/lint-engine/value-normalizer.js` (same `node -e` snippet `/adhd:pull-component` uses); skip variables whose value won't normalize (rare — surfaces them in Phase 11 instead).
 
-For each unique STRUCT015 variable:
+For each unique STRUCT015 variable. The violation's `canonicalCandidate` (set when the value strictly equals a Tailwind canonical) and `looksSemantic` (set when the path looks semantic — brand, accent, etc.) drive which options appear and how they're labeled, same as `/adhd:pull-component`'s Phase 2.5.
 
 ```
-Question: "`<figmaName>` is bound by this push but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`. What do you want to do?"
+Question: "`<figmaName>` is bound by this push but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`.<canonical-hint-if-any> What do you want to do?"
 Header: "Variable missing"
 Options:
-  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"
+  <only when canonicalCandidate is set:>
+  - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
+  <always:>
+  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
   - "Don't sync — leave the annotation in Figma and roll back"
   - "Roll back the push (no annotation change)"
 ```
+
+The "Auto-fix" pick gets queued into `auto-fix-input` and applied via the same use_figma rebind script `/adhd:pull-component` Phase 2.5 uses. Subsequently, "Add" picks go to `code-side-actions`; "Don't sync" / "Roll back" picks set `abortIntent = true`.
 
 For each unique STRUCT016 variable:
 
