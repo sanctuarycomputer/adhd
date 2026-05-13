@@ -782,9 +782,75 @@ export function Logo({ colour = "dark", className = "" }: LogoProps) {
 
 This is first-pass code, not a stub. The developer can iterate from a working component.
 
-**For layout-driven components** (cards, buttons, forms — when the Figma variants contain multiple children, text, or nested frames):
+**For simple-layout-driven components** (a single root frame with a small, unambiguous tree of children — text + shape primitives + at most one level of nested frame):
 
-Reconstructing JSX from a flattened Figma capture is unreliable, so keep the stub:
+When the Figma source is trivially translatable, reconstruct real JSX. The lookup tables generated above carry the variant-driven values; the JSX wires them in. This produces first-pass code that renders correctly, not a stub.
+
+The translation rules:
+
+- **Root FRAME / COMPONENT** with `layoutMode === 'HORIZONTAL'` → `<span className="inline-flex ...">`; `'VERTICAL'` → `<span className="flex flex-col ...">`. Use `<span>` for inline-style containers (small components like avatars, badges, chips); use `<div>` when the auto-layout's sizing implies a block-level container (`primaryAxisSizingMode === 'FIXED'` width on horizontal layouts, etc.).
+- **Auto-layout properties** map directly to Tailwind utilities:
+  - `padding{Top,Right,Bottom,Left}` → `pt-/pr-/pb-/pl-` (use bound variable name when present; otherwise `p-[<N>px]` arbitrary form)
+  - `itemSpacing` → `gap-{name}` from the bound variable, or `gap-[<N>px]` arbitrary
+  - `primaryAxisAlignItems === 'CENTER'` and `counterAxisAlignItems === 'CENTER'` → `items-center justify-center`
+- **fills with `boundVariables.color`** → `bg-{strippedVarName}` (e.g. `color/gold` → `bg-gold`). For semantic names (brand, surface, accent, etc.), the Tailwind class follows the same naming convention as `@theme inline` exposes.
+- **strokes with `boundVariables.color`** → `border-{strippedVarName}` plus a `border` or `border-{N}` width class if `strokeWeight` is set.
+- **cornerRadius / *Radius with `boundVariables`** → `rounded-{strippedVarName}` (e.g. `radius/sm` → `rounded-sm`).
+- **opacity bound** → use the canonical opacity utility for the value (`opacity-50`, etc.) rather than a CSS-var binding — Tailwind handles opacity via class modifiers, not variables (see STRUCT011's opacity hint).
+- **Children:**
+  - **TEXT nodes** with static `characters` → `<span>literal text</span>` if the character is the same across variants. If it varies per instance (designer placeholders like "A", "B" for an avatar's initial), expose as a prop (`initial?: string`) defaulting to the first variant's value.
+  - **TEXT with bound `fontSize`** → wrap text in a span with `className={TABLE[variantValue]}` where TABLE is the appropriate lookup the SKILL just generated (typically `*_TEXT_SIZE`).
+  - **TEXT with bound `lineHeight` / `letterSpacing` / `fontWeight`** → same pattern; concatenate classes from the relevant lookup tables.
+  - **Nested FRAME (only one level deep allowed for this branch)** → another `<span>` / `<div>` with the same auto-layout translation.
+  - **Shape primitives** (RECTANGLE/ELLIPSE/etc. that aren't part of an SVG composition) → typically don't generate; the auto-layout container's `bg-` already handles solid color backgrounds. If a shape is decorative, use the vector-driven branch instead.
+
+Concrete example (UserAvatar — root FRAME + 1 TEXT child):
+
+```tsx
+export type UserAvatarSize = "sm" | "lg" | "xl";
+
+export interface UserAvatarProps {
+  size?: UserAvatarSize;
+  initial?: string;
+  className?: string;
+}
+
+export const USER_AVATAR_TEXT_SIZE: Record<UserAvatarSize, string> = {
+  sm: "text-sm",
+  lg: "text-sm",
+  xl: "text-2xl",
+};
+
+export const USER_AVATAR_TEXT_LEADING: Record<UserAvatarSize, string> = {
+  sm: "leading-normal",
+  lg: "leading-normal",
+  xl: "leading-7",
+};
+
+export const USER_AVATAR_BOX_SIZE: Record<UserAvatarSize, string> = {
+  sm: "w-8 h-8",
+  lg: "w-12 h-12",
+  xl: "w-16 h-16",
+};
+
+export function UserAvatar({ size = "sm", initial = "A", className = "" }: UserAvatarProps) {
+  return (
+    <span
+      className={`inline-flex items-center justify-center bg-gold rounded-sm aspect-square ${USER_AVATAR_BOX_SIZE[size]} ${className}`}
+    >
+      <span className={`text-primary tracking-normal ${USER_AVATAR_TEXT_SIZE[size]} ${USER_AVATAR_TEXT_LEADING[size]}`}>
+        {initial}
+      </span>
+    </span>
+  );
+}
+```
+
+Some judgment calls remain — Figma doesn't always carry explicit width/height for variants that "hug" their content, but the rendered component typically needs fixed boxes. Generate a `*_BOX_SIZE` (or equivalent) lookup with sane defaults derived from the variant's nominal size (`sm` → `w-8 h-8`, `lg` → `w-12 h-12`, `xl` → `w-16 h-16` — adjust to what the variant's actual rendered size looks like). Mark these in a comment as `// adhd: derived` so the developer knows which entries are designer-driven vs scaffold-derived.
+
+**For complex-layout-driven components** (cards, forms, anything with conditional rendering across variants, depth > 2, or children that hide / show per-variant):
+
+Reconstructing JSX from a flattened Figma capture is unreliable. Keep the stub:
 
 ```tsx
 export type <Component>Size = "<v1>" | "<v2>" | ...;
@@ -807,7 +873,13 @@ In this case the function body really is the developer's responsibility. The loo
 
 ### How to decide which branch
 
-Look at the variant subtrees you captured in Phase 3. A component is vector-driven when, across all variants, the leaf nodes are predominantly `VECTOR` / `BOOLEAN_OPERATION` / `ELLIPSE` / `RECTANGLE` / `STAR` / `POLYGON` / `LINE`, and there are no TEXT nodes or nested FRAMEs with multiple children. If you're unsure, treat it as layout-driven and keep the stub — the user can re-run pull-component once the file exists if they want to iterate.
+Walk down this rubric, picking the first matching branch:
+
+1. **Vector-driven** — across all variants, the leaf nodes are predominantly `VECTOR` / `BOOLEAN_OPERATION` / `ELLIPSE` / `RECTANGLE` / `STAR` / `POLYGON` / `LINE`, and there are no TEXT nodes or nested FRAMEs with multiple children. Inline SVG.
+2. **Simple-layout-driven** — root is a single FRAME / COMPONENT with `layoutMode !== 'NONE'` (auto-layout, so positioning is unambiguous), the tree depth is ≤ 2 (root + one level of children), every direct child is TEXT / a shape primitive / a simple-shape-only FRAME, and no variant axis hides / shows / reparents children (variant differences only affect bound values like sizes, colors, weights). Reconstruct real JSX per the translation rules above.
+3. **Complex-layout-driven** — anything that doesn't satisfy (1) or (2). Stub.
+
+When the rubric is ambiguous between (2) and (3), prefer (3): a `<span />` stub the developer fills in is strictly safer than mis-reconstructed JSX they then have to fix. The user can re-run /adhd:pull-component once the file exists, or hand-edit the function body — either way, the lookup tables stay in sync on subsequent pulls.
 
 ## Phase 8: Write mapping if scaffold mode
 
