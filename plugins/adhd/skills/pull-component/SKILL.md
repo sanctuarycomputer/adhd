@@ -412,54 +412,66 @@ Split missing further by the categorizer's `mode` field:
 
 If `missingPrimitives.length === 0 && missingSemantics.length === 0 && conflicts.length === 0`, skip this phase entirely.
 
-Otherwise, build a single `AskUserQuestion` prompt:
+### Per-variable prompts (same shape as Phase 2.5's STRUCT015 resolution)
+
+Phase 2.7 surfaces missing variables that Figma KNOWS ABOUT but no layer in this component binds — they were declared in the file but their values aren't actually referenced by the pulled subtree. The per-variable prompt is the same as Phase 2.5's STRUCT015 prompt, just sourced from a different list. Reuse the `canonicalCandidate` / `looksSemantic` fields the lint engine attaches to each missing entry (variable-categorizer's output already includes domain; the categorizer can be enhanced to attach the same auto-fix metadata STRUCT015 violations carry, or the SKILL can call `findCanonicalForValue` inline via a small node -e).
+
+For each missing primitive, prompt:
 
 ```
-Found new variables referenced by this frame:
-
-Primitives (add to @theme):
-  color/brand/600     #5e3aee
-  radius/lg           12px
-  shadow/popover      0 4px 12px rgba(0,0,0,.08)
-
-[if missingSemantics > 0]
-Semantic tokens with light/dark modes (not auto-addable):
-  color/text/primary  (light: #111, dark: #fafafa)
-  color/surface       (light: #fff, dark: #0a0a0a)
-Run /adhd:pull-tokens to add these — they need coordinated
-`:root`, `.dark`, and `@theme inline` edits.
-
-[if conflicts > 0]
-Variables with value mismatches (existing in code, different in Figma):
-  color/brand/500     code=#5e3aee  figma=#6a4cf2
-Run /adhd:pull-tokens to resolve.
-
+Question: "`<figmaName>` is referenced by Figma but doesn't exist in code's design system. Figma resolves it to `<figmaValue>`.<canonical-hint-if-any> What do you want to do?"
+Header: "Variable missing"
 Options:
-  [Yes — add the <N> primitives and continue]
-  [No — continue without adding (component pull may land raw values)]
-  [Cancel — abort, I'll run /adhd:pull-tokens first]
+  <only when canonicalCandidate is set:>
+  - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
+  <always:>
+  - "Add to globals.css (writes --<canonical>: <figmaValue>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
+  - "Skip this one (continue without adding; subsequent pull may land raw values for layers that bind it)"
+  - "Cancel — run /adhd:pull-tokens first (abort the pull)"
 ```
 
-On **Yes**: build an actions array for each primitive and invoke `applyToCss` (the helper `pull-tokens` already uses for CSS edits). Save under `/tmp/adhd-pull-component/new-globals.css`, then write to the configured `globals.css` path:
+Pick handling matches Phase 2.5's flow:
+- **Auto-fix**: queue into `auto-fix-input` (the same array Phase 2.5 builds). Applied via the same use_figma rebind script in Phase 2.5's "Apply" step.
+- **Add / Add as semantic**: queue into `actions-input` (also shared with Phase 2.5).
+- **Skip**: record nothing. The pull proceeds; if any layer in this component binds the variable, STRUCT015 would have already caught it in Phase 2.5 — so by the time we reach 2.7, "Skip" is genuinely safe.
+- **Cancel**: set `abortIntent = true`. Falls through Phase 2.5's "Apply OR abort" decision.
+
+Since Phase 2.7 runs AFTER Phase 2.5, the action arrays might already contain entries. Append rather than reset.
+
+### Computing `canonicalCandidate` for Phase 2.7 entries
+
+Phase 2.5's STRUCT015 violations get `canonicalCandidate` attached by `cli.js` because they're tied to specific layer bindings. Phase 2.7's source is the raw variable-categorizer output, which doesn't have the field attached. Compute it inline before building the prompts:
 
 ```bash
 node -e '
   const fs = require("fs");
-  const { applyToCss } = require("plugins/adhd/lib/design-system/code-writer.js");
-  const cssPath = process.argv[1];
-  const css = fs.readFileSync(cssPath, "utf8");
-  const actions = JSON.parse(process.argv[2]);
-  fs.writeFileSync(cssPath, applyToCss(css, actions));
-' "<globals.css path>" "$ACTIONS_JSON"
+  const { findCanonicalForValue, looksSemantic } = require("plugins/adhd/lib/lint-engine/canonical-matcher");
+  const { parseTheme } = require("plugins/adhd/lib/lint-engine/theme-parser");
+  const { synthesizeTailwindUtilityScale } = require("plugins/adhd/lib/design-system/code-parser");
+  const path = require("path");
+  // Build the same primitives map cli.js builds.
+  const defaultsCss = fs.readFileSync(path.resolve("plugins/adhd/lib/design-system/tailwind-defaults.css"), "utf8")
+    .replace(/@theme\s+default\s+inline\s*\{/g, "@theme inline {")
+    .replace(/@theme\s+default\s*\{/g, "@theme {");
+  const userCss = fs.readFileSync("<globals.css>", "utf8");
+  const userTheme = parseTheme(userCss);
+  const defaults = parseTheme(defaultsCss).primitives;
+  for (const t of synthesizeTailwindUtilityScale()) {
+    if (!(t.cssVar in defaults)) defaults[t.cssVar] = t.values.default.value;
+  }
+  const primitives = { ...defaults, ...userTheme.primitives };
+  // Enrich every "missing" variable-categorizer entry.
+  const stdout = JSON.parse(fs.readFileSync("/tmp/adhd-pull-component/stdout.json", "utf8"));
+  const enriched = (stdout.variable || []).filter(v => v.status === "missing").map(v => ({
+    ...v,
+    canonicalCandidate: findCanonicalForValue(v.token, v.figma, primitives, { domain: v.domain }),
+    looksSemantic: looksSemantic(v.token),
+  }));
+  fs.writeFileSync("/tmp/adhd-pull-component/phase27-missing.json", JSON.stringify(enriched));
+'
 ```
 
-Where each action is shaped `{ kind: "set-primitive", cssVar: "--" + token.replace(/\//g, "-"), value: <figma-value> }`. The token comes from each missing entry's `token` field (already collection-stripped).
-
-Print a confirmation: `Added <N> primitive(s) to globals.css: <comma-separated list>`. Then continue with Phase 3.
-
-On **No**: continue without writing. The component pull proceeds; un-tracked variables may land as raw values or `// adhd:off-system` markers in the lookup tables.
-
-On **Cancel**: abort with `Run /adhd:pull-tokens first to sync the design system, then re-run /adhd:pull-component.`
+Then iterate `phase27-missing.json` to build the prompts.
 
 Skip this phase if conflicts exist BUT no missing — there's nothing additive to do, just print: `Note: <N> variable value(s) differ between Figma and code. Run /adhd:pull-tokens to reconcile.` Then continue (conflicts don't block pull-component v1; the pull works with code's value, drift is reported in the final report).
 
