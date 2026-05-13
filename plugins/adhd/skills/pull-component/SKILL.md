@@ -232,10 +232,13 @@ Question: "`<figmaName>` is bound in this component but doesn't exist in code's 
 Header: "Variable missing"
 Options:
   <only when canonicalCandidate is set:>
-  - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
+  - "Auto-fix in Figma — rebind to `<canonicalCandidate>` (same value, no visual change)"
+  <always, with label varying by looksSemantic:>
+  - "Add in code as `--<cssVar>`"
+    when looksSemantic=true, replace the label with:
+  - "Add as semantic — keep `<figmaName>` in code (recommended for brand / accent / surface tokens)"
   <always:>
-  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
-  - "Don't sync — leave the annotation in Figma and abort"
+  - "Don't sync — annotate and abort"
   - "Abort the pull (no annotation change)"
 ```
 
@@ -423,11 +426,14 @@ Question: "`<figmaName>` is referenced by Figma but doesn't exist in code's desi
 Header: "Variable missing"
 Options:
   <only when canonicalCandidate is set:>
-  - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
+  - "Auto-fix in Figma — rebind to `<canonicalCandidate>` (same value, no visual change)"
+  <always, with label varying by looksSemantic:>
+  - "Add in code as `--<cssVar>`"
+    when looksSemantic=true, replace the label with:
+  - "Add as semantic — keep `<figmaName>` in code (recommended for brand / accent / surface tokens)"
   <always:>
-  - "Add to globals.css (writes --<canonical>: <figmaValue>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
-  - "Skip this one — continue without adding (no annotation; this component pull works fine without it)"
-  - "Annotate and abort — push the lint annotation and stop the pull"
+  - "Skip — continue without adding (no annotation; the component pull works fine without it)"
+  - "Annotate and abort"
 ```
 
 Pick handling matches Phase 2.5's flow:

@@ -211,10 +211,13 @@ Question: "`<figmaName>` is bound by this push but doesn't exist in code's desig
 Header: "Variable missing"
 Options:
   <only when canonicalCandidate is set:>
-  - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
+  - "Auto-fix in Figma — rebind to `<canonicalCandidate>` (same value, no visual change)"
+  <always, with label varying by looksSemantic:>
+  - "Add in code as `--<cssVar>`"
+    when looksSemantic=true, replace the label with:
+  - "Add as semantic — keep `<figmaName>` in code (recommended for brand / accent / surface tokens)"
   <always:>
-  - "Add to globals.css (writes --<canonical>: <figmaValueNormalized>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
-  - "Don't sync — leave the annotation in Figma and roll back"
+  - "Don't sync — annotate and roll back"
   - "Roll back the push (no annotation change)"
 ```
 
