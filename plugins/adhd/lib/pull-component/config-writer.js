@@ -327,4 +327,10 @@ module.exports = {
   readComponentMapping,
   reverseLookupPath,
   addComponentMapping,
+  // Lower-level parsing primitives — used by instance-resolver to
+  // walk the components map looking for a Figma node-id match.
+  findConfigObjectRange,
+  findComponentsRange,
+  iterateObjectEntries,
+  findFigmaUrlInEntry,
 };

@@ -2,10 +2,12 @@
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { readComponentMapping, addComponentMapping, reverseLookupPath } = require('./config-writer');
 const { computeFingerprint, relevantConfigFields } = require('./fingerprint');
 const { readComponentState, writeComponentState } = require('./config-state');
 const { resolveWriteTarget } = require('./resolve-write-target');
+const { resolveInstance } = require('./instance-resolver');
 const { parseTheme } = require('../lint-engine/theme-parser');
 const { figmaToCssVar } = require('../lint-engine/name-normalizer');
 
@@ -28,6 +30,7 @@ function printUsage() {
   cli.js fingerprint-check --config <adhd.config.ts> --path <relative-path> --ctx <ctx.json> --vars <vars.json>
   cli.js fingerprint-write --config <adhd.config.ts> --path <relative-path> --ctx <ctx.json> --vars <vars.json>
   cli.js resolve-actions   --globals <globals.css> --figma-path <figma-path> --value <hex-or-px> [--both-modes]
+  cli.js resolve-instance  --config <adhd.config.ts> --component-id <A:B> [--repo-root <path>]
 
 fingerprint-check:
   Computes the fingerprint of the fresh Figma extract + relevant config bits
@@ -128,6 +131,21 @@ function main() {
     const actions = resolveWriteTarget(cssVar, args.value, theme, opts);
     process.stdout.write(JSON.stringify({ cssVar, actions }, null, 2));
     process.exit(0);
+  }
+
+  if (cmd === 'resolve-instance') {
+    if (!args.config || !args['component-id']) {
+      console.error('Usage: resolve-instance --config <adhd.config.ts> --component-id <A:B> [--repo-root <path>]');
+      process.exit(2);
+    }
+    const configSrc = fs.readFileSync(args.config, 'utf8');
+    const out = resolveInstance({
+      configSrc,
+      componentId: args['component-id'],
+      repoRoot: args['repo-root'] || path.dirname(path.resolve(args.config)),
+    });
+    process.stdout.write(JSON.stringify(out, null, 2));
+    process.exit(out.matched ? 0 : 1);
   }
 
   if (cmd === 'fingerprint-write') {

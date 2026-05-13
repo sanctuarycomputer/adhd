@@ -66,7 +66,7 @@ Save resolved `{ mode, path, figmaUrl }` to working memory.
 
 Extract the Figma node-id from the URL (`?node-id=A-B` → `A:B`). Use `mcp__plugin_figma_figma__use_figma` to:
 1. Resolve the node by id; if not a `COMPONENT_SET` or top-level `COMPONENT`, abort: "Target node `<id>` is a `<type>`. Pull requires a Component Set."
-2. Serialize the node's structural data (the same way /adhd:lint does for scoped mode — fields: `id, name, type, layoutMode, padding*, itemSpacing, cornerRadius, *Radius, fills, strokes, effects, boundVariables, componentPropertyDefinitions, variantProperties, textStyleId, effectStyleId, characters, fontSize, fontName`, recursing into children).
+2. Serialize the node's structural data (the same way /adhd:lint does for scoped mode — fields: `id, name, type, layoutMode, padding*, itemSpacing, cornerRadius, *Radius, fills, strokes, effects, boundVariables, componentPropertyDefinitions, variantProperties, textStyleId, effectStyleId, characters, fontSize, fontName`, recursing into children). For `INSTANCE` nodes also capture `mainComponent.id` (as `mainComponentId`) and `componentProperties` — these drive Phase 7's "INSTANCE-of-tracked-component" branch of the scaffold (generate `<TrackedComponent {...props} />` + import instead of inlining the instance's markup).
 3. Collect the variable defs (walk boundVariables, look each up via `figma.variables.getVariableByIdAsync`, emit a `{ vars: { 'collection/name': value } }` map).
 
 Save both via `Bash` heredoc to:
@@ -481,6 +481,54 @@ Then iterate `phase27-missing.json` to build the prompts.
 
 Skip this phase if conflicts exist BUT no missing — there's nothing additive to do, just print: `Note: <N> variable value(s) differ between Figma and code. Run /adhd:pull-tokens to reconcile.` Then continue (conflicts don't block pull-component v1; the pull works with code's value, drift is reported in the final report).
 
+## Phase 2.8: INSTANCE-of-tracked pre-flight
+
+Only runs when scaffold mode produces a simple-layout-driven component (see Phase 7's rubric) AND the captured tree contains at least one INSTANCE node. Update mode skips this entirely — the existing React file already has its imports; we don't rewrite them.
+
+Walk every INSTANCE node in `/tmp/adhd-pull-component/ctx.json`, collecting unique `mainComponentId` values. For each, resolve against `adhd.config.ts`'s components map:
+
+```bash
+node plugins/adhd/lib/pull-component/cli.js resolve-instance \
+  --config adhd.config.ts \
+  --component-id "<mainComponentId>"
+```
+
+The command prints JSON with `{ matched, relPath, importPath, exportName, fileExists }` and exits 0 when matched, 1 when not. Save the resolved metadata per instance into `/tmp/adhd-pull-component/resolved-instances.json` keyed by `mainComponentId` — Phase 7 reads it to wire up imports and JSX.
+
+**If any INSTANCE is unmatched** (resolve-instance exited 1), abort the pull with a dependency-pull instruction:
+
+```
+✗ Cannot pull <ComponentName> — it has Figma instances of components that aren't tracked in adhd.config.ts:
+
+  • <figmaInstanceName> (mainComponentId: <A:B>) — not in components map
+
+Pull each missing component first, then re-run this command:
+
+  /adhd:pull-component https://figma.com/design/<fileKey>?node-id=<A>-<B>
+  ...
+  /adhd:pull-component <this-component's-url>
+
+Tracked dependencies must exist in adhd.config.ts so the parent component's
+JSX can import them. Without that, we'd generate a placeholder the developer
+has to wire by hand — and dependency-ordered pulls keep the design system
+clean.
+```
+
+The error lists each unmatched instance with its Figma name + component-id. The user runs the dependency pulls (in any order — they're independent), then re-runs the parent.
+
+**If any matched INSTANCE's `fileExists` is false** (config has the mapping but the React file isn't on disk), surface as a warning:
+
+```
+⚠ <ComponentName> imports <ExportName> from <importPath>, but the file at <relPath>
+  doesn't exist yet. The pull proceeds with the import statement; the developer
+  needs to run /adhd:pull-component <importPath> to create the dependency before
+  the parent compiles cleanly.
+```
+
+The warning doesn't block — the import statement still gets generated. The developer sees a compile error if they try to use the parent without pulling the dep, which is the same UX as any missing import in a TypeScript project.
+
+When every INSTANCE resolves cleanly (matched, file exists), this phase exits silently and Phase 3 proceeds.
+
 ## Phase 3: Read both sides
 
 **React side (update mode only):** use `Read` on `<react-path>` (from Phase 2). Identify:
@@ -803,6 +851,7 @@ The translation rules:
   - **TEXT with bound `lineHeight` / `letterSpacing` / `fontWeight`** → same pattern; concatenate classes from the relevant lookup tables.
   - **Nested FRAME (only one level deep allowed for this branch)** → another `<span>` / `<div>` with the same auto-layout translation.
   - **Shape primitives** (RECTANGLE/ELLIPSE/etc. that aren't part of an SVG composition) → typically don't generate; the auto-layout container's `bg-` already handles solid color backgrounds. If a shape is decorative, use the vector-driven branch instead.
+  - **INSTANCE of a tracked component** (e.g. an `Avatar` instance inside a `Card`) → resolve the instance's `mainComponentId` against `adhd.config.ts`'s `components` map via `node plugins/adhd/lib/pull-component/cli.js resolve-instance --config adhd.config.ts --component-id <A:B>`. When it returns `matched: true`, generate `<ExportName prop1={...} prop2={...} />` and add an `import { ExportName } from "<importPath>";` to the top of the file. Translate the instance's `componentProperties` into JSX props: convert each key to the target casing (kebab → camel, etc. per `adhd.config.ts`'s `naming`), pass string-literal variants as JSX strings (`<UserAvatar size="lg" />`), boolean variants as boolean attributes (`<UserAvatar disabled />`). Drop any visual override on the instance with a `// adhd: dropped override on <child>` comment — the developer either lifts the override into a new variant in Figma or accepts the unstyled instance. (See the "INSTANCE-of-tracked pre-flight" subsection below — if any INSTANCE in the captured tree is NOT in `adhd.config.ts`, the SKILL aborts BEFORE Phase 7 with a dependency-pull instruction; you never reach this branch with an unresolvable instance.)
 
 Concrete example (UserAvatar — root FRAME + 1 TEXT child):
 
@@ -848,6 +897,37 @@ export function UserAvatar({ size = "sm", initial = "A", className = "" }: UserA
 
 Some judgment calls remain — Figma doesn't always carry explicit width/height for variants that "hug" their content, but the rendered component typically needs fixed boxes. Generate a `*_BOX_SIZE` (or equivalent) lookup with sane defaults derived from the variant's nominal size (`sm` → `w-8 h-8`, `lg` → `w-12 h-12`, `xl` → `w-16 h-16` — adjust to what the variant's actual rendered size looks like). Mark these in a comment as `// adhd: derived` so the developer knows which entries are designer-driven vs scaffold-derived.
 
+Concrete example (UserCard — root FRAME with a `UserAvatar` INSTANCE + a TEXT child). Phase 2.8 has already resolved the avatar's component-id to `{ importPath: "@/components/user-avatar", exportName: "UserAvatar" }`:
+
+```tsx
+import { UserAvatar } from "@/components/user-avatar";
+
+export type UserCardTheme = "neutral" | "brand";
+
+export interface UserCardProps {
+  theme?: UserCardTheme;
+  name?: string;
+  initial?: string;
+  className?: string;
+}
+
+export const USER_CARD_BG: Record<UserCardTheme, string> = {
+  neutral: "bg-surface",
+  brand: "bg-brand-surface",
+};
+
+export function UserCard({ theme = "neutral", name = "Hugh", initial = "H", className = "" }: UserCardProps) {
+  return (
+    <div className={`flex items-center gap-3 p-4 rounded-md ${USER_CARD_BG[theme]} ${className}`}>
+      <UserAvatar size="lg" initial={initial} />
+      <span className="text-foreground text-base font-medium">{name}</span>
+    </div>
+  );
+}
+```
+
+The instance's `componentProperties` from the Figma extract (`{ Size: "lg" }`) became `size="lg"` on the JSX. The container handles its own auto-layout, padding, gap, and theme-driven background; the avatar is just a `<UserAvatar />` reference. Subsequent updates to the avatar component (renaming its export, adding props, changing variants) flow through the import — UserCard doesn't need to be re-pulled unless its own structure changes.
+
 **For complex-layout-driven components** (cards, forms, anything with conditional rendering across variants, depth > 2, or children that hide / show per-variant):
 
 Reconstructing JSX from a flattened Figma capture is unreliable. Keep the stub:
@@ -876,7 +956,7 @@ In this case the function body really is the developer's responsibility. The loo
 Walk down this rubric, picking the first matching branch:
 
 1. **Vector-driven** — across all variants, the leaf nodes are predominantly `VECTOR` / `BOOLEAN_OPERATION` / `ELLIPSE` / `RECTANGLE` / `STAR` / `POLYGON` / `LINE`, and there are no TEXT nodes or nested FRAMEs with multiple children. Inline SVG.
-2. **Simple-layout-driven** — root is a single FRAME / COMPONENT with `layoutMode !== 'NONE'` (auto-layout, so positioning is unambiguous), the tree depth is ≤ 2 (root + one level of children), every direct child is TEXT / a shape primitive / a simple-shape-only FRAME, and no variant axis hides / shows / reparents children (variant differences only affect bound values like sizes, colors, weights). Reconstruct real JSX per the translation rules above.
+2. **Simple-layout-driven** — root is a single FRAME / COMPONENT with `layoutMode !== 'NONE'` (auto-layout, so positioning is unambiguous), the tree depth is ≤ 2 (root + one level of children), every direct child is TEXT / a shape primitive / a simple-shape-only FRAME / an `INSTANCE` of a component tracked in `adhd.config.ts` (resolved during Phase 2.8 — INSTANCE references collapse to a single `<TrackedComponent />` JSX node from the parent's perspective, so they count as a single child for depth purposes regardless of the resolved component's complexity), and no variant axis hides / shows / reparents children (variant differences only affect bound values like sizes, colors, weights). Reconstruct real JSX per the translation rules above.
 3. **Complex-layout-driven** — anything that doesn't satisfy (1) or (2). Stub.
 
 When the rubric is ambiguous between (2) and (3), prefer (3): a `<span />` stub the developer fills in is strictly safer than mis-reconstructed JSX they then have to fix. The user can re-run /adhd:pull-component once the file exists, or hand-edit the function body — either way, the lookup tables stay in sync on subsequent pulls.
