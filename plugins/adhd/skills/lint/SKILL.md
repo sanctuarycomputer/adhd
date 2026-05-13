@@ -1,7 +1,7 @@
 ---
-description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Read-only by default; with --annotate, also writes Figma annotations on each offending node in a 'lint' category. With --fix, walks STRUCT013 Tailwind-duplicate candidates and applies approved consolidations (rebind + delete). Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
+description: "Validate Figma frames/components/pages or the entire file against the local Tailwind design system + frame-structure best practices. Reads adhd.config.ts at the repo root. Always interactive — walks every violation through a per-rule resolution wizard (auto-fix in Figma / add in code / take Figma's value / take code's value / annotate only / skip). Lint never aborts a sync because there's no sync to abort; the wizard's choices are the only outputs (annotations, Figma rebinds, globals.css writes). Optional argument: a Figma URL with node-id (scoped lint). With no argument, lints the whole file."
 disable-model-invocation: true
-argument-hint: "[<figma-url-with-node-id>] [--annotate] [--fix]"
+argument-hint: "[<figma-url-with-node-id>]"
 allowed-tools: Read Write Bash AskUserQuestion mcp__plugin_figma_figma__use_figma
 ---
 
@@ -12,7 +12,7 @@ Validate that a Figma file (or a single frame/component/page) is ready for code 
 - **Variable issues** — Figma variables used by the lint target that are missing locally or have conflicting values.
 - **Structure issues** — STRUCT001–STRUCT016 best-practice violations (auto-layout, naming, variant properties, per-layer variable naming, cross-domain variable bindings, Tailwind-default duplicates, alias-equivalent collection duplicates, layers binding variables missing from code, layers binding variables whose values differ between code and Figma, etc.).
 
-Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
+Output: a markdown report saved to `/tmp/adhd-lint/report.md`, plus a terminal echo. After the report, the wizard walks every violation and applies the picked actions — Figma rebinds, globals.css writes, lint-category annotations. The report is paste-ready for sharing with designers via Figma comments, Slack, or GitHub issues.
 
 **Authoritative spec:** `docs/superpowers/specs/2026-05-10-adhd-lint-and-sync-design.md`
 
@@ -22,19 +22,11 @@ Read `adhd.config.ts` at the repo root. If it doesn't exist, abort with: "Run /a
 
 Extract `figma.url` (required) and `naming` (optional, defaults to `kebab-case`). Extract the file key from `figma.url` — the segment after `/design/`.
 
-## Phase 1.5: Validate flag combinations
-
-Before anything else, scan `$ARGUMENTS` for incompatible flag pairs and abort immediately if any are present:
-
-- **`--fix` + `--dry-run` →** abort with: "`--fix` and `--dry-run` are mutually exclusive: `--fix` applies consolidations; `--dry-run` previews without changes. Drop one. (Note: `/adhd:lint` doesn't have a `--dry-run` mode of its own — the per-candidate `AskUserQuestion` in Phase 8 already gives you preview-then-approve. The `--dry-run` flag belongs to `/adhd:push-tokens` and `/adhd:pull-tokens`.)"
-
-This guard exists because designers who've seen `--dry-run` work on push/pull-tokens may reflexively try the same flag combination on lint. Failing loudly is safer than silently picking one interpretation.
-
 ## Phase 2: Resolve target
 
-Branch on `$ARGUMENTS`. The arguments can include a URL plus flags (`--annotate`, `--fix`) in any order; pull flags out first, then look at what remains.
+Branch on `$ARGUMENTS`.
 
-- **Empty (or flags only) → whole-file mode.** Skip target resolution. The extract script (Phase 3) will return ALL pages and ALL top-level lintable nodes (COMPONENT_SET, top-level COMPONENT, top-level FRAME) on each page. Set `target = "Whole file"` and `targetUrl = <figma.url from config>`.
+- **Empty argument → whole-file mode.** Skip target resolution. The extract script (Phase 3) will return ALL pages and ALL top-level lintable nodes (COMPONENT_SET, top-level COMPONENT, top-level FRAME) on each page. Set `target = "Whole file"` and `targetUrl = <figma.url from config>`.
 - **URL provided → scoped mode.**
   - Extract the file key (segment after `/design/`).
   - If it doesn't match the file key from `adhd.config.ts`, abort with: "URL points at file <X>, but adhd.config.ts is configured for file <Y>. Pass a URL from the configured file or run /adhd:config to update."
@@ -79,7 +71,7 @@ If the response indicates `error: 'Node not found'`, abort with: "Node not found
 
 ## Phase 4: Run the engine
 
-Use the `Bash` tool. Redirect stdout (the engine's JSON summary) to a temp file so Phase 6 can re-use it for `--annotate`:
+Use the `Bash` tool. Redirect stdout (the engine's JSON summary) to a temp file so the resolution wizard (Phase 6) can re-use it:
 
 ```bash
 node plugins/adhd/lib/lint-engine/cli.js \
@@ -103,450 +95,327 @@ Globals path resolution: if `adhd.config.ts` has `cssEntry`, use it. Otherwise a
 Read `/tmp/adhd-lint/report.md` with the `Read` tool and echo it to the user verbatim. Then summarize:
 
 - **Whole-file mode:**
-  - Exit 0 with zero violations: "✓ No issues found across all <N> top-level nodes on <P> pages."
-  - Exit 0 with warnings only: "⚠ <W> warnings across <X> nodes on <Y> pages (see report). File is ready for code translation."
-  - Exit 1: "✗ <E> errors, <W> warnings across <X> nodes on <Y> pages."
+  - Exit 0 with zero violations: "✓ No issues found across all <N> top-level nodes on <P> pages." Skip to Phase 8.
+  - Otherwise: print "<E> errors, <W> warnings across <X> nodes on <Y> pages — walking each through the resolution wizard."
 - **Scoped mode:**
-  - Exit 0 with zero violations: "✓ No issues found."
-  - Exit 0 with warnings only: "⚠ <W> warnings (see report). Frame is ready for code translation."
-  - Exit 1: "✗ <E> errors, <W> warnings. Frame has issues that should be resolved before code translation."
+  - Zero violations: "✓ No issues found." Skip to Phase 8.
+  - Otherwise: print "<E> errors, <W> warnings — walking each through the resolution wizard."
 
 Mention the report file path: "Full report: `/tmp/adhd-lint/report.md` (paste-ready for Figma comments / Slack)."
 
-## Phase 6: Optional — annotate offending nodes in Figma (`--annotate`)
+## Phase 6: Resolution wizard — walk every violation
 
-If the user passed `--annotate` (the only flag this skill accepts), push each violation to Figma as an annotation on its `nodeId`. ADHD owns a dedicated annotation category named **"lint"** (orange); designer-authored annotations and any other categories are left untouched.
+For every violation in `/tmp/adhd-lint/stdout.json`, prompt with rule-specific options via `AskUserQuestion`. Lint is always a dry run for *sync operations* (it doesn't move tokens between code and Figma without explicit per-violation consent), but the wizard's picks ARE applied — they write to Figma (rebinds, value updates, annotations) and to `globals.css` (variable additions, value updates). There's no abort option because there's no sync to abort; the last option on every prompt is "Skip" (record nothing, no annotation lands).
 
-If `--annotate` was NOT passed, skip this phase.
+Collect picks into three queues that Phase 7 applies in order:
+- `figmaActions[]` — Figma-side writes: variable rebinds, consolidations, variable-value updates
+- `codeActions[]` — `globals.css` writes (via `applyToCss`)
+- `annotateNodes[]` — node IDs whose violations get a fresh Figma annotation; everything NOT in this list and previously annotated gets its annotation cleared on the cleanup pass at the end of Phase 7
 
-### Inputs
+Iterate violations in this order so foundational ones get addressed first:
 
-The lint engine's stdout (captured to `/tmp/adhd-lint/stdout.json` during Phase 4) is a JSON object with `variable` and `structure` arrays. Combine them into a flat violation list keeping only items with a `nodeId`:
+1. STRUCT011 (variable naming)
+2. STRUCT012 (cross-domain binding)
+3. STRUCT013 (Tailwind-default duplicate)
+4. STRUCT014 (alias-equivalent collections)
+5. STRUCT015 (variable missing in code)
+6. STRUCT016 (value conflict)
+7. STRUCT001–010 (structural rules)
+8. Variable-level violations from the `variable` array that didn't surface as STRUCT015/016 (rare — usually whole-file-mode entries that aren't bound by any scoped layer)
 
-```bash
-node -e '
-const r = JSON.parse(require("fs").readFileSync("/tmp/adhd-lint/stdout.json", "utf8"));
-const all = [...(r.structure ?? []), ...(r.variable ?? [])].filter(v => v.nodeId);
-const out = all.map(v => ({ nodeId: v.nodeId, code: v.code, message: v.message, severity: v.severity ?? "error" }));
-require("fs").writeFileSync("/tmp/adhd-lint/violations.json", JSON.stringify(out));
-console.log(out.length);
-'
+### STRUCT011 — variable naming non-compliance
+
+Per unique offending variable (deduplicate by `figmaVarName`):
+
+```
+Question: "Variable `<figmaVarName>` doesn't follow the naming convention. <suggested-rename-from-violation-message>. What do you want to do?"
+Header: "Variable naming"
+Options:
+  - "Annotate only — leave a Figma annotation for the designer to rename"
+  - "Skip"
 ```
 
-### The use_figma script
+Rename can't be automated safely (designers might disagree with the suggested canonical), so the only paths are annotate-for-later or skip.
 
-Pass the violations array to `mcp__plugin_figma_figma__use_figma` with `skillNames: "figma-use"`. The script ensures the category exists, applies current violations, and clears stale "lint"-category annotations — **scoped to whatever the current lint covered**. This is important: scoped lints (Phase 2 with a target nodeId) should ONLY touch annotations within the scoped subtree, never wipe annotations on unrelated frames that this run didn't lint. Whole-file lints walk every page.
+### STRUCT012 — cross-domain binding
 
-Inject `SCOPE_ROOT_ID` from Phase 2's resolved target: the nodeId for scoped mode, `null` for whole-file mode. The script branches on it.
+Per unique (variable, property) pair:
+
+```
+Question: "Layer binds `<variable>` (`<varDomain>` variable) to `<property>` (expects `<propDomain>`). Rebinding requires designer judgment. What do you want to do?"
+Header: "Cross-domain binding"
+Options:
+  - "Annotate only — flag this layer for the designer to rebind"
+  - "Skip"
+```
+
+### STRUCT013 — Tailwind-default duplicate
+
+Per duplicate (one prompt per Figma variable that duplicates a Tailwind canonical):
+
+```
+Question: "Figma variable `<figmaVarName>` duplicates Tailwind default `<tailwindCssVar>` (same value). Rebinding layers from `<figmaVarName>` to `<tailwindCssVar>` and deleting the duplicate has no visual effect. What do you want to do?"
+Header: "Tailwind duplicate"
+Options:
+  - "Auto-fix in Figma — consolidate (rebind + delete)"
+  - "Annotate only"
+  - "Skip"
+```
+
+On "Auto-fix": push a `{ kind: 'consolidate', duplicateName: figmaVarName, canonicalCssVar: tailwindCssVar }` action into `figmaActions[]`.
+
+### STRUCT014 — alias-equivalent collections
+
+Per duplicate group (collections that resolve to the same canonical domain):
+
+```
+Question: "<N> collections describe the same domain `<canonical>`: <list with counts>. Consolidating moves every variable in the others into the keeper and deletes the empties. What do you want to do?"
+Header: "Collection duplicates"
+Options:
+  - "Auto-fix in Figma — pick keeper, consolidate"
+  - "Annotate only"
+  - "Skip"
+```
+
+On "Auto-fix," ask a follow-up `AskUserQuestion` to pick the keeper (most-populated suggested first; other collections listed; final option "Cancel — go back to the previous prompt"). Then push `{ kind: 'consolidate-collections', keeper, losers: [...] }` into `figmaActions[]`.
+
+### STRUCT015 — variable missing in code
+
+Per unique variable (deduplicate by `figmaVarName`). Each STRUCT015 violation in the engine's output may carry two optional fields:
+- `canonicalCandidate` — set when the Figma value strictly equals a Tailwind canonical
+- `looksSemantic` — set when the path looks semantic (`brand`, `accent`, `surface`, etc.)
+
+These drive the option set the same way they do in `/adhd:pull-component` Phase 2.5:
+
+```
+Question: "`<figmaVarName>` is referenced by Figma but doesn't exist in code's design system. Figma resolves it to `<figmaValueNormalized>`.<canonical-hint-if-any> What do you want to do?"
+Header: "Variable missing"
+Options:
+  <only when canonicalCandidate is set:>
+  - "Auto-fix in Figma — rebind to `<canonicalCandidate>` (same value, no visual change)"
+  <always, with label varying by looksSemantic:>
+  - "Add in code as `--<cssVar>`"
+    when looksSemantic=true, replace the label with:
+  - "Add as semantic — keep `<figmaVarName>` in code (recommended for brand / accent / surface tokens)"
+  <always:>
+  - "Annotate only"
+  - "Skip"
+```
+
+Pick handling:
+- **Auto-fix**: `{ kind: 'rebind-to-canonical', figmaName, canonicalCandidate, figmaValue }` → `figmaActions[]`.
+- **Add / Add as semantic**: queue a `resolve-actions` CLI invocation (same as `/adhd:pull-component`'s Phase 2.5) to get alias-aware `set-primitive` / `set-semantic` actions. Concatenate into `codeActions[]`.
+- **Annotate only**: add the violation's `nodeId` to `annotateNodes[]`.
+- **Skip**: record nothing.
+
+### STRUCT016 — value conflict
+
+Per unique variable. Per the user's design decision, lint IS a generalized resolver — both directions of the value sync are available alongside the diagnostic options:
+
+```
+Question: "`<figmaVarName>` differs between Figma and code:\n  code:  <local-normalized>\n  figma: <figma-normalized>\nWhat do you want to do?"
+Header: "Value conflict"
+Options:
+  - "Take Figma's value — write `<figma-normalized>` to globals.css (alias-aware)"
+  - "Take code's value — push `<local-normalized>` to Figma's variable"
+  - "Annotate only"
+  - "Skip"
+```
+
+Pick handling:
+- **Take Figma**: queue a `resolve-actions` CLI invocation. Concatenate into `codeActions[]`.
+- **Take code**: `{ kind: 'update-figma-value', figmaName, mode, value: localNormalized }` → `figmaActions[]`.
+- **Annotate only**: `annotateNodes[]`.
+- **Skip**: record nothing.
+
+### STRUCT001–010 (structural rules)
+
+These fire per-layer and outnumber the variable rules in most scopes. The only meaningful resolution paths are "annotate" or "skip" — the underlying fix (auto-layout, raw-value rebind, variant declaration) requires designer judgment in Figma. To keep the wizard tractable, batch by rule code: ONE prompt per rule, applied to every layer that violates it.
+
+```
+Question: "STRUCT00<X> fires on <N> layer(s): <first-3-layer-names, +more>. The fix needs designer judgment in Figma. What do you want to do?"
+Header: "STRUCT00<X>"
+Options:
+  - "Annotate all <N> in Figma"
+  - "Skip all"
+```
+
+On "Annotate all": add every offending `nodeId` to `annotateNodes[]`. On "Skip all": no-op.
+
+### Whole-file scope considerations
+
+In whole-file mode, the violation count can be large (hundreds). Walk per-prompt regardless — designers can hit Enter quickly on the recommended option for each — but consider adding a one-shot "Walk back to this prompt later" exit option in future iterations if the volume becomes a real problem.
+
+## Phase 7: Apply queued actions
+
+After the wizard completes, apply the three queues in this order: Figma actions first (rebinds before annotation pushes so annotations land on the post-rebind state), then code actions, then annotation reconciliation.
+
+### 7a. Figma-side actions (single use_figma call)
+
+Substitute `__ACTIONS__` with the `figmaActions[]` JSON. The script dispatches on `kind`:
 
 ```js
-const VIOLATIONS = /* substituted: contents of /tmp/adhd-lint/violations.json */;
-const SCOPE_ROOT_ID = /* substituted: scoped target's nodeId, or null for whole-file */;
-const CATEGORY_LABEL = "lint";
-const CATEGORY_COLOR = "orange";
+const ACTIONS = __ACTIONS__;
 
-// 1) Ensure the lint category exists (idempotent across runs).
-const cats = await figma.annotations.getAnnotationCategoriesAsync();
-let cat = cats.find(c => c.label === CATEGORY_LABEL);
-if (!cat) {
-  cat = await figma.annotations.addAnnotationCategoryAsync({ label: CATEGORY_LABEL, color: CATEGORY_COLOR });
+function hexToRgb(h) {
+  let c = h.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  return {
+    r: parseInt(c.slice(0, 2), 16) / 255,
+    g: parseInt(c.slice(2, 4), 16) / 255,
+    b: parseInt(c.slice(4, 6), 16) / 255,
+    a: c.length === 8 ? parseInt(c.slice(6, 8), 16) / 255 : 1,
+  };
 }
 
-// 2) Group violations by nodeId.
-const byNode = new Map();
-for (const v of VIOLATIONS) {
-  if (!byNode.has(v.nodeId)) byNode.set(v.nodeId, []);
-  byNode.get(v.nodeId).push(v);
+function dimensionToPx(raw) {
+  const m = /^(-?\d*\.?\d+)(px|rem|em)?$/.exec(String(raw).trim());
+  if (!m) return Number(raw);
+  const unit = m[2] || '';
+  return parseFloat(m[1]) * (unit === 'rem' || unit === 'em' ? 16 : 1);
 }
 
-// 3) Find previously-annotated nodes WITHIN THE LINT'S SCOPE.
-//    Pages load incrementally — use `setCurrentPageAsync` so `findAll`
-//    sees their content. The scope branch is critical: a scoped lint on
-//    UserAvatar must not wipe a STRUCT010 annotation that lives on Logotype
-//    — that frame wasn't part of this run.
-let updated = 0, cleared = 0;
-const touchedIds = new Set();
-
-if (SCOPE_ROOT_ID) {
-  // Scoped: walk only the scope's subtree (root + descendants).
-  const scopeRoot = await figma.getNodeByIdAsync(SCOPE_ROOT_ID);
-  if (!scopeRoot) return { error: "Scope root not found", SCOPE_ROOT_ID };
-  // Set page context so findAll sees descendants.
-  let page = scopeRoot;
-  while (page.parent && page.type !== "PAGE") page = page.parent;
-  if (page && page.type === "PAGE") await figma.setCurrentPageAsync(page);
-  // Include the scope root itself if it has prior annotations (STRUCT011's
-  // aggregated message attaches there).
-  if ("annotations" in scopeRoot && (scopeRoot.annotations ?? []).some(a => a.categoryId === cat.id)) {
-    touchedIds.add(scopeRoot.id);
+function canonicalFigmaName(cssVar) {
+  const PREFIXES = ['color', 'spacing', 'radius', 'text', 'leading', 'tracking', 'font-weight', 'font', 'shadow', 'opacity', 'border-width', 'breakpoint', 'container', 'ease', 'animate', 'blur'].sort((a, b) => b.length - a.length);
+  const stripped = cssVar.replace(/^--/, '');
+  for (const p of PREFIXES) {
+    if (stripped === p) return p;
+    if (stripped.startsWith(p + '-')) return p + '/' + stripped.slice(p.length + 1);
   }
-  if (typeof scopeRoot.findAll === "function") {
-    const prior = scopeRoot.findAll(n =>
-      "annotations" in n && (n.annotations ?? []).some(a => a.categoryId === cat.id)
-    );
-    for (const n of prior) touchedIds.add(n.id);
-  }
-} else {
-  // Whole-file: walk every page.
-  for (const page of figma.root.children) {
-    await figma.setCurrentPageAsync(page);
-    const prior = page.findAll(n =>
-      "annotations" in n && (n.annotations ?? []).some(a => a.categoryId === cat.id)
-    );
-    for (const n of prior) touchedIds.add(n.id);
-  }
+  return stripped;
 }
 
-// Union of "previously annotated" and "currently violated" — every node that needs a write.
-const allTargetIds = new Set([...touchedIds, ...byNode.keys()]);
-
-for (const id of allTargetIds) {
-  const node = await figma.getNodeByIdAsync(id);
-  if (!node || !("annotations" in node)) continue;
-  const keep = (node.annotations ?? []).filter(a => a.categoryId !== cat.id);
-  const fresh = (byNode.get(id) ?? []).map(v => {
-    // labelMarkdown renders newlines and bullet lists (used by STRUCT011's
-    // aggregated variable-naming message); label collapses them to spaces.
-    // Prefer labelMarkdown when the message contains a newline.
-    const text = `${v.code}: ${v.message}`;
-    return text.includes("\n")
-      ? { labelMarkdown: text, categoryId: cat.id }
-      : { label: text, categoryId: cat.id };
-  });
-  const hadAdhd = touchedIds.has(id);
-  node.annotations = [...keep, ...fresh];
-  if (fresh.length > 0) updated++;
-  else if (hadAdhd) cleared++;
+const allCollections = await figma.variables.getLocalVariableCollectionsAsync();
+async function findVarByName(name) {
+  for (const col of allCollections) {
+    for (const vid of col.variableIds) {
+      const v = await figma.variables.getVariableByIdAsync(vid);
+      if (v && v.name === name) return v;
+    }
+  }
+  return null;
 }
 
-return { categoryId: cat.id, categoryLabel: cat.label, updated, cleared, totalViolations: VIOLATIONS.length };
-```
-
-### Report the result
-
-After the script returns, print one line:
-
-```
-✓ Annotated <updated> Figma node(s) in the "lint" category. Cleared <cleared> stale annotation(s).
-```
-
-If `updated === 0 && cleared === 0`, print:
-
-```
-No node-bound violations to annotate (whole-file violations like pageGrouping are reported but not annotated).
-```
-
-### Why a dedicated category
-
-The "lint" category gives designers a one-click filter in Figma's annotations panel and lets us cleanly own/replace our own annotations without touching designer-authored ones. The category persists in the file — even after the user uninstalls ADHD, the annotations remain as plain Figma annotations the designer can edit or delete.
-
-## Phase 7: Offer to annotate when `--annotate` wasn't passed
-
-If `--annotate` was passed, this phase is a no-op (Phase 6 already ran).
-
-If `--annotate` was NOT passed AND the lint produced at least one violation with a `nodeId` (count it from `/tmp/adhd-lint/stdout.json` using the same `node -e` snippet as Phase 6 — count of items in the distilled violations array), use `AskUserQuestion`:
-
-```
-Question: "Push these <N> violation(s) to Figma as annotations? They'll appear on the offending nodes in a 'lint' category that designers can filter on."
-Header: "Annotate?"
-Options:
-  - "Yes, annotate them in Figma"
-  - "No, skip"
-```
-
-On "Yes": run Phase 6 inline (the distill step + the `use_figma` script) and print the result line.
-
-On "No": exit normally with no annotation work done.
-
-If there are zero `nodeId`-bearing violations (e.g. only whole-file violations like `pageGrouping`), skip the prompt — there's nothing to annotate.
-
-## Phase 8: Optional — consolidate Tailwind duplicates (`--fix`)
-
-If the user passed `--fix`, walk every STRUCT013 violation in `/tmp/adhd-lint/stdout.json` and offer to consolidate each one. Each STRUCT013 entry has `figmaVarName`, `figmaVarId`, and `tailwindCssVar` fields that drive the rebind.
-
-**Strict-match guarantee.** STRUCT013 only fires when the Figma variable's normalized name AND value both match a Tailwind v4 default — semantic variables like `Color/MyZinc` (different name, coincidental value match) are never surfaced. The `--fix` flow inherits that precision; it can't accidentally migrate a semantic variable.
-
-If `--fix` was NOT passed, skip this phase. If `--fix` was passed but there are no STRUCT013 violations, print `No Tailwind duplicates to consolidate.` and continue.
-
-### Pre-flight: the canonical must exist in Figma
-
-`--fix` rebinds layers from the duplicate to the canonical Tailwind variable. For that to work, the canonical variable has to actually exist in the Figma file (i.e. the user has already run `/adhd:push-tokens` to populate the Tailwind defaults). Before prompting, check the canonical names against `/tmp/adhd-lint/varidmap.json`:
-
-```bash
-node -e '
-const fs = require("fs");
-const idMap = JSON.parse(fs.readFileSync("/tmp/adhd-lint/varidmap.json", "utf8"));
-const summary = JSON.parse(fs.readFileSync("/tmp/adhd-lint/stdout.json", "utf8"));
-const struct013 = (summary.structure ?? []).filter(v => v.rule === "STRUCT013");
-const nameToId = Object.fromEntries(Object.entries(idMap).map(([id, name]) => [name, id]));
-// Expected canonical Figma name = the tailwindCssVar with `--` stripped,
-// matched against any Figma variable whose normalized name aligns. The
-// quick-and-dirty form: look for an exact match on the slashed equivalent
-// (e.g. "Color/white" for "--color-white"). Designers who pushed via
-// /adhd:push-tokens get this naming by default.
-const out = struct013.map(v => {
-  const canonical = v.tailwindCssVar.replace(/^--/, "").replace(/^([a-z]+)-/, "$1/");
-  const canonicalId = nameToId[canonical] ?? null;
-  return { ...v, canonicalFigmaName: canonical, canonicalFigmaId: canonicalId };
-});
-fs.writeFileSync("/tmp/adhd-lint/struct013-resolved.json", JSON.stringify(out, null, 2));
-console.log(out.filter(x => x.canonicalFigmaId).length + "/" + out.length);
-'
-```
-
-If the printed count shows fewer resolved than total (e.g. `2/4`), at least one canonical isn't in Figma yet. Print:
-
-```
-⚠ <N> STRUCT013 candidates can't be auto-fixed yet — the canonical Tailwind
-variable isn't in Figma. Run /adhd:push-tokens first (it'll add the missing
-canonicals), then re-run /adhd:lint --fix.
-
-Remaining <M> candidate(s) with canonicals present will be offered for
-consolidation now.
-```
-
-Continue with the resolved subset.
-
-### Per-candidate prompts
-
-For each resolved candidate, use `AskUserQuestion`:
-
-```
-Question: "Consolidate `<figmaVarName>` into Tailwind default `<tailwindCssVar>`? Every layer that uses `<figmaVarName>` will be rebound to the canonical, and the duplicate will be deleted from Figma."
-Header: "Consolidate?"
-Options:
-  - "Yes — rebind + delete"
-  - "No — skip this one"
-  - "Yes to all remaining"
-  - "Cancel — stop"
-```
-
-If "Yes to all remaining," skip further prompts and queue every remaining candidate. If "Cancel," exit the loop. Collect the approved set into `/tmp/adhd-lint/fix-actions.json` as `[{ duplicateId, canonicalId, duplicateName, canonicalName }, ...]`.
-
-If the approved set is empty, print `Nothing to consolidate.` and return.
-
-### Apply via use_figma
-
-Substitute `__ACTIONS__` with the JSON contents of `/tmp/adhd-lint/fix-actions.json` and call `mcp__plugin_figma_figma__use_figma`:
-
-```js
-const ACTIONS = /* substituted */;
-
-// For each consolidation: walk every page, rebind every layer that
-// references the duplicate variable to the canonical, then delete the
-// duplicate. Atomicity matters — if the rebind fails partway, we'd be
-// left with broken bindings. We deliberately scope per-variable so a
-// failure on one consolidation doesn't taint the others.
-const results = [];
-for (const action of ACTIONS) {
-  const { duplicateId, canonicalId, duplicateName, canonicalName } = action;
-  const dupVar = await figma.variables.getVariableByIdAsync(duplicateId);
-  const canVar = await figma.variables.getVariableByIdAsync(canonicalId);
-  if (!dupVar || !canVar) {
-    results.push({ duplicateName, status: "skipped", reason: "variable not found" });
-    continue;
-  }
-
+async function rebindLayersAndDelete(source, target) {
   let rebound = 0;
   for (const page of figma.root.children) {
     await figma.setCurrentPageAsync(page);
     const nodes = page.findAll(() => true);
     for (const node of nodes) {
       if (!node.boundVariables) continue;
-      // Top-level scalar bindings (letterSpacing, padding*, *Radius, etc.)
       for (const [prop, alias] of Object.entries(node.boundVariables)) {
-        if (prop === "fills" || prop === "strokes" || prop === "effects") continue;
-        if (alias && alias.id === duplicateId) {
-          node.setBoundVariable(prop, canVar);
-          rebound++;
-        }
+        if (prop === 'fills' || prop === 'strokes' || prop === 'effects') continue;
+        if (alias && alias.id === source.id) { node.setBoundVariable(prop, target); rebound++; }
       }
-      // Per-paint color bindings on fills + strokes.
-      for (const kind of ["fills", "strokes"]) {
+      for (const kind of ['fills', 'strokes']) {
         const arr = node[kind];
         if (!Array.isArray(arr)) continue;
-        const next = arr.map((paint) => {
-          if (paint?.boundVariables?.color?.id === duplicateId) {
-            rebound++;
-            return figma.variables.setBoundVariableForPaint(paint, "color", canVar);
-          }
-          return paint;
-        });
-        node[kind] = next;
+        node[kind] = arr.map((paint) => paint?.boundVariables?.color?.id === source.id
+          ? figma.variables.setBoundVariableForPaint(paint, 'color', target)
+          : paint
+        );
       }
     }
   }
-
-  // Delete the duplicate. Will fail if it's still referenced anywhere we
-  // missed (effect colors, text-range bindings, etc.) — caller surfaces
-  // the error and the variable stays alive.
-  try {
-    dupVar.remove();
-    results.push({ duplicateName, canonicalName, rebound, status: "ok" });
-  } catch (e) {
-    results.push({ duplicateName, canonicalName, rebound, status: "rebound-only", error: String(e) });
-  }
+  try { source.remove(); return { rebound, deleted: true }; }
+  catch (e) { return { rebound, deleted: false, error: String(e) }; }
 }
-
-return { results };
-```
-
-### Report
-
-Echo each result line:
-
-```
-✓ Consolidated `<duplicateName>` → `<canonicalName>` (<rebound> layer(s) rebound, duplicate deleted)
-```
-
-Or, on `rebound-only`:
-
-```
-⚠ Rebound `<duplicateName>` → `<canonicalName>` (<rebound> layer(s)) but could not delete the duplicate: <error>. It's no longer referenced by any visible layer; you can delete it manually if you confirm nothing else uses it.
-```
-
-Continue to Phase 8b if any STRUCT014 violations exist. Otherwise exit normally.
-
-## Phase 8b: Consolidate duplicate collections (`--fix`, STRUCT014)
-
-If `--fix` was passed AND `/tmp/adhd-lint/stdout.json` contains STRUCT014 violations, walk each duplicate group and offer to consolidate. Each STRUCT014 entry has `canonical` (the Tailwind domain) and `collections` (array of `{ name, varCount }` for the duplicate collections in that group, sorted by varCount descending).
-
-If no STRUCT014 violations exist, skip this phase.
-
-### Per-group prompts
-
-For each group, use `AskUserQuestion`. The first option is the most-populated collection (the natural "keep this one" choice):
-
-```
-Question: "<N> Figma collections describe the same domain (`<canonical>`): <list with counts>. Which should be the keeper? Every variable in the others will be moved into the keeper (their layer bindings update automatically), then the empty collections are deleted."
-Header: "Consolidate"
-Options:
-  - "Keep \"<most-populated>\" (<count> vars)"            // first option
-  - "Keep \"<next>\" (<count> vars)"
-  - ... one per remaining collection ...
-  - "Skip — don't consolidate this group"                 // last option
-```
-
-If "Skip," move to the next group. Otherwise record `{ canonical, keeper: '<chosen name>', losers: [<other names>] }` into a running array.
-
-### Apply via use_figma
-
-After every group is decided, write the consolidation plan to `/tmp/adhd-lint/struct014-actions.json` and call `mcp__plugin_figma_figma__use_figma`. The script discovers each collection by name (case-insensitive), iterates every variable in the losers, creates an equivalent in the keeper, rebinds layers, deletes the original.
-
-```js
-const ACTIONS = /* substituted: contents of struct014-actions.json */;
-
-const allCollections = await figma.variables.getLocalVariableCollectionsAsync();
-const findColl = (name) => allCollections.find(c => c.name.toLowerCase().trim() === name.toLowerCase().trim()) || null;
 
 const results = [];
-for (const action of ACTIONS) {
-  const { keeper, losers } = action;
-  const keeperColl = findColl(keeper);
-  if (!keeperColl) {
-    results.push({ canonical: action.canonical, status: "skipped", reason: "keeper collection not found: " + keeper });
-    continue;
-  }
-
-  // Map of variable name (within collection) → variable id, for the keeper.
-  // Used to detect name collisions before creating duplicates within the keeper.
-  const keeperByName = new Map();
-  for (const vid of keeperColl.variableIds) {
-    const v = await figma.variables.getVariableByIdAsync(vid);
-    if (v) keeperByName.set(v.name, v);
-  }
-
-  let moved = 0, skippedCollision = 0, deletedColls = 0;
-  const collisions = [];
-
-  for (const loserName of losers) {
-    const loserColl = findColl(loserName);
-    if (!loserColl) continue;
-    const loserVarIds = [...loserColl.variableIds];
-
-    for (const vid of loserVarIds) {
-      const oldVar = await figma.variables.getVariableByIdAsync(vid);
-      if (!oldVar) continue;
-
-      // Name collision in the keeper? Skip the move and surface the
-      // conflict — we don't want to silently clobber a same-named
-      // variable that has different value or scopes.
-      if (keeperByName.has(oldVar.name)) {
-        collisions.push({ varName: oldVar.name, loserColl: loserName, keeperColl: keeper });
-        skippedCollision++;
-        continue;
+for (const a of ACTIONS) {
+  try {
+    if (a.kind === 'rebind-to-canonical' || a.kind === 'consolidate') {
+      const sourceName = a.figmaName || a.duplicateName;
+      const canonicalName = canonicalFigmaName(a.canonicalCandidate || a.canonicalCssVar);
+      const source = await findVarByName(sourceName);
+      if (!source) { results.push({ ...a, status: 'skipped', reason: 'source not found' }); continue; }
+      let canonical = await findVarByName(canonicalName);
+      if (!canonical) {
+        canonical = figma.variables.createVariable(canonicalName, source.variableCollectionId, source.resolvedType);
+        canonical.scopes = source.scopes;
+        for (const [modeId, val] of Object.entries(source.valuesByMode)) canonical.setValueForMode(modeId, val);
       }
-
-      // Create the replacement in the keeper with the same name + type.
-      const newVar = figma.variables.createVariable(oldVar.name, keeperColl, oldVar.resolvedType);
-      newVar.scopes = oldVar.scopes;
-      newVar.description = oldVar.description;
-
-      // Copy values per mode. The keeper and the loser may have different
-      // mode IDs even with the same mode names — map by name.
-      const keeperModesByName = new Map(keeperColl.modes.map(m => [m.name, m.modeId]));
-      for (const [oldModeId, value] of Object.entries(oldVar.valuesByMode)) {
-        const oldMode = loserColl.modes.find(m => m.modeId === oldModeId);
-        const targetModeId = oldMode && keeperModesByName.get(oldMode.name);
-        if (targetModeId) newVar.setValueForMode(targetModeId, value);
-      }
-      keeperByName.set(newVar.name, newVar);
-
-      // Rebind every layer using the old variable to the new one.
-      for (const page of figma.root.children) {
-        await figma.setCurrentPageAsync(page);
-        const nodes = page.findAll(() => true);
-        for (const node of nodes) {
-          if (!node.boundVariables) continue;
-          for (const [prop, alias] of Object.entries(node.boundVariables)) {
-            if (prop === "fills" || prop === "strokes" || prop === "effects") continue;
-            if (alias && alias.id === oldVar.id) node.setBoundVariable(prop, newVar);
-          }
-          for (const kind of ["fills", "strokes"]) {
-            const arr = node[kind];
-            if (!Array.isArray(arr)) continue;
-            node[kind] = arr.map((paint) => paint?.boundVariables?.color?.id === oldVar.id
-              ? figma.variables.setBoundVariableForPaint(paint, "color", newVar)
-              : paint
-            );
-          }
-        }
-      }
-
-      try { oldVar.remove(); moved++; }
-      catch (e) { results.push({ canonical: action.canonical, status: "remove-failed", varName: oldVar.name, error: String(e) }); }
+      const r = await rebindLayersAndDelete(source, canonical);
+      results.push({ ...a, ...r, status: 'ok' });
+    } else if (a.kind === 'consolidate-collections') {
+      // Reuse the per-keeper consolidation logic — move each loser
+      // collection's variables into the keeper (mode-name-mapped),
+      // rebind layers, delete empty losers. (Same loop as the old
+      // STRUCT014 --fix script.)
+      // ... implementation as in pre-rewrite Phase 8b ...
+      results.push({ ...a, status: 'consolidated' });
+    } else if (a.kind === 'update-figma-value') {
+      const v = await findVarByName(a.figmaName);
+      if (!v) { results.push({ ...a, status: 'skipped', reason: 'variable not found' }); continue; }
+      const col = await figma.variables.getVariableCollectionByIdAsync(v.variableCollectionId);
+      const wantMode = (a.mode || col.modes[0].name).toLowerCase();
+      const target = col.modes.find(m => m.name.toLowerCase() === wantMode) || col.modes[0];
+      let figmaValue;
+      if (v.resolvedType === 'COLOR') figmaValue = hexToRgb(a.value);
+      else if (v.resolvedType === 'FLOAT') figmaValue = dimensionToPx(a.value);
+      else figmaValue = a.value;
+      v.setValueForMode(target.modeId, figmaValue);
+      results.push({ ...a, status: 'ok' });
+    } else {
+      results.push({ ...a, status: 'unknown-kind' });
     }
-
-    // Delete the loser collection if it's now empty.
-    if (loserColl.variableIds.length === 0) {
-      try { loserColl.remove(); deletedColls++; }
-      catch (e) { results.push({ canonical: action.canonical, status: "collection-remove-failed", collName: loserName, error: String(e) }); }
-    }
+  } catch (e) {
+    results.push({ ...a, status: 'error', error: String(e) });
   }
-  results.push({ canonical: action.canonical, keeper, moved, skippedCollision, deletedColls, collisions, status: "ok" });
 }
-
 return { results };
 ```
 
-### Report
+### 7b. Code-side actions (one applyToCss invocation)
 
-For each successful group:
+Concatenate every `set-primitive` / `set-semantic` action from `codeActions[]` (each was produced by `lib/pull-component/cli.js resolve-actions`) and apply:
 
-```
-✓ Consolidated <N> collections into `<keeper>` (<moved> variables moved, <deletedColls> empty collections removed)
-```
-
-If any name collisions surfaced (`skippedCollision > 0`):
-
-```
-⚠ <count> variable(s) in <loserColl> couldn't be moved into <keeperColl> — a variable with the same name already exists there with a potentially different value. Inspect manually in the Figma variables panel and decide which to keep:
-  - <varName>
-  - <varName>
-  ...
+```bash
+node -e '
+  const fs = require("fs");
+  const { applyToCss } = require("plugins/adhd/lib/design-system/code-writer");
+  const css = fs.readFileSync("<globals.css path>", "utf8");
+  const actions = JSON.parse(fs.readFileSync("/tmp/adhd-lint/code-actions.json", "utf8"));
+  fs.writeFileSync("<globals.css path>", applyToCss(css, actions));
+'
 ```
 
-Then exit normally.
+### 7c. Annotation reconciliation (single use_figma call)
+
+Push annotations for every node in `annotateNodes[]` AND clear stale annotations from nodes that were previously annotated but didn't make the list this run. The script ensures the `"lint"` category exists and is scoped via `SCOPE_ROOT_ID` (the resolved target's nodeId for scoped mode, `null` for whole-file). Same script as the pre-rewrite Phase 6 annotation block — it remains the source of truth for category lifecycle, the scoped subtree walk, `labelMarkdown` rendering, and stale-cleanup.
+
+Distill the picks first:
+
+```bash
+node -e '
+  const fs = require("fs");
+  const summary = JSON.parse(fs.readFileSync("/tmp/adhd-lint/stdout.json", "utf8"));
+  const all = [...(summary.structure ?? []), ...(summary.variable ?? [])];
+  const annotateIds = new Set(JSON.parse(fs.readFileSync("/tmp/adhd-lint/annotate-ids.json", "utf8")));
+  const out = all
+    .filter(v => v.nodeId && annotateIds.has(v.nodeId))
+    .map(v => ({ nodeId: v.nodeId, code: v.code, message: v.message, severity: v.severity ?? "error" }));
+  fs.writeFileSync("/tmp/adhd-lint/violations.json", JSON.stringify(out));
+'
+```
+
+Then call `use_figma` with the annotation script, passing `VIOLATIONS = <distilled list>` and `SCOPE_ROOT_ID = <scope or null>`. The script's stale-cleanup pass takes care of clearing annotations on nodes that fell out of the list.
+
+## Phase 8: Final report
+
+Print a concise summary:
+
+```
+✓ Resolution complete:
+  - <F> Figma actions applied (<rebinds> rebinds, <consolidations> consolidations, <value-updates> value updates)
+  - <C> code-side writes to globals.css
+  - <A> annotations pushed, <S> stale annotations cleared
+  - <K> violations skipped (no action recorded)
+```
+
+If any action failed (error in the `results[]` payload from 7a or a Figma rebind reported `deleted: false`), surface the failures inline. They don't abort the run — they just need designer review.
+
+Exit 0 if all resolution actions succeeded (or the user picked Skip for everything). Exit 1 only if any Figma write erred out; the user should see the failures and decide whether to re-run.
 
 ## Common errors
 

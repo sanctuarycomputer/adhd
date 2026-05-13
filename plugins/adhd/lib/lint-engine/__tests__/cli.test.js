@@ -451,7 +451,7 @@ test('STRUCT013: surfaces Figma variables that duplicate Tailwind defaults (stri
   assert.equal(v.figmaVarId, 'VAR:white');
   assert.equal(v.tailwindCssVar, '--color-white');
   assert.match(v.message, /duplicates Tailwind default `--color-white`/);
-  assert.match(v.message, /\/adhd:lint --fix/);
+  assert.match(v.message, /\/adhd:lint/);
 });
 
 test('STRUCT015: violation carries canonicalCandidate + looksSemantic when a Tailwind canonical matches the value', () => {
@@ -565,7 +565,7 @@ test('STRUCT015 + STRUCT016: per-layer errors when a layer binds a missing/confl
 test('STRUCT014: surfaces alias-equivalent collections side by side (Color vs color, Space vs spacing)', () => {
   // Real scenario from the user's reactor file: prior pushes created
   // lowercase `color`/`spacing` collections alongside designer's existing
-  // `Color`/`Space`. The new rule surfaces these for /adhd:lint --fix
+  // `Color`/`Space`. The new rule surfaces these so /adhd:lint's wizard
   // to consolidate; alias-aware push prevents future duplicates.
   const varDefs = tmp('vars.json', {
     'Color/zinc-500': '#71717a',
@@ -599,7 +599,7 @@ test('STRUCT014: surfaces alias-equivalent collections side by side (Color vs co
   assert.equal(byCanonical['spacing'].collections[0].varCount, 2);
   // Message names the canonical + lists the colliding collections.
   assert.match(byCanonical['color'].message, /alias to "color"/);
-  assert.match(byCanonical['color'].message, /\/adhd:lint --fix/);
+  assert.match(byCanonical['color'].message, /\/adhd:lint/);
 });
 
 test('STRUCT011: omits nodeId in whole-file mode (no scope root to annotate)', () => {

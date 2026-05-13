@@ -5,7 +5,7 @@
 // After a designer has pushed the full Tailwind token system into Figma,
 // they may have legacy custom variables sitting alongside the canonical
 // Tailwind ones with the same value. STRUCT013 surfaces those duplicates
-// so designers (or `/adhd:lint --fix`) can rebind every layer that uses
+// so designers (via `/adhd:lint`'s wizard) can rebind every layer that uses
 // the duplicate to the canonical Tailwind variable, then delete the
 // duplicate.
 //

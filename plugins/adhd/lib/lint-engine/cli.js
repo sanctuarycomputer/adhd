@@ -314,7 +314,7 @@ function main() {
   //
   // The fix is "consolidate": rebind every layer using the duplicate to
   // the canonical Tailwind variable, then delete the duplicate. The
-  // /adhd:lint --fix flow walks each candidate through AskUserQuestion
+  // /adhd:lint wizard walks each candidate through AskUserQuestion
   // before applying — never auto-rewires.
   const duplicates = detectTailwindDuplicates(varDefs, tailwindDefaults);
   for (const dup of duplicates) {
@@ -334,7 +334,7 @@ function main() {
       message:
         `Figma variable "${dup.figmaName}" (= ${dup.value}) duplicates Tailwind default \`${dup.tailwindCssVar}\`. ` +
         `Same value, same canonical name — consolidating removes the duplicate without changing what gets rendered.\n\n` +
-        `To apply: run \`/adhd:lint --fix\`. The flow walks each candidate via prompt, then for each "Yes" it rebinds every layer that uses "${dup.figmaName}" to \`${dup.tailwindCssVar}\` and deletes the duplicate.`,
+        `To apply: run \`/adhd:lint\`. The wizard walks each candidate; pick "Auto-fix in Figma" to rebind every layer that uses "${dup.figmaName}" to \`${dup.tailwindCssVar}\` and delete the duplicate.`,
       deepLink: args['target-url'],
       // Extra fields consumed by --fix (ignored by the report formatter):
       figmaVarName: dup.figmaName,
@@ -345,7 +345,7 @@ function main() {
 
   // STRUCT014 — duplicate collections (e.g. "Color" + "color" side-by-
   // side, "Type + Effects" + "typography"). Surface every group so
-  // designers can see what's grown up over time. /adhd:lint --fix
+  // designers can see what's grown up over time. /adhd:lint's wizard
   // consolidates per group: pick the keeper, move every variable from
   // the loser collections into it (rebinding existing layer references),
   // then delete the empty losers.
@@ -360,7 +360,7 @@ function main() {
       message:
         `${group.collections.length} Figma collections alias to "${group.canonical}": ${collNames}. ` +
         `These describe the same token domain but Figma treats them as separate collections, so designers see duplicate-looking groups in the Variables panel and push must guess which to append into.\n\n` +
-        `To apply: run \`/adhd:lint --fix\`. You'll be asked which collection to keep (the most-populated one is suggested); every variable in the others gets moved into the keeper, layer bindings update automatically, and the empty collections are deleted.`,
+        `To apply: run \`/adhd:lint\`. The wizard asks which collection to keep (the most-populated one is suggested); every variable in the others gets moved into the keeper, layer bindings update automatically, and the empty collections are deleted.`,
       deepLink: args['target-url'],
       // Extra fields consumed by --fix:
       canonical: group.canonical,

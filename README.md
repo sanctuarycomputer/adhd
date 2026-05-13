@@ -29,7 +29,7 @@ After install, nine slash commands are available:
 | Command | Args | Direction | What it does |
 |---|---|---|---|
 | `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
-| `/adhd:lint` | `[<figma-url>] [--annotate] [--fix]` | read-only by default | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices. With `--annotate`, also writes Figma annotations on each offending node in a "lint" category. With `--fix`, walks STRUCT013 Tailwind-duplicate candidates per-prompt and consolidates approved ones (rebinds bindings to the canonical Tailwind variable, then deletes the duplicate). |
+| `/adhd:lint` | `[<figma-url>]` | always interactive | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices, then walks every violation through a per-rule resolution wizard. Per violation, designers pick from auto-fix in Figma (rebind to canonical / consolidate duplicates), add in code, take Figma's value, take code's value, annotate only, or skip. No flags — annotation and fix behavior are per-violation choices. |
 | `/adhd:push-tokens` | `[--dry-run]` | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP. Runs an interactive 7-question wizard on every invocation to set per-domain push policy: push the full Tailwind palette or only your semantic colors? Push the full spacing scale or only your authored tokens? Skip opacity entirely? Route shadows through effect styles? `--dry-run` previews exactly what would be added or skipped (reflecting your wizard answers) without writing. |
 | `/adhd:pull-tokens` | `[--dry-run]` | Figma → code | Pulls Figma variables + named styles into globals.css. `--dry-run` previews without writing. |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check. Per-variable STRUCT015/STRUCT016 resolution prompts let you sync mismatches in either direction; annotations land automatically on any abort. |
@@ -92,15 +92,15 @@ The scoped report covers the same rules (STRUCT001–016 + variable mismatches),
 
 ### Annotate violations in Figma
 
-`/adhd:lint` is read-only — it echoes a markdown report to the terminal and exits. Pass `--annotate` to also push each violation to Figma as a node-bound annotation in a dedicated **"lint"** category (orange). Designers see them on the layers panel, and a re-run with `--annotate` cleans up stale "lint"-category annotations automatically (designer-authored annotations and other categories are never touched).
+`/adhd:lint` is always interactive — every violation goes through a per-rule wizard with "Annotate only" as one of the options. Picking it pushes the violation to Figma as a node-bound annotation in a dedicated **"lint"** category (orange); picking anything else either resolves the issue directly (auto-fix in Figma, add in code, take Figma's value, take code's value) or skips it (no annotation, no fix). Stale annotations from prior runs get cleaned up automatically when their nodes drop out of the picks list — designer-authored annotations and any non-"lint" category are never touched.
 
 For `/adhd:push-component` and `/adhd:pull-component`, annotation is **automatic on any abort** — when the SKILL aborts due to preflight violations (including a "Don't sync" pick on the per-variable STRUCT015/STRUCT016 prompts), every blocking violation is pushed to Figma before exit. On successful runs the same annotation script clears prior-run annotations from the scope so Figma stays clean. No flag needed.
 
 ```
-/adhd:lint --annotate                                                  # whole file (manual annotation)
-/adhd:lint https://www.figma.com/design/<KEY>?node-id=91-18 --annotate # scoped (manual annotation)
-/adhd:push-component app/components/avatar/index.tsx                   # annotates on abort
-/adhd:pull-component https://www.figma.com/design/<KEY>?node-id=91-18  # annotates on abort
+/adhd:lint                                                # whole file — walks every violation
+/adhd:lint https://www.figma.com/design/<KEY>?node-id=91-18 # scoped — walks every violation
+/adhd:push-component app/components/avatar/index.tsx       # annotates on abort
+/adhd:pull-component https://www.figma.com/design/<KEY>?node-id=91-18 # annotates on abort
 ```
 
 ### Push a component
