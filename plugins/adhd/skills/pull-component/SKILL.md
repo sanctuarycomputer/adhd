@@ -426,15 +426,15 @@ Options:
   - "Auto-fix: rebind in Figma to `<canonicalCandidate>` (same value, no visual change — non-canonical variable gets deleted)"
   <always:>
   - "Add to globals.css (writes --<canonical>: <figmaValue>)"   ← label changes to "Add as semantic variable (recommended for brand / accent / surface tokens — canonical match is coincidence)" when looksSemantic
-  - "Skip this one (continue without adding; subsequent pull may land raw values for layers that bind it)"
-  - "Cancel — run /adhd:pull-tokens first (abort the pull)"
+  - "Skip this one — continue without adding (no annotation; this component pull works fine without it)"
+  - "Annotate and abort — push the lint annotation and stop the pull"
 ```
 
 Pick handling matches Phase 2.5's flow:
 - **Auto-fix**: queue into `auto-fix-input` (the same array Phase 2.5 builds). Applied via the same use_figma rebind script in Phase 2.5's "Apply" step.
 - **Add / Add as semantic**: queue into `actions-input` (also shared with Phase 2.5).
-- **Skip**: record nothing. The pull proceeds; if any layer in this component binds the variable, STRUCT015 would have already caught it in Phase 2.5 — so by the time we reach 2.7, "Skip" is genuinely safe.
-- **Cancel**: set `abortIntent = true`. Falls through Phase 2.5's "Apply OR abort" decision.
+- **Skip**: record nothing. The pull proceeds. Phase 2.7's missing variables aren't tied to layers in this scope (Phase 2.5's STRUCT015 would have caught those) — so there's nothing to annotate, and skipping is safe; the variable just stays out of code.
+- **Annotate and abort**: set `abortIntent = true`. Falls through Phase 2.5's "Apply OR abort" path, which calls the abort-time annotation helper before exit. If the variable IS bound by a layer (rare in Phase 2.7's discovery list — implies the binding lives in a deeper part of the file outside the lint scope), the annotation lands on that node; if it's unbound by any scoped layer, the abort still completes without a new annotation. The pull stops in both cases.
 
 Since Phase 2.7 runs AFTER Phase 2.5, the action arrays might already contain entries. Append rather than reset.
 
