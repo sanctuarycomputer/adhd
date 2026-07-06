@@ -1,7 +1,6 @@
 {
   "name": "adhd-plugin-dev",
   "private": true,
-  "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "test": "vitest run",
