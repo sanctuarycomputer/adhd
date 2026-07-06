@@ -212,32 +212,39 @@ function diffMatchedPair(
       continue;
     }
 
-    if (codeAlias !== undefined || figmaAlias !== undefined) {
-      const aliasIsCode = codeAlias !== undefined;
-      const literalVal = aliasIsCode ? figmaVal : codeVal;
-      structural.push({
-        path: code.path,
-        kind: "alias-vs-literal",
-        code: aliasIsCode ? codeAlias! : literalVal ?? "(missing)",
-        figma: aliasIsCode ? literalVal ?? "(missing)" : figmaAlias!,
-        mode,
-      });
+    // Alias-vs-literal only applies when the non-aliased side actually has a
+    // literal value for this mode. When the other side has neither a value
+    // nor an alias, the mode is wholly missing there — fall through to the
+    // missing-mode valueDrift path below instead of misreporting a structural
+    // alias-vs-literal drift against a side that has nothing at all for this mode.
+    if (codeAlias !== undefined && figmaVal !== undefined) {
+      structural.push({ path: code.path, kind: "alias-vs-literal", code: codeAlias, figma: figmaVal, mode });
+      continue;
+    }
+    if (figmaAlias !== undefined && codeVal !== undefined) {
+      structural.push({ path: code.path, kind: "alias-vs-literal", code: codeVal, figma: figmaAlias, mode });
       continue;
     }
 
-    if (codeVal === undefined && figmaVal === undefined) continue;
-    if (codeVal === undefined || figmaVal === undefined) {
+    // Prefer describing an alias target over a resolved literal when
+    // rendering a side below — an aliased token's `values` entry is just a
+    // resolved artifact of the alias, not the "real" value being compared.
+    const codeRendered = codeAlias !== undefined ? `alias(${codeAlias})` : codeVal;
+    const figmaRendered = figmaAlias !== undefined ? `alias(${figmaAlias})` : figmaVal;
+
+    if (codeRendered === undefined && figmaRendered === undefined) continue;
+    if (codeRendered === undefined || figmaRendered === undefined) {
       valueDrift.push({
         path: code.path,
         collection: code.collection,
         mode,
-        code: codeVal ?? "(missing)",
-        figma: figmaVal ?? "(missing)",
+        code: codeRendered ?? "(missing)",
+        figma: figmaRendered ?? "(missing)",
       });
       continue;
     }
-    if (!valuesEqual(code.domain, codeVal, figmaVal)) {
-      valueDrift.push({ path: code.path, collection: code.collection, mode, code: codeVal, figma: figmaVal });
+    if (!valuesEqual(code.domain, codeRendered, figmaRendered)) {
+      valueDrift.push({ path: code.path, collection: code.collection, mode, code: codeRendered, figma: figmaRendered });
     }
   }
 }

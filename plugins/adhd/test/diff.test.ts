@@ -65,6 +65,30 @@ test("probable rename heuristic without a lock", () => {
     snap("code", [tok("color/brand/gold", { default: "#d4a017" })]),
     snap("figma", [tok("color/brand/golden", { default: "#d4a017" })]), noLock);
   expect(d.renames[0]?.confidence).toBe("probable");
+  expect(d.existence).toEqual([]);
+});
+
+test("probable rename heuristic pairs 1:1 across multiple candidates by value", () => {
+  const d = diffSnapshots(
+    snap("code", [
+      tok("color/brand/gold", { default: "#d4a017" }),
+      tok("color/brand/silver", { default: "#c0c0c0" }),
+    ]),
+    snap("figma", [
+      tok("color/brand/golden", { default: "#d4a017" }),
+      tok("color/brand/silvery", { default: "#c0c0c0" }),
+    ]),
+    noLock
+  );
+  expect(d.existence).toEqual([]);
+  expect(d.renames).toHaveLength(2);
+  const byFrom = Object.fromEntries(d.renames.map((r) => [r.from, r.to]));
+  expect(byFrom["color/brand/gold"]).toBe("color/brand/golden");
+  expect(byFrom["color/brand/silver"]).toBe("color/brand/silvery");
+  const froms = new Set(d.renames.map((r) => r.from));
+  const tos = new Set(d.renames.map((r) => r.to));
+  expect(froms.size).toBe(2);
+  expect(tos.size).toBe(2);
 });
 
 test("unsyncable tokens land in cannotSync with reasons, on both sides", () => {
@@ -96,4 +120,23 @@ test("mode present in code but missing in figma is valueDrift with '(missing)'",
   expect(d.valueDrift).toEqual([
     { path: "background", collection: "semantic", mode: "dark", code: "#000000", figma: "(missing)" },
   ]);
+});
+
+test("mode wholly missing on one side routes to valueDrift, not alias-vs-literal", () => {
+  const d = diffSnapshots(
+    snap("code", [
+      tok(
+        "background",
+        { light: "var(--color-zinc-50)", dark: "var(--color-zinc-900)" },
+        { collection: "semantic", aliasOf: { light: "color/zinc/50", dark: "color/zinc/900" } }
+      ),
+    ]),
+    snap("figma", [
+      tok("background", { light: "#fafafa" }, { collection: "semantic", aliasOf: { light: "color/zinc/50" } }),
+    ]),
+    noLock
+  );
+  expect(d.structural.filter((s) => s.mode === "dark")).toEqual([]);
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "background", mode: "dark", figma: "(missing)" });
 });
