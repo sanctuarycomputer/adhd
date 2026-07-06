@@ -26,7 +26,13 @@ if (existsSync("src/figma/extract-entry.ts")) {
   scripts.extract = await bundle("src/figma/extract-entry.ts", null, { platform: "neutral" });
 }
 
-const outputs = { "dist/adhd.js": cli, "dist/figma-scripts.json": JSON.stringify(scripts, null, 2) };
+const outputs = {
+  "dist/adhd.js": cli,
+  "dist/figma-scripts.json": JSON.stringify(scripts, null, 2),
+  // The dev package is ESM ("type": "module"); the bundle is CJS. This marker
+  // makes node treat dist/*.js as CommonJS.
+  "dist/package.json": JSON.stringify({ type: "commonjs" }, null, 2) + "\n",
+};
 let stale = false;
 for (const [path, content] of Object.entries(outputs)) {
   if (check) {
