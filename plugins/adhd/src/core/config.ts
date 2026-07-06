@@ -51,10 +51,19 @@ export function loadConfig(dir: string): AdhdConfig {
         "/adhd:config to generate a template"
       );
     }
+    // Distinguish genuine "file not found" from other IO errors
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") {
+      throw new AdhdError(
+        `adhd.config.json: file not found`,
+        "Create adhd.config.json in this directory — see the transitional note in README.md. " +
+          "(The /adhd:config wizard still writes the older adhd.config.ts; M1 lint reads JSON.)"
+      );
+    }
+    // For other IO errors (EACCES, EISDIR, etc), report the real error
+    const errorCode = e instanceof Error && "code" in e ? String(e.code) : "UNKNOWN";
     throw new AdhdError(
-      `adhd.config.json: file not found`,
-      "Create adhd.config.json in this directory — see the transitional note in README.md. " +
-        "(The /adhd:config wizard still writes the older adhd.config.ts; M1 lint reads JSON.)"
+      `adhd.config.json: could not read (${errorCode})`,
+      "/adhd:config to generate a template"
     );
   }
 

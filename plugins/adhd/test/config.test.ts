@@ -164,3 +164,25 @@ test("loadLock with well-formed lock loads successfully", () => {
   expect(result?.figmaIds.styles).toEqual({});
   expect(result?.lastSync.at).toBe("2025-01-01T00:00:00Z");
 });
+
+test("loadLock with lock path as a directory throws AdhdError (not null)", () => {
+  const d = dir();
+  require("node:fs").mkdirSync(join(d, "adhd.lock.json"));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.message).toContain("could not read");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadConfig with config path as a directory throws AdhdError (not 'file not found')", () => {
+  const d = dir();
+  require("node:fs").mkdirSync(join(d, "adhd.config.json"));
+  expect(() => loadConfig(d)).toThrowError(AdhdError);
+  try { loadConfig(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.config.json");
+    expect(e.message).not.toContain("file not found");
+    expect(e.message).toContain("could not read");
+  }
+});

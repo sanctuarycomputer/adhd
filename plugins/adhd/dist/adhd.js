@@ -5928,8 +5928,15 @@ function loadLock(dir) {
   let content;
   try {
     content = (0, import_node_fs.readFileSync)(lockPath, "utf-8");
-  } catch {
-    return null;
+  } catch (e4) {
+    if (e4 instanceof Error && "code" in e4 && e4.code === "ENOENT") {
+      return null;
+    }
+    const errorCode = e4 instanceof Error && "code" in e4 ? String(e4.code) : "UNKNOWN";
+    throw new AdhdError(
+      `adhd.lock.json: could not read (${errorCode})`,
+      "Delete adhd.lock.json and re-sync"
+    );
   }
   let rawData;
   try {
@@ -6053,9 +6060,16 @@ function loadConfig(dir) {
         "/adhd:config to generate a template"
       );
     }
+    if (e4 instanceof Error && "code" in e4 && e4.code === "ENOENT") {
+      throw new AdhdError(
+        `adhd.config.json: file not found`,
+        "Create adhd.config.json in this directory \u2014 see the transitional note in README.md. (The /adhd:config wizard still writes the older adhd.config.ts; M1 lint reads JSON.)"
+      );
+    }
+    const errorCode = e4 instanceof Error && "code" in e4 ? String(e4.code) : "UNKNOWN";
     throw new AdhdError(
-      `adhd.config.json: file not found`,
-      "Create adhd.config.json in this directory \u2014 see the transitional note in README.md. (The /adhd:config wizard still writes the older adhd.config.ts; M1 lint reads JSON.)"
+      `adhd.config.json: could not read (${errorCode})`,
+      "/adhd:config to generate a template"
     );
   }
   if (!rawData || typeof rawData !== "object") {
@@ -9811,7 +9825,7 @@ function classify(decl2) {
   while (node && node.type !== "root") {
     if (node.type === "atrule") {
       const at = node;
-      if (at.name === "theme") return at.params.trim() === "inline" ? "exposure" : "theme";
+      if (at.name === "theme") return at.params.split(/\s+/).filter(Boolean).includes("inline") ? "exposure" : "theme";
       if (at.name === "media" && /prefers-color-scheme:\s*dark/.test(at.params)) dark = true;
     } else if (node.type === "rule") {
       const rule2 = node;
@@ -10451,10 +10465,8 @@ function dimensionsEqual(a, b) {
 }
 function valuesEqual(domain, a, b) {
   if (a === b) return true;
-  if (domain === "color") return colorsEqual(a, b);
-  if (domain === "spacing" || domain === "radius" || domain === "typography") return dimensionsEqual(a, b);
-  if (parseColor(a) && parseColor(b)) return colorsEqual(a, b);
-  return false;
+  if (domain === "color" || parseColor(a) && parseColor(b)) return colorsEqual(a, b);
+  return dimensionsEqual(a, b);
 }
 function tokensLookEqual(domain, a, b) {
   const modes2 = /* @__PURE__ */ new Set([...Object.keys(a.values ?? {}), ...Object.keys(b.values ?? {})]);

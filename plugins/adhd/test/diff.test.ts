@@ -252,6 +252,53 @@ test("typography font-weight (unitless): differing values still report valueDrif
   expect(d.valueDrift[0]).toMatchObject({ path: "font/weight/medium", mode: "default", code: "500", figma: "700" });
 });
 
+// --- Universal dimension fallback (domain "other", not whitelisted) ---
+
+test("other-domain dimension: border/width/thin code 1px vs figma unitless 1 — no valueDrift", () => {
+  const domain = domainOf("border/width/thin");
+  expect(domain).toBe("other");
+  const d = diffSnapshots(
+    snap("code", [{ path: "border/width/thin", collection: "primitives", domain, values: { default: "1px" } }]),
+    snap("figma", [{ path: "border/width/thin", collection: "primitives", domain, values: { default: "1" } }]),
+    noLock,
+  );
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("other-domain dimension: border/width/thin genuinely different values still report valueDrift", () => {
+  const domain = domainOf("border/width/thin");
+  const d = diffSnapshots(
+    snap("code", [{ path: "border/width/thin", collection: "primitives", domain, values: { default: "1px" } }]),
+    snap("figma", [{ path: "border/width/thin", collection: "primitives", domain, values: { default: "2" } }]),
+    noLock,
+  );
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "border/width/thin", mode: "default", code: "1px", figma: "2" });
+});
+
+test("other-domain dimension: size/box code 1rem vs figma bare-number 16 — no valueDrift", () => {
+  const domain = domainOf("size/box");
+  expect(domain).toBe("other");
+  const d = diffSnapshots(
+    snap("code", [{ path: "size/box", collection: "primitives", domain, values: { default: "1rem" } }]),
+    snap("figma", [{ path: "size/box", collection: "primitives", domain, values: { default: "16" } }]),
+    noLock,
+  );
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("other-domain non-dimension string still compares exactly and reports drift when different", () => {
+  const domain = domainOf("layout/overflow");
+  expect(domain).toBe("other");
+  const d = diffSnapshots(
+    snap("code", [{ path: "layout/overflow", collection: "primitives", domain, values: { default: "auto" } }]),
+    snap("figma", [{ path: "layout/overflow", collection: "primitives", domain, values: { default: "none" } }]),
+    noLock,
+  );
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "layout/overflow", mode: "default", code: "auto", figma: "none" });
+});
+
 test("definite rename does not swallow a coincident value change", () => {
   const lock: any = { figmaIds: { variables: { "VariableID:1:1": "color/brand/gold" }, styles: {} },
     baseSnapshot: snap("figma", []), components: [], lastSync: { at: "", figmaHash: "" } };

@@ -101,6 +101,22 @@ test("@theme inline exposure vars are excluded entirely, not emitted as primitiv
   expect(result.tokens).toHaveLength(0);
 });
 
+test("@theme inline static (Tailwind v4 combined modifiers) is also excluded", () => {
+  const css = `@theme inline static {
+    --color-background: var(--background);
+  }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(0);
+});
+
+test("@theme inline reference (Tailwind v4 combined modifiers) is also excluded", () => {
+  const css = `@theme inline reference {
+    --x: var(--y);
+  }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(0);
+});
+
 test("bare @theme still produces a primitives token (unaffected by the inline exclusion)", () => {
   const css = `@theme {
     --color-zinc-800: #27272a;

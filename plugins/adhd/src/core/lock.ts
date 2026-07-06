@@ -14,9 +14,17 @@ export function loadLock(dir: string): AdhdLock | null {
   let content: string;
   try {
     content = readFileSync(lockPath, "utf-8");
-  } catch {
-    // File doesn't exist, return null
-    return null;
+  } catch (e) {
+    // Only return null for genuine "file not found"
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") {
+      return null;
+    }
+    // For other IO errors (EACCES, EISDIR, etc), throw AdhdError
+    const errorCode = e instanceof Error && "code" in e ? String(e.code) : "UNKNOWN";
+    throw new AdhdError(
+      `adhd.lock.json: could not read (${errorCode})`,
+      "Delete adhd.lock.json and re-sync"
+    );
   }
 
   // Try to parse JSON

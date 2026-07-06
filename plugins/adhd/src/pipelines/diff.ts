@@ -40,15 +40,20 @@ function dimensionsEqual(a: string, b: string): boolean {
 
 function valuesEqual(domain: Domain, a: string, b: string): boolean {
   if (a === b) return true;
-  if (domain === "color") return colorsEqual(a, b);
-  if (domain === "spacing" || domain === "radius" || domain === "typography") return dimensionsEqual(a, b);
   // Domain classification is path-based (domainOf), so bare semantic names
   // like "background"/"foreground" land in "other" even though their values
-  // are colors (e.g. code oklch(1 0 0) vs figma #ffffff). Fall back to a
-  // tolerant color comparison whenever both sides actually parse as colors,
-  // regardless of what domain the path was classified into.
-  if (parseColor(a) && parseColor(b)) return colorsEqual(a, b);
-  return false;
+  // are colors (e.g. code oklch(1 0 0) vs figma #ffffff). Treat as a color
+  // comparison whenever the domain says so, OR both sides actually parse as
+  // colors regardless of what domain the path was classified into.
+  if (domain === "color" || (parseColor(a) && parseColor(b))) return colorsEqual(a, b);
+  // Universal dimension-equivalence fallback — not gated to a domain
+  // whitelist. dimensionsEqual unifies px/rem/unitless-px for anything that
+  // parses as a dimension, and falls back to exact string comparison for
+  // everything else (font-family, keywords, shadows, etc.), so this single
+  // call correctly handles dimension-valued tokens in *any* domain (e.g.
+  // "other"-classified border/width, size/box) as well as non-dimension
+  // "other" values.
+  return dimensionsEqual(a, b);
 }
 
 // "Do these two tokens look like the same underlying value?" — used by the

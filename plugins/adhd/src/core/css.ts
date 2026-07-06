@@ -11,9 +11,11 @@ type Section = "theme" | "exposure" | "root-light" | "root-dark" | null;
  *
  *  - any ancestor bare `@theme` ⇒ "theme" (primitives/default — takes
  *    priority over anything else).
- *  - any ancestor `@theme inline` ⇒ "exposure". Per the 3-layer token
- *    architecture (see docs/superpowers/specs/2026-07-05-adhd-v2-rebuild-design.md),
- *    `@theme inline` is Layer 3: it bridges Layer-2 semantic roles into
+ *  - any ancestor `@theme` that includes the `inline` modifier ⇒ "exposure".
+ *    Tailwind v4 allows combining `inline` with other modifiers (e.g.
+ *    `@theme inline static`, `@theme inline reference`). Per the 3-layer
+ *    token architecture (see docs/superpowers/specs/2026-07-05-adhd-v2-rebuild-design.md),
+ *    any `@theme inline` is Layer 3: it bridges Layer-2 semantic roles into
  *    Tailwind utility names (e.g. `--color-background: var(--background)`,
  *    `--font-sans: var(--font-geist-sans)`). These declarations are pure
  *    code-side plumbing — they exist so components can write
@@ -38,7 +40,7 @@ function classify(decl: Declaration): Section {
   while (node && node.type !== "root") {
     if (node.type === "atrule") {
       const at = node as AtRule;
-      if (at.name === "theme") return at.params.trim() === "inline" ? "exposure" : "theme";
+      if (at.name === "theme") return at.params.split(/\s+/).filter(Boolean).includes("inline") ? "exposure" : "theme";
       if (at.name === "media" && /prefers-color-scheme:\s*dark/.test(at.params)) dark = true;
     } else if (node.type === "rule") {
       const rule = node as Rule;
