@@ -25,9 +25,12 @@ export function pathToCssVar(path: string): string | null {
   // (including the first, whether or not it's the only one) must be
   // hyphen-free — it's a domain namespace, never a companion key.
   if (segments.slice(0, -1).some((s) => s.includes("-"))) return null;
-  if (segments.length === 1 && segments[0].includes("-")) return null;
+  // segments.length === 1 guarantees index 0 exists.
+  if (segments.length === 1 && segments[0]!.includes("-")) return null;
 
-  const last = segments[segments.length - 1];
+  // String.split always returns a non-empty array, so the last index is
+  // always in bounds.
+  const last = segments[segments.length - 1]!;
   const head = segments.slice(0, -1);
   const joiner = last.includes("-") ? "--" : "-";
   if (head.length === 0) return "--" + last;
@@ -46,7 +49,9 @@ export function cssVarToPath(cssVar: string): string | null {
   const parts = rest.split("--");
   if (parts.length !== 1 && parts.length !== 2) return null;
 
-  const [base, companion] = parts;
+  // parts.length is checked to be 1 or 2 above, so index 0 always exists.
+  const base = parts[0]!;
+  const companion = parts[1];
   if (base.length === 0) return null;
   const baseSegments = base.split("-");
   if (baseSegments.some((s) => !/^[a-z0-9]+$/.test(s))) return null;

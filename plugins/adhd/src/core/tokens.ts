@@ -6,7 +6,7 @@ export interface Token {
   collection: "primitives" | "semantic";
   domain: Domain;
   values: Partial<Record<Mode, string>>; // canonical strings; colors normalized to hex by producers
-  aliasOf?: string;                   // path of alias target, when the value is a reference
+  aliasOf?: Partial<Record<Mode, string>>; // alias target path per mode (targets can differ by mode)
   unsyncable?: string;                // reason string ⇒ goes to the report's cannot-sync section
 }
 

@@ -76,8 +76,14 @@ export function parseCssSnapshot(css: string): Snapshot {
     const aliasMatch = value.match(/^var\(\s*(--[a-zA-Z0-9-]+)\s*\)$/);
     if (aliasMatch) {
       // Aliases are never flattened: record the direct reference target,
-      // even if that target is itself an alias.
-      t.aliasOf = cssVarToPath(aliasMatch[1]!) ?? undefined;
+      // even if that target is itself an alias. Real semantic tokens can
+      // alias a DIFFERENT primitive per mode (e.g. --brand-surface ->
+      // gold-100 in light, gold-900 in dark), so the target is stored per
+      // mode rather than as a single last-write-wins string.
+      const target = cssVarToPath(aliasMatch[1]!);
+      if (target) {
+        t.aliasOf = { ...t.aliasOf, [mode]: target };
+      }
       t.values[mode] = value;
     } else if (t.domain === "color") {
       const hex = normalizeColor(value);

@@ -31,13 +31,27 @@ test("semantic tokens carry light+dark modes from :root and the dark block", () 
 test("var() references become aliasOf, never flattened", () => {
   const alias = snap.tokens.find((t) => t.aliasOf);
   expect(alias).toBeDefined();
-  expect(alias!.aliasOf).toMatch(/\//); // a path like color/zinc/800
+  const targets = Object.values(alias!.aliasOf!);
+  expect(targets.length).toBeGreaterThan(0);
+  expect(targets[0]).toMatch(/\//); // a path like color/zinc/800
   // Pinned concrete value: @theme inline's --color-brand-on-surface aliases
   // :root's --brand-on-surface directly (aliases are never flattened, so
   // this points at "brand/on/surface", not the deeper "color/gold/800").
+  // @theme (inline) declarations are always mode "default".
   const brandOnSurface = byPath("primitives", "color/brand/on/surface");
   expect(brandOnSurface).toBeDefined();
-  expect(brandOnSurface!.aliasOf).toBe("brand/on/surface");
+  expect(brandOnSurface!.aliasOf).toEqual({ default: "brand/on/surface" });
+});
+
+test("aliasOf targets differ per mode when a semantic token aliases a different primitive in light vs dark", () => {
+  // Pinned concrete value: fixture's --brand-surface aliases
+  // --color-gold-100 in :root (light) and --color-gold-900 in the
+  // prefers-color-scheme: dark block. Silently collapsing these to one
+  // last-write-wins target would lose the light alias entirely.
+  const brandSurface = byPath("semantic", "brand/surface");
+  expect(brandSurface).toBeDefined();
+  expect(brandSurface!.aliasOf?.light).toBe("color/gold/100");
+  expect(brandSurface!.aliasOf?.dark).toBe("color/gold/900");
 });
 
 test("unparseable values are unsyncable, not dropped and not a crash", () => {
