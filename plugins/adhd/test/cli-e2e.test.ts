@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,15 +88,18 @@ function buildLock(payload: ReturnType<typeof figmaPayloadToSnapshot>["snapshot"
 // diffs structurally: code has literal light/dark values, figma's
 // "background" aliases zinc/50 (light) and zinc/950 (dark) -> 2 structural
 // entries, one per mode.
-//   code tokens:  23 total, 0 unsyncable -> 23 in the map, 1 matched ("background")
+//   code tokens:  16 total (the 7 `@theme inline` exposure/bridge vars are
+//                 correctly excluded — they're Tailwind Layer-3 plumbing with
+//                 no Figma counterpart), 0 unsyncable -> 16 in the map, 1
+//                 matched ("background")
 //   figma tokens: 67 total, 1 unsyncable (rogue "Brand Extras/brand/accent") -> 66 in the map, 1 matched
-//   existence  = (23 - 1) + (66 - 1) = 87
+//   existence  = (16 - 1) + (66 - 1) = 80
 //   structural = 2 (alias-vs-literal, light + dark)
 //   valueDrift = 0 (the only matched pair resolved as structural, not value, drift)
 //   renames    = 0 (no cross-system path/value coincidences to pair on)
 //   cannotSync = 1 (the rogue Brand Extras token)
-//   errorCount = violations(0) + valueDrift(0) + existence(87) + structural(2) = 89
-const EXPECTED = { violations: 0, valueDrift: 0, existence: 87, structural: 2, renames: 0, cannotSync: 1, errorCount: 89 };
+//   errorCount = violations(0) + valueDrift(0) + existence(80) + structural(2) = 82
+const EXPECTED = { violations: 0, valueDrift: 0, existence: 80, structural: 2, renames: 0, cannotSync: 1, errorCount: 82 };
 
 test("runLint (live, --figma-chunks): golden e2e over sample-globals.css vs tokens-doc.json", async () => {
   const dir = makeConsumerDir();
@@ -105,7 +108,13 @@ test("runLint (live, --figma-chunks): golden e2e over sample-globals.css vs toke
 
   const result = await runLint({ dir, chunksDir, offline: false });
 
-  expect(result.meta).toEqual({ target: "whole file", targetUrl: null, mode: "live", lockPresent: false });
+  expect(result.meta).toEqual({
+    target: "whole file",
+    targetUrl: null,
+    mode: "live",
+    lockPresent: false,
+    offSystemUnavailable: false,
+  });
   expect(result.violations).toHaveLength(EXPECTED.violations);
   expect(result.drift!.valueDrift).toHaveLength(EXPECTED.valueDrift);
   expect(result.drift!.existence).toHaveLength(EXPECTED.existence);
@@ -122,13 +131,64 @@ test("runLint (live, --figma-chunks): golden e2e over sample-globals.css vs toke
 
   const report = formatReport(result);
   expect(report).toContain("## Drift");
-  expect(report).toContain("### Existence (87)");
+  expect(report).toContain("### Existence (80)");
   expect(report).toContain("### Structural (2)");
   expect(report).toContain("## Off-system values in code");
   expect(report).toContain("## Cannot sync");
   expect(report).not.toContain("## Structure"); // no nodeTree in these chunks -> no violations
   expect(report).not.toContain("## Likely renames"); // renames === 0
   expect(report).toContain("No adhd.lock.json"); // no lock present -> note renders
+});
+
+test("runLint: a style with an unresolvable bound-primitive id surfaces in the Cannot-sync section", async () => {
+  const dir = makeConsumerDir();
+  gitInitAndAdd(dir);
+
+  // A minimal synthetic doc (not the shared TOKENS_DOC recording): one real
+  // primitive plus a text style bound to that primitive AND to an id that
+  // doesn't resolve. figmaPayloadToSnapshot flags such a style's `unsyncable`
+  // (StyleShell), but nothing previously routed that into the report — Fix 1
+  // folds style-level unsyncables into drift.cannotSync alongside the
+  // existing token-level ones.
+  const doc = {
+    collections: [
+      {
+        id: "C-p",
+        name: "Primitives",
+        modes: [{ modeId: "m1", name: "Default" }],
+        variables: [
+          {
+            id: "V-1",
+            name: "color/zinc/800",
+            resolvedType: "COLOR",
+            valuesByMode: { m1: { r: 0.2, g: 0.2, b: 0.2, a: 1 } },
+          },
+        ],
+      },
+    ],
+    textStyles: [{ id: "S-1", name: "body", boundPrimitiveIds: ["V-1", "VariableID:missing:123"] }],
+    effectStyles: [],
+  };
+
+  const figma = fakeFigma(doc);
+  const chunks: any[] = [];
+  let cursor: string | null = null;
+  do {
+    const c = await runExtract(figma, { cursor, chunkSize: 30 });
+    chunks.push(c);
+    cursor = c.cursor;
+  } while (!chunks.at(-1)!.done);
+  const chunksDir = writeChunks(dir, chunks);
+
+  const result = await runLint({ dir, chunksDir, offline: false });
+
+  const styleEntry = result.drift!.cannotSync.find((c) => c.path === "body");
+  expect(styleEntry).toMatchObject({ path: "body", side: "figma" });
+  expect(styleEntry!.reason).toMatch(/VariableID:missing:123/);
+
+  const report = formatReport(result);
+  expect(report).toContain("## Cannot sync");
+  expect(report).toContain("`body` (figma)");
 });
 
 test("runLint (--offline) with a hand-built lock reproduces the same drift, no no-lock note", async () => {
@@ -356,12 +416,12 @@ test("subprocess: `lint --figma-chunks <dir with unpadded chunk names>` exits 2 
   expect(result.stderr).toContain("zero-padded");
 });
 
-test("subprocess: `lint` failure that is NOT an AdhdError (a malformed nodeTree crashing checkStructure with a raw TypeError) still exits 2 with ✗/→ on stderr, not a raw stack trace", async () => {
-  // checkStructure (src/rules/struct.ts) does `node.name.split("/")` for any
-  // COMPONENT_SET node, with no guard against a missing/non-string `name`.
-  // That's a genuine, uncaught-by-AdhdError crash site reachable from
-  // runLint's live path (checkStructure isn't wrapped in a try/catch there),
-  // so this is a real non-AdhdError exception, not a synthetic one.
+test("subprocess: a nameless COMPONENT_SET nodeTree is linted gracefully (no crash), not a raw TypeError that aborts the run", async () => {
+  // checkStructure (src/rules/struct.ts) coerces a missing/non-string `name`
+  // to "" before any `.split("/")`, so a malformed node can no longer throw a
+  // raw TypeError that aborts the whole structural lint. This exercises that
+  // guard end-to-end through the CLI: the run completes and writes a report
+  // rather than crashing.
   const dir = makeConsumerDir();
   gitInitAndAdd(dir);
   const nodeTree = { id: "1:1", type: "COMPONENT_SET" }; // no `name` field
@@ -374,14 +434,12 @@ test("subprocess: `lint` failure that is NOT an AdhdError (a malformed nodeTree 
     [CLI, "lint", "--dir", dir, "--figma-chunks", chunksDir, "--out", join(dir, "report.md")],
     { encoding: "utf-8" }
   );
-  expect(result.status).toBe(2);
-  expect(result.stderr).toContain("✗");
-  // No fixup is available for an unexpected (non-AdhdError) throw, so unlike
-  // the AdhdError branch there's no "→" line here — but critically, it must
-  // NOT leak a raw Node stack trace; the catch's non-AdhdError branch routes
-  // it through failOp instead of rethrowing.
+  // Not the operational-failure exit code, and never a leaked stack trace.
+  expect(result.status).not.toBe(2);
   expect(result.stderr).not.toContain("at Object.<anonymous>");
   expect(result.stderr).not.toMatch(/at .*struct\.(js|ts):\d+/);
+  // The run completed and produced a report.
+  expect(existsSync(join(dir, "report.md"))).toBe(true);
 });
 
 test("subprocess: `lint --out` pointing at a nonexistent parent dir exits 2 with a ✗/→ stderr, not a raw ENOENT stack trace", async () => {

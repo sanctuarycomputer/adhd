@@ -3,14 +3,23 @@ import { cssVarToPath } from "./naming";
 import { normalizeColor } from "./color";
 import { domainOf, type Snapshot, type Token, type Mode } from "./tokens";
 
-type Section = "theme" | "root-light" | "root-dark" | null;
+type Section = "theme" | "exposure" | "root-light" | "root-dark" | null;
 
 /**
  * Classifies a `--custom-property` declaration by walking its ancestor chain
  * (decl.parent, decl.parent.parent, …) up to the postcss Root:
  *
- *  - any ancestor `@theme` (with or without `inline`) ⇒ "theme"
- *    (primitives/default — takes priority over anything else).
+ *  - any ancestor bare `@theme` ⇒ "theme" (primitives/default — takes
+ *    priority over anything else).
+ *  - any ancestor `@theme inline` ⇒ "exposure". Per the 3-layer token
+ *    architecture (see docs/superpowers/specs/2026-07-05-adhd-v2-rebuild-design.md),
+ *    `@theme inline` is Layer 3: it bridges Layer-2 semantic roles into
+ *    Tailwind utility names (e.g. `--color-background: var(--background)`,
+ *    `--font-sans: var(--font-geist-sans)`). These declarations are pure
+ *    code-side plumbing — they exist so components can write
+ *    `bg-brand-surface` instead of `bg-gold-100 dark:bg-gold-900` — and have
+ *    no counterpart in Figma's Primitives collection, so they must never be
+ *    emitted as diffable tokens (see parseCssSnapshot below).
  *  - any ancestor Rule whose selector mentions `:root` ⇒ inside "root scope".
  *  - any ancestor Rule whose selector mentions `.dark` or
  *    `[data-theme="dark"]` ⇒ also inside root scope, and forces dark mode
@@ -29,7 +38,7 @@ function classify(decl: Declaration): Section {
   while (node && node.type !== "root") {
     if (node.type === "atrule") {
       const at = node as AtRule;
-      if (at.name === "theme") return "theme";
+      if (at.name === "theme") return at.params.trim() === "inline" ? "exposure" : "theme";
       if (at.name === "media" && /prefers-color-scheme:\s*dark/.test(at.params)) dark = true;
     } else if (node.type === "rule") {
       const rule = node as Rule;
@@ -114,6 +123,13 @@ export function parseCssSnapshot(css: string): Snapshot {
     if (section === "theme") put(decl.prop, decl.value, "primitives", "default");
     else if (section === "root-light") put(decl.prop, decl.value, "semantic", "light");
     else if (section === "root-dark") put(decl.prop, decl.value, "semantic", "dark");
+    // "exposure" (@theme inline) is intentionally not put()'d: these vars are
+    // Layer-3 aliases that bridge Layer-2 semantic roles into Tailwind's
+    // utility namespace and carry no Figma-syncable information of their
+    // own — emitting them as "primitives" tokens would make every one of
+    // them a permanent code-only existence-drift error against Figma. They
+    // are not `unsyncable` either (that's for values we can't interpret);
+    // they're simply not tokens for sync purposes.
   });
 
   return { side: "code", tokens: [...tokens.values()], styles: [] };

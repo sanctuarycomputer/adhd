@@ -105,7 +105,7 @@ function base64ToBytes(b64: string): number[] {
   return bytes;
 }
 
-export function encodeCursor(offset: number): string {
+function encodeCursor(offset: number): string {
   const s = String(offset);
   const bytes: number[] = [];
   for (let i = 0; i < s.length; i++) bytes.push(s.charCodeAt(i));

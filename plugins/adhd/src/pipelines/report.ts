@@ -6,7 +6,13 @@ export interface LintResult {
   violations: Violation[];
   drift: Drift | null;
   offSystem: OffSystemFinding[];
-  meta: { target: string; targetUrl: string | null; mode: "live" | "offline"; lockPresent: boolean };
+  meta: {
+    target: string;
+    targetUrl: string | null;
+    mode: "live" | "offline";
+    lockPresent: boolean;
+    offSystemUnavailable?: boolean;
+  };
 }
 
 // Renames, off-system findings, and cannotSync entries are all warnings —
@@ -47,6 +53,7 @@ export function formatReport(r: LintResult): string {
     lines.push("");
     lines.push("No issues found.");
     maybeAppendNoLockNote(lines, r);
+    maybeAppendOffSystemUnavailableNote(lines, r);
     return lines.join("\n");
   }
 
@@ -56,6 +63,7 @@ export function formatReport(r: LintResult): string {
   appendOffSystemSection(lines, r.offSystem);
   appendCannotSyncSection(lines, r.drift);
   maybeAppendNoLockNote(lines, r);
+  maybeAppendOffSystemUnavailableNote(lines, r);
 
   return lines.join("\n");
 }
@@ -65,6 +73,14 @@ function maybeAppendNoLockNote(lines: string[], r: LintResult): void {
   lines.push("");
   lines.push(
     "> No adhd.lock.json — drift is two-way (cannot attribute changes to a side); renames are heuristic.",
+  );
+}
+
+function maybeAppendOffSystemUnavailableNote(lines: string[], r: LintResult): void {
+  if (!r.meta.offSystemUnavailable) return;
+  lines.push("");
+  lines.push(
+    "> Off-system scan skipped: could not list source files (not a git repo or git unavailable).",
   );
 }
 

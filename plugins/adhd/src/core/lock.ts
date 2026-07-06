@@ -14,7 +14,7 @@ export function loadLock(dir: string): AdhdLock | null {
   let content: string;
   try {
     content = readFileSync(lockPath, "utf-8");
-  } catch (e) {
+  } catch {
     // File doesn't exist, return null
     return null;
   }
@@ -23,7 +23,7 @@ export function loadLock(dir: string): AdhdLock | null {
   let rawData: unknown;
   try {
     rawData = JSON.parse(content);
-  } catch (e) {
+  } catch {
     throw new AdhdError(
       `adhd.lock.json: invalid JSON`,
       "Delete adhd.lock.json and re-sync"

@@ -72,3 +72,30 @@ test("hex outside any string literal is not flagged", () => {
   const f = scanOffSystem([{ path: "a.tsx", content: `// see #ABCDEF for details` }], code);
   expect(f).toHaveLength(0);
 });
+
+test("rem-valued tokens match arbitrary dimension classes", () => {
+  const remTokens: Snapshot = {
+    side: "code",
+    styles: [],
+    tokens: [
+      { path: "spacing/4", collection: "primitives", domain: "spacing", values: { default: "1rem" } },
+      { path: "radius/md", collection: "primitives", domain: "radius", values: { default: "0.5rem" } },
+    ],
+  };
+  const f = scanOffSystem([{ path: "app/x.tsx", content: `<div className="p-[16px] rounded-[8px]" />` }], remTokens);
+  expect(f).toHaveLength(2);
+  expect(f).toContainEqual(
+    expect.objectContaining({
+      kind: "arbitrary-class",
+      snippet: "p-[16px]",
+      nearestToken: { path: "spacing/4", exact: true },
+    })
+  );
+  expect(f).toContainEqual(
+    expect.objectContaining({
+      kind: "arbitrary-class",
+      snippet: "rounded-[8px]",
+      nearestToken: { path: "radius/md", exact: true },
+    })
+  );
+});

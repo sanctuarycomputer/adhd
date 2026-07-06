@@ -96,6 +96,23 @@ test("byte-stable: no timestamp", () => {
   expect(md).not.toMatch(/\d{4}-\d{2}-\d{2}|T\d{2}:\d{2}:\d{2}/);
 });
 
+test("meta.offSystemUnavailable renders a note that off-system scanning was skipped", () => {
+  const withNote: LintResult = {
+    violations: [],
+    drift: null,
+    offSystem: [],
+    meta: { target: "Design System / Card", targetUrl: null, mode: "offline", lockPresent: true, offSystemUnavailable: true },
+  };
+  const md = formatReport(withNote);
+  expect(md).toContain(
+    "> Off-system scan skipped: could not list source files (not a git repo or git unavailable).",
+  );
+});
+
+test("meta.offSystemUnavailable absent/false renders no note (golden fixture unaffected)", () => {
+  expect(formatReport(result)).not.toContain("Off-system scan skipped");
+});
+
 test("omits empty sections and renders single-line report when nothing to report", () => {
   const empty: LintResult = {
     violations: [],

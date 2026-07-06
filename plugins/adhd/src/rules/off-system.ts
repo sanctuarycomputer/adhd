@@ -166,15 +166,21 @@ function computeStringSpans(line: string): Array<{ start: number; end: number }>
 
 /**
  * Parse a dimension value and return its normalized px number, or null if it
- * isn't a plain (unit-less or px) number.
+ * isn't a plain (unit-less, px, or rem) number. Mirrors the logic from
+ * diff.ts's parseDimensionPx: rem values are multiplied by 16 to get px.
  */
 function normalizeDimension(value: string): number | null {
   const trimmed = value.trim();
-  const pxMatch = trimmed.match(/^(\d+(?:\.\d+)?)(?:px)?$/);
-  if (pxMatch) {
-    return Number(pxMatch[1]);
+  const match = trimmed.match(/^(-?[0-9]*\.?[0-9]+)(px|rem)?$/);
+  if (!match) {
+    return null;
   }
-  return null;
+  const num = parseFloat(match[1]!);
+  const unit = match[2] ?? "";
+  if (unit === "rem") {
+    return num * 16;
+  }
+  return num; // "px" or unitless — both treated as raw px
 }
 
 /**

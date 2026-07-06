@@ -59,7 +59,8 @@ interface Ctx {
 }
 
 function visit(node: FigmaNode, ctx: Ctx, parentPath: string, parent: FigmaNode | null): void {
-  const nodePath = parentPath ? parentPath + " > " + node.name : node.name;
+  const name = typeof node.name === "string" ? node.name : "";
+  const nodePath = parentPath ? parentPath + " > " + name : name;
   const push = (rule: string, severity: "error" | "warning", message: string) => {
     ctx.violations.push({
       rule,
@@ -164,8 +165,8 @@ function visit(node: FigmaNode, ctx: Ctx, parentPath: string, parent: FigmaNode 
   }
 
   // STRUCT008: meaningful layer names
-  if (AUTO_NAME_RE.test(node.name)) {
-    push("STRUCT008", "warning", `Layer is auto-named ("${node.name}"); rename for clarity.`);
+  if (AUTO_NAME_RE.test(name)) {
+    push("STRUCT008", "warning", `Layer is auto-named ("${name}"); rename for clarity.`);
   }
 
   // STRUCT009: naming convention applies to identifiers that flow into code as
@@ -189,8 +190,8 @@ function visit(node: FigmaNode, ctx: Ctx, parentPath: string, parent: FigmaNode 
     (node.type === "COMPONENT_SET" || (node.type === "COMPONENT" && !parentPath?.includes(" > "))) &&
     !isVariantChild
   ) {
-    const base = node.name.split("/")[0]!;
-    if (!caseMatchesPath(base, ctx.naming)) {
+    const base = name.split("/")[0] || name;
+    if (base && !caseMatchesPath(base, ctx.naming)) {
       push("STRUCT009", "warning", `Component name "${base}" doesn't match ${ctx.naming} convention.`);
     }
   }
@@ -200,9 +201,12 @@ function visit(node: FigmaNode, ctx: Ctx, parentPath: string, parent: FigmaNode 
     const components = node.children.filter((c: FigmaNode) => c.type === "COMPONENT");
     const byPrefix: Record<string, FigmaNode[]> = {};
     for (const c of components) {
-      const prefix = c.name.split("/")[0]!;
-      byPrefix[prefix] = byPrefix[prefix] || [];
-      byPrefix[prefix]!.push(c);
+      const cName = typeof c.name === "string" ? c.name : "";
+      const prefix = cName.split("/")[0] || cName;
+      if (prefix) {
+        byPrefix[prefix] = byPrefix[prefix] || [];
+        byPrefix[prefix]!.push(c);
+      }
     }
     for (const [prefix, group] of Object.entries(byPrefix)) {
       if (group.length >= 2) {

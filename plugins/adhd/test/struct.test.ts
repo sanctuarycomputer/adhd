@@ -9,6 +9,9 @@ const rulesHit = (n: string) => [
   ...new Set(checkStructure(load(n), { fileKey: "TESTKEY", naming: "kebab-case" }).map((v) => v.rule)),
 ];
 
+const violations = (n: string) =>
+  checkStructure(load(n), { fileKey: "TESTKEY", naming: "kebab-case" });
+
 // EXPECTED table transcribed from plugins/adhd/lib/lint-engine/__tests__/struct-fixtures.test.js
 // (same fixture ⇒ same rule set — verified against the v1 checker directly).
 // Each struct-NNN fixture has exactly one rule-isolating mutation applied to a
@@ -45,3 +48,46 @@ test("struct-009 fires only STRUCT009", () =>
 
 test("struct-010 fires only STRUCT010", () =>
   expect(rulesHit("struct-010-no-variant-props")).toEqual(["STRUCT010"]));
+
+test("struct-001 violation has error severity", () => {
+  const vios = violations("struct-001-no-autolayout");
+  const struct001 = vios.find((v) => v.rule === "STRUCT001");
+  expect(struct001).toBeDefined();
+  expect(struct001?.severity).toBe("error");
+});
+
+test("node without name field does not throw and still lints other nodes", () => {
+  const root: any = {
+    id: "root",
+    type: "FRAME",
+    children: [
+      {
+        id: "child-with-name",
+        name: "Rectangle 1",
+        type: "RECTANGLE",
+      },
+      {
+        id: "child-no-name",
+        // name intentionally omitted
+        type: "FRAME",
+        children: [],
+        layoutMode: "NONE",
+      },
+      {
+        id: "child-with-name-2",
+        name: "Frame 2",
+        type: "FRAME",
+        children: [],
+        layoutMode: "NONE",
+      },
+    ],
+  };
+
+  expect(() => {
+    checkStructure(root, { fileKey: "TESTKEY", naming: "kebab-case" });
+  }).not.toThrow();
+
+  const vios = checkStructure(root, { fileKey: "TESTKEY", naming: "kebab-case" });
+  // Should have at least STRUCT008 violations for auto-named children
+  expect(vios.length).toBeGreaterThan(0);
+});

@@ -65,21 +65,37 @@ function tokensLookEqual(domain: Domain, a: Token, b: Token): boolean {
   return true;
 }
 
+// Positional segment comparison: paths must have equal segment count and
+// differ in at most one segment (i.e. share all-but-one segment). For a
+// single differing segment this only clears the bar once there are more than
+// two segments total — two 2-segment paths that merely share one segment
+// (e.g. "color/black" vs "color/ink") share only exactly half, which is
+// "merely half" and must NOT count as similar; a 3+-segment path differing
+// in just its last segment shares a strict majority and does.
 function pathSimilar(a: string, b: string): boolean {
   const as = a.split("/");
   const bs = b.split("/");
-  const shared = as.filter((s) => bs.includes(s)).length;
-  return shared * 2 >= Math.min(as.length, bs.length);
+  if (as.length !== bs.length) return false;
+  let diff = 0;
+  for (let i = 0; i < as.length; i++) {
+    if (as[i] !== bs[i]) diff++;
+  }
+  if (diff > 1) return false;
+  return (as.length - diff) * 2 > as.length;
 }
 
+// Renders every mode present on the token (via values and/or aliasOf), so a
+// token that's aliased in some modes but literal in others shows both —
+// never silently drops the literal-mode values in favor of alias-only modes.
 function describeValue(t: Token): string {
-  if (t.aliasOf && Object.keys(t.aliasOf).length > 0) {
-    return Object.entries(t.aliasOf)
-      .map(([m, v]) => `${m}: alias(${v})`)
-      .join(", ");
-  }
-  const entries = Object.entries(t.values ?? {});
-  return entries.map(([m, v]) => `${m}: ${v}`).join(", ");
+  const modes = new Set<string>([...Object.keys(t.values ?? {}), ...Object.keys(t.aliasOf ?? {})]);
+  return Array.from(modes)
+    .map((m) => {
+      const aliasTarget = t.aliasOf?.[m as keyof Token["values"]];
+      if (aliasTarget !== undefined) return `${m}: alias(${aliasTarget})`;
+      return `${m}: ${t.values?.[m as keyof Token["values"]]}`;
+    })
+    .join(", ");
 }
 
 const key = (t: Token) => `${t.collection}:${t.path}`;
@@ -97,17 +113,35 @@ export function diffSnapshots(code: Snapshot, figma: Snapshot, opts: DiffOpts): 
   for (const t of code.tokens) {
     if (t.unsyncable) {
       cannotSync.push({ path: t.path, side: "code", reason: t.unsyncable });
-    } else {
-      codeMap.set(key(t), t);
+      continue;
     }
+    const k = key(t);
+    if (codeMap.has(k)) {
+      cannotSync.push({
+        path: t.path,
+        side: "code",
+        reason: `duplicate token key '${k}' — check for duplicate collection names or paths`,
+      });
+      continue;
+    }
+    codeMap.set(k, t);
   }
   const figmaMap = new Map<string, Token>();
   for (const t of figma.tokens) {
     if (t.unsyncable) {
       cannotSync.push({ path: t.path, side: "figma", reason: t.unsyncable });
-    } else {
-      figmaMap.set(key(t), t);
+      continue;
     }
+    const k = key(t);
+    if (figmaMap.has(k)) {
+      cannotSync.push({
+        path: t.path,
+        side: "figma",
+        reason: `duplicate token key '${k}' — check for duplicate collection names or paths`,
+      });
+      continue;
+    }
+    figmaMap.set(k, t);
   }
 
   // existence records for keys that only appear on one side; kept as live

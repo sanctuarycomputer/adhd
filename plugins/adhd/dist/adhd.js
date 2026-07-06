@@ -5928,13 +5928,13 @@ function loadLock(dir) {
   let content;
   try {
     content = (0, import_node_fs.readFileSync)(lockPath, "utf-8");
-  } catch (e4) {
+  } catch {
     return null;
   }
   let rawData;
   try {
     rawData = JSON.parse(content);
-  } catch (e4) {
+  } catch {
     throw new AdhdError(
       `adhd.lock.json: invalid JSON`,
       "Delete adhd.lock.json and re-sync"
@@ -9751,7 +9751,7 @@ function classify(decl2) {
   while (node && node.type !== "root") {
     if (node.type === "atrule") {
       const at = node;
-      if (at.name === "theme") return "theme";
+      if (at.name === "theme") return at.params.trim() === "inline" ? "exposure" : "theme";
       if (at.name === "media" && /prefers-color-scheme:\s*dark/.test(at.params)) dark = true;
     } else if (node.type === "rule") {
       const rule2 = node;
@@ -10068,9 +10068,7 @@ function figmaPayloadToSnapshot(p4) {
   const toStyleShell = (s, kind) => {
     const { names, unsyncable } = resolveBoundPrimitives(s, idIndex);
     const shell = { kind, name: s.name, boundPrimitives: names };
-    if (unsyncable) {
-      shell.unsyncable = shell.unsyncable ? `${shell.unsyncable}; ${unsyncable}` : unsyncable;
-    }
+    if (unsyncable) shell.unsyncable = unsyncable;
     return shell;
   };
   const styles = [
@@ -10103,7 +10101,8 @@ function caseMatchesPath(name, naming) {
   return segments.every((s) => caseMatches(s, naming));
 }
 function visit(node, ctx, parentPath, parent) {
-  const nodePath = parentPath ? parentPath + " > " + node.name : node.name;
+  const name = typeof node.name === "string" ? node.name : "";
+  const nodePath = parentPath ? parentPath + " > " + name : name;
   const push = (rule2, severity, message) => {
     ctx.violations.push({
       rule: rule2,
@@ -10168,8 +10167,8 @@ function visit(node, ctx, parentPath, parent) {
   if (node.type === "FRAME" && node.wasInstance === true) {
     push("STRUCT006", "warning", "Layer was previously an instance; was detached from its master.");
   }
-  if (AUTO_NAME_RE.test(node.name)) {
-    push("STRUCT008", "warning", `Layer is auto-named ("${node.name}"); rename for clarity.`);
+  if (AUTO_NAME_RE.test(name)) {
+    push("STRUCT008", "warning", `Layer is auto-named ("${name}"); rename for clarity.`);
   }
   if (node.type === "COMPONENT_SET" && node.componentPropertyDefinitions) {
     for (const propName of Object.keys(node.componentPropertyDefinitions)) {
@@ -10180,8 +10179,8 @@ function visit(node, ctx, parentPath, parent) {
   }
   const isVariantChild = node.type === "COMPONENT" && parent !== null && parent.type === "COMPONENT_SET";
   if ((node.type === "COMPONENT_SET" || node.type === "COMPONENT" && !parentPath?.includes(" > ")) && !isVariantChild) {
-    const base = node.name.split("/")[0];
-    if (!caseMatchesPath(base, ctx.naming)) {
+    const base = name.split("/")[0] || name;
+    if (base && !caseMatchesPath(base, ctx.naming)) {
       push("STRUCT009", "warning", `Component name "${base}" doesn't match ${ctx.naming} convention.`);
     }
   }
@@ -10189,9 +10188,12 @@ function visit(node, ctx, parentPath, parent) {
     const components = node.children.filter((c2) => c2.type === "COMPONENT");
     const byPrefix = {};
     for (const c2 of components) {
-      const prefix = c2.name.split("/")[0];
-      byPrefix[prefix] = byPrefix[prefix] || [];
-      byPrefix[prefix].push(c2);
+      const cName = typeof c2.name === "string" ? c2.name : "";
+      const prefix = cName.split("/")[0] || cName;
+      if (prefix) {
+        byPrefix[prefix] = byPrefix[prefix] || [];
+        byPrefix[prefix].push(c2);
+      }
     }
     for (const [prefix, group] of Object.entries(byPrefix)) {
       if (group.length >= 2) {
@@ -10331,11 +10333,16 @@ function computeStringSpans(line) {
 }
 function normalizeDimension(value) {
   const trimmed = value.trim();
-  const pxMatch = trimmed.match(/^(\d+(?:\.\d+)?)(?:px)?$/);
-  if (pxMatch) {
-    return Number(pxMatch[1]);
+  const match = trimmed.match(/^(-?[0-9]*\.?[0-9]+)(px|rem)?$/);
+  if (!match) {
+    return null;
   }
-  return null;
+  const num3 = parseFloat(match[1]);
+  const unit = match[2] ?? "";
+  if (unit === "rem") {
+    return num3 * 16;
+  }
+  return num3;
 }
 function findNearestToken(value, colorTokens, dimensionTokens) {
   const rgba = parseColor(value);
@@ -10402,15 +10409,21 @@ function tokensLookEqual(domain, a, b) {
 function pathSimilar(a, b) {
   const as = a.split("/");
   const bs = b.split("/");
-  const shared = as.filter((s) => bs.includes(s)).length;
-  return shared * 2 >= Math.min(as.length, bs.length);
+  if (as.length !== bs.length) return false;
+  let diff = 0;
+  for (let i = 0; i < as.length; i++) {
+    if (as[i] !== bs[i]) diff++;
+  }
+  if (diff > 1) return false;
+  return (as.length - diff) * 2 > as.length;
 }
 function describeValue(t) {
-  if (t.aliasOf && Object.keys(t.aliasOf).length > 0) {
-    return Object.entries(t.aliasOf).map(([m, v]) => `${m}: alias(${v})`).join(", ");
-  }
-  const entries = Object.entries(t.values ?? {});
-  return entries.map(([m, v]) => `${m}: ${v}`).join(", ");
+  const modes2 = /* @__PURE__ */ new Set([...Object.keys(t.values ?? {}), ...Object.keys(t.aliasOf ?? {})]);
+  return Array.from(modes2).map((m) => {
+    const aliasTarget = t.aliasOf?.[m];
+    if (aliasTarget !== void 0) return `${m}: alias(${aliasTarget})`;
+    return `${m}: ${t.values?.[m]}`;
+  }).join(", ");
 }
 var key = (t) => `${t.collection}:${t.path}`;
 function diffSnapshots(code, figma, opts) {
@@ -10421,17 +10434,35 @@ function diffSnapshots(code, figma, opts) {
   for (const t of code.tokens) {
     if (t.unsyncable) {
       cannotSync.push({ path: t.path, side: "code", reason: t.unsyncable });
-    } else {
-      codeMap.set(key(t), t);
+      continue;
     }
+    const k4 = key(t);
+    if (codeMap.has(k4)) {
+      cannotSync.push({
+        path: t.path,
+        side: "code",
+        reason: `duplicate token key '${k4}' \u2014 check for duplicate collection names or paths`
+      });
+      continue;
+    }
+    codeMap.set(k4, t);
   }
   const figmaMap = /* @__PURE__ */ new Map();
   for (const t of figma.tokens) {
     if (t.unsyncable) {
       cannotSync.push({ path: t.path, side: "figma", reason: t.unsyncable });
-    } else {
-      figmaMap.set(key(t), t);
+      continue;
     }
+    const k4 = key(t);
+    if (figmaMap.has(k4)) {
+      cannotSync.push({
+        path: t.path,
+        side: "figma",
+        reason: `duplicate token key '${k4}' \u2014 check for duplicate collection names or paths`
+      });
+      continue;
+    }
+    figmaMap.set(k4, t);
   }
   const existRecords = [];
   for (const [k4, codeTok] of codeMap) {
@@ -10568,9 +10599,12 @@ function listTsxJsxFiles(dir) {
   });
   if (result.error || result.status !== 0) {
     console.error(`\u2717 git ls-files failed in ${dir}; off-system scan will be empty (not a git repo?)`);
-    return [];
+    return { files: [], unavailable: true };
   }
-  return result.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  return {
+    files: result.stdout.split("\n").map((s) => s.trim()).filter(Boolean),
+    unavailable: false
+  };
 }
 function nodeIdFromUrl(url) {
   const m = url.match(/[?&]node-id=([^&]+)/);
@@ -10644,8 +10678,15 @@ async function runLint(opts) {
     }
   }
   const drift = diffSnapshots(codeSnapshot, figmaSnapshot, { lock, figmaIds });
+  for (const style of codeSnapshot.styles) {
+    if (style.unsyncable) drift.cannotSync.push({ path: style.name, side: "code", reason: style.unsyncable });
+  }
+  for (const style of figmaSnapshot.styles) {
+    if (style.unsyncable) drift.cannotSync.push({ path: style.name, side: "figma", reason: style.unsyncable });
+  }
+  const { files: tsxJsxFiles, unavailable: offSystemUnavailable } = listTsxJsxFiles(opts.dir);
   const offSystemFiles = [];
-  for (const p4 of listTsxJsxFiles(opts.dir)) {
+  for (const p4 of tsxJsxFiles) {
     try {
       offSystemFiles.push({ path: p4, content: (0, import_node_fs3.readFileSync)((0, import_node_path3.join)(opts.dir, p4), "utf-8") });
     } catch (e4) {
@@ -10657,7 +10698,7 @@ async function runLint(opts) {
     violations,
     drift,
     offSystem,
-    meta: { target, targetUrl, mode, lockPresent: lock !== null }
+    meta: { target, targetUrl, mode, lockPresent: lock !== null, offSystemUnavailable }
   };
 }
 
@@ -10683,6 +10724,7 @@ function formatReport(r2) {
     lines.push("");
     lines.push("No issues found.");
     maybeAppendNoLockNote(lines, r2);
+    maybeAppendOffSystemUnavailableNote(lines, r2);
     return lines.join("\n");
   }
   appendStructureSection(lines, r2.violations);
@@ -10691,6 +10733,7 @@ function formatReport(r2) {
   appendOffSystemSection(lines, r2.offSystem);
   appendCannotSyncSection(lines, r2.drift);
   maybeAppendNoLockNote(lines, r2);
+  maybeAppendOffSystemUnavailableNote(lines, r2);
   return lines.join("\n");
 }
 function maybeAppendNoLockNote(lines, r2) {
@@ -10698,6 +10741,13 @@ function maybeAppendNoLockNote(lines, r2) {
   lines.push("");
   lines.push(
     "> No adhd.lock.json \u2014 drift is two-way (cannot attribute changes to a side); renames are heuristic."
+  );
+}
+function maybeAppendOffSystemUnavailableNote(lines, r2) {
+  if (!r2.meta.offSystemUnavailable) return;
+  lines.push("");
+  lines.push(
+    "> Off-system scan skipped: could not list source files (not a git repo or git unavailable)."
   );
 }
 function appendStructureSection(lines, violations) {

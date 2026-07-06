@@ -33,14 +33,14 @@ test("var() references become aliasOf, never flattened", () => {
   expect(alias).toBeDefined();
   const targets = Object.values(alias!.aliasOf!);
   expect(targets.length).toBeGreaterThan(0);
-  expect(targets[0]).toMatch(/\//); // a path like color/zinc/800
-  // Pinned concrete value: @theme inline's --color-brand-on-surface aliases
-  // :root's --brand-on-surface directly (aliases are never flattened, so
-  // this points at "brand/on/surface", not the deeper "color/gold/800").
-  // @theme (inline) declarations are always mode "default".
-  const brandOnSurface = byPath("primitives", "color/brand/on/surface");
-  expect(brandOnSurface).toBeDefined();
-  expect(brandOnSurface!.aliasOf).toEqual({ default: "brand/on/surface" });
+  expect(targets[0]).toMatch(/\//); // a path like color/gold/100
+  // Pinned concrete value: :root's --brand-surface-raised aliases
+  // --color-gold-200 directly in light and --color-gold-800 in dark
+  // (aliases are never flattened, so these point at the primitive paths,
+  // not a resolved hex value).
+  const brandSurfaceRaised = byPath("semantic", "brand/surface/raised");
+  expect(brandSurfaceRaised).toBeDefined();
+  expect(brandSurfaceRaised!.aliasOf).toEqual({ light: "color/gold/200", dark: "color/gold/800" });
 });
 
 test("aliasOf targets differ per mode when a semantic token aliases a different primitive in light vs dark", () => {
@@ -77,9 +77,40 @@ test("parses the example app's real globals.css without unsyncable surprises", (
     "utf8",
   );
   const real = parseCssSnapshot(realCss);
-  expect(real.tokens.length).toBeGreaterThan(20);
+  // 18 real tokens (11 gold primitives + 2 text primitives + 5 semantic
+  // roles). Previously 25: the file's `@theme inline` block contributes 7
+  // Layer-3 exposure vars that bridge semantic roles into Tailwind's
+  // utility namespace (--color-background, --color-foreground, --font-sans,
+  // --font-mono, --color-brand-surface, --color-brand-surface-raised,
+  // --color-brand-on-surface) — those are code-only plumbing with no Figma
+  // counterpart, so they're correctly excluded rather than counted as
+  // spurious "primitives" tokens.
+  expect(real.tokens).toHaveLength(18);
   const unsyncableReasons = real.tokens.filter((t) => t.unsyncable).map((t) => t.unsyncable);
   expect(unsyncableReasons).toEqual([]);
+  const paths = real.tokens.map((t) => `${t.collection}:${t.path}`);
+  expect(paths).not.toContain("primitives:color/background");
+  expect(paths).not.toContain("primitives:font/sans");
+});
+
+test("@theme inline exposure vars are excluded entirely, not emitted as primitives", () => {
+  const css = `@theme inline {
+    --color-background: var(--background);
+  }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(0);
+});
+
+test("bare @theme still produces a primitives token (unaffected by the inline exclusion)", () => {
+  const css = `@theme {
+    --color-zinc-800: #27272a;
+  }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(1);
+  const t = result.tokens[0]!;
+  expect(t.collection).toBe("primitives");
+  expect(t.path).toBe("color/zinc/800");
+  expect(t.values.default).toBe("#27272a");
 });
 
 test("unresolvable alias targets are marked unsyncable", () => {

@@ -1,7 +1,7 @@
 import { stableStringify, fnv1a64 } from "./hash";
 import type { Snapshot } from "./tokens";
 
-export function canonicalize(s: Snapshot): Snapshot {
+function canonicalize(s: Snapshot): Snapshot {
   const key = (t: { collection: string; path: string }) => `${t.collection}/${t.path}`;
   return {
     side: s.side,

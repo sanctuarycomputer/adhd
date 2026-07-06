@@ -9,7 +9,7 @@ const noLock = { lock: null, figmaIds: null };
 
 test("oklch in code equals its hex in figma — NO drift (v1 regression)", () => {
   const d = diffSnapshots(
-    snap("code", [tok("color/zinc/800", { default: "#27272a" })]),
+    snap("code", [tok("color/zinc/800", { default: "oklch(0.274 0.006 286.033)" })]),
     snap("figma", [tok("color/zinc/800", { default: "#27272a" })]), noLock);
   expect(d.valueDrift).toEqual([]);
 });
@@ -165,4 +165,69 @@ test("bare semantic color token with a genuinely different value still reports v
   );
   expect(d.valueDrift).toHaveLength(1);
   expect(d.valueDrift[0]).toMatchObject({ path: "background", mode: "default", code: "#ffffff", figma: "#000000" });
+});
+
+// --- Fix pinning ---
+
+test("two short (2-segment) paths sharing only one segment are NOT a probable rename — existence drift instead", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("color/black", { default: "#000000" })]),
+    snap("figma", [tok("color/ink", { default: "#000000" })]),
+    noLock
+  );
+  expect(d.renames).toEqual([]);
+  expect(d.existence).toHaveLength(2);
+  const paths = d.existence.map((e) => e.path).sort();
+  expect(paths).toEqual(["color/black", "color/ink"]);
+});
+
+test("probable rename still pairs paths differing only in their last segment (3+ segments): gold→golden, silver→silvery", () => {
+  const d = diffSnapshots(
+    snap("code", [
+      tok("color/brand/gold", { default: "#d4a017" }),
+      tok("color/brand/silver", { default: "#c0c0c0" }),
+    ]),
+    snap("figma", [
+      tok("color/brand/golden", { default: "#d4a017" }),
+      tok("color/brand/silvery", { default: "#c0c0c0" }),
+    ]),
+    noLock
+  );
+  expect(d.existence).toEqual([]);
+  expect(d.renames).toHaveLength(2);
+});
+
+test("duplicate collection+path key on either side routes the loser to cannotSync instead of silently overwriting", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("color/red", { default: "#ff0000" })]),
+    snap("figma", [
+      tok("color/red", { default: "#ff0000" }),
+      tok("color/red", { default: "#ee0000" }),
+    ]),
+    noLock
+  );
+  const dup = d.cannotSync.find((c) => c.side === "figma");
+  expect(dup).toBeDefined();
+  expect(dup!.reason).toMatch(/duplicate token key 'primitives:color\/red'/);
+  // The first figma occurrence still wins the match against code, so no
+  // existence/valueDrift entries are produced for this path.
+  expect(d.existence).toEqual([]);
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("describeValue includes both the alias and the literal mode for a mixed alias/literal token", () => {
+  const d = diffSnapshots(
+    snap("code", []),
+    snap("figma", [
+      tok(
+        "background",
+        { dark: "#000000" },
+        { collection: "semantic", aliasOf: { light: "color/zinc/50" } }
+      ),
+    ]),
+    noLock
+  );
+  expect(d.existence).toHaveLength(1);
+  expect(d.existence[0]!.value).toContain("light: alias(color/zinc/50)");
+  expect(d.existence[0]!.value).toContain("dark: #000000");
 });

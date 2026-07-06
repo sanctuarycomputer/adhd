@@ -303,9 +303,7 @@ export function figmaPayloadToSnapshot(p: FigmaPayload): { snapshot: Snapshot; i
   const toStyleShell = (s: SerializedStyle, kind: StyleShell["kind"]): StyleShell => {
     const { names, unsyncable } = resolveBoundPrimitives(s, idIndex);
     const shell: StyleShell = { kind, name: s.name, boundPrimitives: names };
-    if (unsyncable) {
-      shell.unsyncable = shell.unsyncable ? `${shell.unsyncable}; ${unsyncable}` : unsyncable;
-    }
+    if (unsyncable) shell.unsyncable = unsyncable;
     return shell;
   };
 

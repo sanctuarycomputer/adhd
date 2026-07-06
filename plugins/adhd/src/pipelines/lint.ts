@@ -69,19 +69,22 @@ function readChunks(chunksDir: string): any[] {
  * scanning degrades to "no files found" rather than crashing the whole lint
  * run over an unrelated tooling gap.
  */
-function listTsxJsxFiles(dir: string): string[] {
+function listTsxJsxFiles(dir: string): { files: string[]; unavailable: boolean } {
   const result = spawnSync("git", ["ls-files", "--", "*.tsx", "*.jsx"], {
     cwd: dir,
     encoding: "utf-8",
   });
   if (result.error || result.status !== 0) {
     console.error(`✗ git ls-files failed in ${dir}; off-system scan will be empty (not a git repo?)`);
-    return [];
+    return { files: [], unavailable: true };
   }
-  return result.stdout
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return {
+    files: result.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    unavailable: false,
+  };
 }
 
 // Extracts the `node-id` query param from a Figma URL, e.g.
@@ -172,8 +175,22 @@ export async function runLint(opts: RunLintOpts): Promise<LintResult> {
 
   const drift = diffSnapshots(codeSnapshot, figmaSnapshot, { lock, figmaIds });
 
+  // Style-level unsyncable reasons (e.g. a text/effect style with a bound
+  // primitive id that doesn't resolve) aren't produced by diffSnapshots —
+  // it only ever sees `.tokens`, not `.styles` — so fold them into the same
+  // cannotSync array here. Token-level unsyncables are already handled
+  // above by diffSnapshots; this only adds STYLE unsyncables, so nothing
+  // is double-counted.
+  for (const style of codeSnapshot.styles) {
+    if (style.unsyncable) drift.cannotSync.push({ path: style.name, side: "code", reason: style.unsyncable });
+  }
+  for (const style of figmaSnapshot.styles) {
+    if (style.unsyncable) drift.cannotSync.push({ path: style.name, side: "figma", reason: style.unsyncable });
+  }
+
+  const { files: tsxJsxFiles, unavailable: offSystemUnavailable } = listTsxJsxFiles(opts.dir);
   const offSystemFiles: Array<{ path: string; content: string }> = [];
-  for (const p of listTsxJsxFiles(opts.dir)) {
+  for (const p of tsxJsxFiles) {
     try {
       offSystemFiles.push({ path: p, content: readFileSync(join(opts.dir, p), "utf-8") });
     } catch (e: any) {
@@ -186,6 +203,6 @@ export async function runLint(opts: RunLintOpts): Promise<LintResult> {
     violations,
     drift,
     offSystem,
-    meta: { target, targetUrl, mode, lockPresent: lock !== null },
+    meta: { target, targetUrl, mode, lockPresent: lock !== null, offSystemUnavailable },
   };
 }
