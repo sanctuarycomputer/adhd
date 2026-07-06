@@ -111,7 +111,18 @@ export function parseCssSnapshot(css: string): Snapshot {
       // names like --background/--foreground land in "other" even though
       // their values are colors. Normalize them too when they resolve, so
       // the code-side snapshot is canonical regardless of domain.
-      const hex = normalizeColor(value);
+      //
+      // Guard: culori's parse() accepts bare hex-looking digit strings
+      // WITHOUT a leading '#' (e.g. "500" parses as if it were "#500").
+      // That means numeric design tokens like --font-weight-medium: 500 or
+      // --spacing-lg: 100 would be silently corrupted into hex colors if we
+      // ran every "other"-domain value through normalizeColor. Skip
+      // normalization for anything that looks like a bare number or
+      // dimension (optionally suffixed with a unit or "%") — those can
+      // never be legitimate colors — and only attempt normalization
+      // otherwise (oklch()/hsl()/rgb()/#hex/named colors).
+      const isNumberOrDimension = /^-?[0-9]*\.?[0-9]+([a-z%]+)?$/i.test(value);
+      const hex = isNumberOrDimension ? null : normalizeColor(value);
       t.values[mode] = hex ?? value;
     }
     tokens.set(key, t);

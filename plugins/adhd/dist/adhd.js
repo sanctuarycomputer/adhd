@@ -5965,6 +5965,66 @@ function loadLock(dir) {
       "Delete adhd.lock.json and re-sync"
     );
   }
+  if (typeof lock.figmaIds !== "object" || lock.figmaIds === null) {
+    throw new AdhdError(
+      `adhd.lock.json: figmaIds must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (typeof lock.figmaIds.variables !== "object" || lock.figmaIds.variables === null) {
+    throw new AdhdError(
+      `adhd.lock.json: figmaIds.variables must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (typeof lock.figmaIds.styles !== "object" || lock.figmaIds.styles === null) {
+    throw new AdhdError(
+      `adhd.lock.json: figmaIds.styles must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (typeof lock.baseSnapshot !== "object" || lock.baseSnapshot === null) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (!["code", "figma"].includes(lock.baseSnapshot.side)) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot.side must be "code" or "figma"`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (!Array.isArray(lock.baseSnapshot.tokens)) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot.tokens must be an array`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (!Array.isArray(lock.baseSnapshot.styles)) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot.styles must be an array`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (typeof lock.lastSync !== "object" || lock.lastSync === null) {
+    throw new AdhdError(
+      `adhd.lock.json: lastSync must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (typeof lock.lastSync.at !== "string") {
+    throw new AdhdError(
+      `adhd.lock.json: lastSync.at must be a string`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+  if (typeof lock.lastSync.figmaHash !== "string") {
+    throw new AdhdError(
+      `adhd.lock.json: lastSync.figmaHash must be a string`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
   return lock;
 }
 
@@ -9803,7 +9863,8 @@ function parseCssSnapshot(css) {
         t.unsyncable = `unparseable color value: ${value}`;
       }
     } else {
-      const hex2 = normalizeColor(value);
+      const isNumberOrDimension = /^-?[0-9]*\.?[0-9]+([a-z%]+)?$/i.test(value);
+      const hex2 = isNumberOrDimension ? null : normalizeColor(value);
       t.values[mode] = hex2 ?? value;
     }
     tokens.set(key2, t);
@@ -10391,7 +10452,7 @@ function dimensionsEqual(a, b) {
 function valuesEqual(domain, a, b) {
   if (a === b) return true;
   if (domain === "color") return colorsEqual(a, b);
-  if (domain === "spacing" || domain === "radius") return dimensionsEqual(a, b);
+  if (domain === "spacing" || domain === "radius" || domain === "typography") return dimensionsEqual(a, b);
   if (parseColor(a) && parseColor(b)) return colorsEqual(a, b);
   return false;
 }
@@ -10486,6 +10547,7 @@ function diffSnapshots(code, figma, opts) {
       const toIdx = existRecords.findIndex((r2) => r2.side === "figma" && r2.token.path === currentPath);
       if (fromIdx === -1 || toIdx === -1) continue;
       renames.push({ from: lockPath, to: currentPath, confidence: "definite", side: "figma" });
+      diffMatchedPair(existRecords[fromIdx].token, existRecords[toIdx].token, valueDrift, structural);
       const [i1, i2] = fromIdx < toIdx ? [toIdx, fromIdx] : [fromIdx, toIdx];
       existRecords.splice(i1, 1);
       existRecords.splice(i2, 1);

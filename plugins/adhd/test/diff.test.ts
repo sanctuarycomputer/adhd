@@ -215,6 +215,56 @@ test("duplicate collection+path key on either side routes the loser to cannotSyn
   expect(d.valueDrift).toEqual([]);
 });
 
+test("typography dimension: code rem and figma bare-number FLOAT are unified — no valueDrift", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("text/lg", { default: "1.125rem" }, { domain: "typography" })]),
+    snap("figma", [tok("text/lg", { default: "18" }, { domain: "typography" })]), noLock);
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("typography dimension: a genuinely different pair still reports valueDrift", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("text/lg", { default: "1.125rem" }, { domain: "typography" })]),
+    snap("figma", [tok("text/lg", { default: "20" }, { domain: "typography" })]), noLock);
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "text/lg", mode: "default", code: "1.125rem", figma: "20" });
+});
+
+test("typography dimension: line-height rem vs bare-number FLOAT are unified — no valueDrift", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("leading/normal", { default: "1rem" }, { domain: "typography" })]),
+    snap("figma", [tok("leading/normal", { default: "16" }, { domain: "typography" })]), noLock);
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("typography font-weight (unitless): equal values produce no drift", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("font/weight/medium", { default: "500" }, { domain: "typography" })]),
+    snap("figma", [tok("font/weight/medium", { default: "500" }, { domain: "typography" })]), noLock);
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("typography font-weight (unitless): differing values still report valueDrift", () => {
+  const d = diffSnapshots(
+    snap("code", [tok("font/weight/medium", { default: "500" }, { domain: "typography" })]),
+    snap("figma", [tok("font/weight/medium", { default: "700" }, { domain: "typography" })]), noLock);
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "font/weight/medium", mode: "default", code: "500", figma: "700" });
+});
+
+test("definite rename does not swallow a coincident value change", () => {
+  const lock: any = { figmaIds: { variables: { "VariableID:1:1": "color/brand/gold" }, styles: {} },
+    baseSnapshot: snap("figma", []), components: [], lastSync: { at: "", figmaHash: "" } };
+  const d = diffSnapshots(
+    snap("code", [tok("color/brand/gold", { default: "#d4a017" })]),
+    snap("figma", [tok("color/brand/golden", { default: "#123456" })]),
+    { lock, figmaIds: { "VariableID:1:1": "color/brand/golden" } });
+  expect(d.renames).toEqual([{ from: "color/brand/gold", to: "color/brand/golden", confidence: "definite", side: "figma" }]);
+  expect(d.existence).toEqual([]);
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "color/brand/gold", mode: "default", code: "#d4a017", figma: "#123456" });
+});
+
 test("describeValue includes both the alias and the literal mode for a mixed alias/literal token", () => {
   const d = diffSnapshots(
     snap("code", []),

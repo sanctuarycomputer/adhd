@@ -41,7 +41,7 @@ function dimensionsEqual(a: string, b: string): boolean {
 function valuesEqual(domain: Domain, a: string, b: string): boolean {
   if (a === b) return true;
   if (domain === "color") return colorsEqual(a, b);
-  if (domain === "spacing" || domain === "radius") return dimensionsEqual(a, b);
+  if (domain === "spacing" || domain === "radius" || domain === "typography") return dimensionsEqual(a, b);
   // Domain classification is path-based (domainOf), so bare semantic names
   // like "background"/"foreground" land in "other" even though their values
   // are colors (e.g. code oklch(1 0 0) vs figma #ffffff). Fall back to a
@@ -178,6 +178,10 @@ export function diffSnapshots(code: Snapshot, figma: Snapshot, opts: DiffOpts): 
       if (fromIdx === -1 || toIdx === -1) continue;
 
       renames.push({ from: lockPath, to: currentPath, confidence: "definite", side: "figma" });
+      // A rename doesn't preclude a coincident value/structural change — diff
+      // the matched pair before splicing the existence records away, so any
+      // drift folds into the report instead of silently vanishing.
+      diffMatchedPair(existRecords[fromIdx]!.token, existRecords[toIdx]!.token, valueDrift, structural);
       // Remove higher index first so the other index stays valid.
       const [i1, i2] = fromIdx < toIdx ? [toIdx, fromIdx] : [fromIdx, toIdx];
       existRecords.splice(i1, 1);

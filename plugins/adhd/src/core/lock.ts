@@ -62,5 +62,79 @@ export function loadLock(dir: string): AdhdLock | null {
     );
   }
 
+  // Validate nested shape
+  // figmaIds structure
+  if (typeof lock.figmaIds !== "object" || lock.figmaIds === null) {
+    throw new AdhdError(
+      `adhd.lock.json: figmaIds must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (typeof lock.figmaIds.variables !== "object" || lock.figmaIds.variables === null) {
+    throw new AdhdError(
+      `adhd.lock.json: figmaIds.variables must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (typeof lock.figmaIds.styles !== "object" || lock.figmaIds.styles === null) {
+    throw new AdhdError(
+      `adhd.lock.json: figmaIds.styles must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  // baseSnapshot structure
+  if (typeof lock.baseSnapshot !== "object" || lock.baseSnapshot === null) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (!["code", "figma"].includes(lock.baseSnapshot.side)) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot.side must be "code" or "figma"`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (!Array.isArray(lock.baseSnapshot.tokens)) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot.tokens must be an array`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (!Array.isArray(lock.baseSnapshot.styles)) {
+    throw new AdhdError(
+      `adhd.lock.json: baseSnapshot.styles must be an array`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  // lastSync structure
+  if (typeof lock.lastSync !== "object" || lock.lastSync === null) {
+    throw new AdhdError(
+      `adhd.lock.json: lastSync must be an object`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (typeof lock.lastSync.at !== "string") {
+    throw new AdhdError(
+      `adhd.lock.json: lastSync.at must be a string`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
+  if (typeof lock.lastSync.figmaHash !== "string") {
+    throw new AdhdError(
+      `adhd.lock.json: lastSync.figmaHash must be a string`,
+      "Delete adhd.lock.json and re-sync"
+    );
+  }
+
   return lock as AdhdLock;
 }

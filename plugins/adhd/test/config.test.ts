@@ -57,3 +57,110 @@ test("resolveCssEntry with missing cssEntry file throws AdhdError", () => {
   expect(() => resolveCssEntry(d, cfg)).toThrow(/cssEntry/);
   try { resolveCssEntry(d, cfg); } catch (e: any) { expect(e.fixup).toContain("missing.css"); }
 });
+
+// Tests for loadLock nested shape validation
+test("loadLock with figmaIds missing .variables throws AdhdError", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", tokens: [], styles: [] },
+    figmaIds: { styles: {} },
+    lastSync: { at: "2025-01-01T00:00:00Z", figmaHash: "abc123" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadLock with figmaIds missing .styles throws AdhdError", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", tokens: [], styles: [] },
+    figmaIds: { variables: {} },
+    lastSync: { at: "2025-01-01T00:00:00Z", figmaHash: "abc123" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadLock with baseSnapshot missing .tokens throws AdhdError", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", styles: [] },
+    figmaIds: { variables: {}, styles: {} },
+    lastSync: { at: "2025-01-01T00:00:00Z", figmaHash: "abc123" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadLock with baseSnapshot missing .styles throws AdhdError", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", tokens: [] },
+    figmaIds: { variables: {}, styles: {} },
+    lastSync: { at: "2025-01-01T00:00:00Z", figmaHash: "abc123" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadLock with lastSync missing .at throws AdhdError", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", tokens: [], styles: [] },
+    figmaIds: { variables: {}, styles: {} },
+    lastSync: { figmaHash: "abc123" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadLock with lastSync missing .figmaHash throws AdhdError", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", tokens: [], styles: [] },
+    figmaIds: { variables: {}, styles: {} },
+    lastSync: { at: "2025-01-01T00:00:00Z" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  expect(() => loadLock(d)).toThrowError(AdhdError);
+  try { loadLock(d); } catch (e: any) {
+    expect(e.message).toContain("adhd.lock.json");
+    expect(e.fixup).toContain("Delete adhd.lock.json");
+  }
+});
+
+test("loadLock with well-formed lock loads successfully", () => {
+  const d = dir();
+  const lock = {
+    baseSnapshot: { side: "figma", tokens: [], styles: [] },
+    figmaIds: { variables: {}, styles: {} },
+    lastSync: { at: "2025-01-01T00:00:00Z", figmaHash: "abc123" }
+  };
+  writeFileSync(join(d, "adhd.lock.json"), JSON.stringify(lock));
+  const result = loadLock(d);
+  expect(result).not.toBeNull();
+  expect(result?.baseSnapshot.side).toBe("figma");
+  expect(result?.figmaIds.variables).toEqual({});
+  expect(result?.figmaIds.styles).toEqual({});
+  expect(result?.lastSync.at).toBe("2025-01-01T00:00:00Z");
+});

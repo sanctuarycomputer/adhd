@@ -164,3 +164,41 @@ test("bare semantic color token (domain 'other' via domainOf) is normalized to h
   expect(t.values.light).toBe("#ffffff");
   expect(t.unsyncable).toBeUndefined();
 });
+
+test("a named color in a non-color-domain path still normalizes to hex", () => {
+  // --x lands as domain "other" (single segment, no color/spacing/etc.
+  // prefix). Its value "white" is a CSS named color, not a bare number, so
+  // the numeric guard must not suppress normalization here — round-1's
+  // intent (bare semantic colors get canonicalized) still applies.
+  const css = `@theme { --x: white; }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(1);
+  const t = result.tokens[0]!;
+  expect(t.domain).toBe("other");
+  expect(t.values.default).toBe("#ffffff");
+});
+
+test("bare numeric design tokens in non-color domains are stored verbatim, not corrupted into hex", () => {
+  // Regression: culori's parse() accepts bare hex-looking digit strings
+  // WITHOUT a leading '#' (e.g. "500" parses as though it were "#500"), so
+  // running every "other"-domain value through normalizeColor silently
+  // corrupted numeric tokens like font-weight and spacing scales into
+  // bogus hex colors.
+  const css = `@theme {
+    --font-weight-medium: 500;
+    --font-weight-normal: 400;
+    --font-weight-bold: 700;
+    --spacing-lg: 100;
+    --text-lg: 1.125rem;
+  }`;
+  const result = parseCssSnapshot(css);
+  const byName = (path: string) => result.tokens.find((t) => t.path === path);
+
+  expect(byName("font/weight/medium")!.values.default).toBe("500");
+  expect(byName("font/weight/normal")!.values.default).toBe("400");
+  expect(byName("font/weight/bold")!.values.default).toBe("700");
+  expect(byName("spacing/lg")!.values.default).toBe("100");
+  expect(byName("text/lg")!.values.default).toBe("1.125rem");
+
+  for (const t of result.tokens) expect(t.unsyncable).toBeUndefined();
+});
