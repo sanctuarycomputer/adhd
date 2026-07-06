@@ -86,6 +86,8 @@ Pass any Figma URL that includes a `node-id` query parameter. Copy the URL strai
 
 The report covers drift + renames + off-system + cannot-sync. The URL must point at the file configured in `adhd.config.json`; mismatched file keys abort with a fix-up message.
 
+> **Transitional note:** the v2 lint CLI reads `adhd.config.json` (plain JSON: `{ "figma": { "url": "…" } }`, optional `naming`/`cssEntry`). `/adhd:config` still writes the older `adhd.config.ts` — until the wizard is rebuilt in M5, create `adhd.config.json` by hand alongside it.
+
 Add `--check` to make `/adhd:lint` exit non-zero whenever errors are found — useful for wiring into a pre-commit hook or a CI step. Once a lock file lands with the M2 sync work, `--offline` will let CI lint code↔Figma drift entirely from `adhd.lock.json`'s stored `baseSnapshot`, without a live Figma connection.
 
 ### Push a component
