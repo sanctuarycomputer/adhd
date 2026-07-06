@@ -91,8 +91,9 @@ test("errorCount counts errors + all drift, not warnings", () => {
   expect(errorCount(result)).toBe(5);
 });
 
-test("byte-stable: no timestamp, calling twice yields identical output", () => {
-  expect(formatReport(result)).toBe(formatReport(result));
+test("byte-stable: no timestamp", () => {
+  const md = formatReport(result);
+  expect(md).not.toMatch(/\d{4}-\d{2}-\d{2}|T\d{2}:\d{2}:\d{2}/);
 });
 
 test("omits empty sections and renders single-line report when nothing to report", () => {

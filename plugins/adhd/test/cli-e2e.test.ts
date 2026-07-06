@@ -356,6 +356,57 @@ test("subprocess: `lint --figma-chunks <dir with unpadded chunk names>` exits 2 
   expect(result.stderr).toContain("zero-padded");
 });
 
+test("subprocess: `lint` failure that is NOT an AdhdError (a malformed nodeTree crashing checkStructure with a raw TypeError) still exits 2 with ✗/→ on stderr, not a raw stack trace", async () => {
+  // checkStructure (src/rules/struct.ts) does `node.name.split("/")` for any
+  // COMPONENT_SET node, with no guard against a missing/non-string `name`.
+  // That's a genuine, uncaught-by-AdhdError crash site reachable from
+  // runLint's live path (checkStructure isn't wrapped in a try/catch there),
+  // so this is a real non-AdhdError exception, not a synthetic one.
+  const dir = makeConsumerDir();
+  gitInitAndAdd(dir);
+  const nodeTree = { id: "1:1", type: "COMPONENT_SET" }; // no `name` field
+  const chunks = await extractAllChunks();
+  const chunksWithTree = chunks.map((c, i) => (i === 0 ? { ...c, nodeTree } : c));
+  const chunksDir = writeChunks(dir, chunksWithTree);
+
+  const result = spawnSync(
+    "node",
+    [CLI, "lint", "--dir", dir, "--figma-chunks", chunksDir, "--out", join(dir, "report.md")],
+    { encoding: "utf-8" }
+  );
+  expect(result.status).toBe(2);
+  expect(result.stderr).toContain("✗");
+  // No fixup is available for an unexpected (non-AdhdError) throw, so unlike
+  // the AdhdError branch there's no "→" line here — but critically, it must
+  // NOT leak a raw Node stack trace; the catch's non-AdhdError branch routes
+  // it through failOp instead of rethrowing.
+  expect(result.stderr).not.toContain("at Object.<anonymous>");
+  expect(result.stderr).not.toMatch(/at .*struct\.(js|ts):\d+/);
+});
+
+test("subprocess: `lint --out` pointing at a nonexistent parent dir exits 2 with a ✗/→ stderr, not a raw ENOENT stack trace", async () => {
+  const dir = makeConsumerDir();
+  gitInitAndAdd(dir);
+  const chunks = await extractAllChunks();
+  const { snapshot: figmaSnapshot } = figmaPayloadToSnapshot(assembleChunks(chunks));
+  writeFileSync(join(dir, "adhd.lock.json"), JSON.stringify(buildLock(figmaSnapshot)));
+
+  const badOut = join(dir, "no-such-parent-dir", "report.md");
+  const result = spawnSync(
+    "node",
+    [CLI, "lint", "--dir", dir, "--offline", "--out", badOut],
+    { encoding: "utf-8" }
+  );
+  expect(result.status).toBe(2);
+  expect(result.stderr).toContain("✗");
+  expect(result.stderr).toContain("→");
+  expect(result.stderr).toContain(badOut);
+  // The underlying ENOENT reason may legitimately appear inside the
+  // controlled "✗ ..." message, but there must be no raw Node stack trace.
+  expect(result.stderr).not.toContain("at Object.<anonymous>");
+  expect(result.stderr).not.toMatch(/\n\s+at /);
+});
+
 test("runLint: an unreadable file in the git ls-files list is skipped (with a stderr note), not thrown", async () => {
   const dir = makeConsumerDir();
   writeFileSync(join(dir, "components", "Ghost.tsx"), `export const Ghost = () => null;\n`);

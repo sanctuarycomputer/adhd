@@ -9,10 +9,6 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key2 of __getOwnPropNames(from))
@@ -29,7 +25,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/picocolors/picocolors.js
 var require_picocolors = __commonJS({
@@ -5917,11 +5912,6 @@ var require_postcss = __commonJS({
 });
 
 // src/cli.ts
-var cli_exports = {};
-__export(cli_exports, {
-  fail: () => fail
-});
-module.exports = __toCommonJS(cli_exports);
 var import_node_fs4 = require("node:fs");
 var import_node_path4 = require("node:path");
 var import_node_util = require("node:util");
@@ -6120,6 +6110,18 @@ var Node = import_postcss.default.Node;
 
 // src/core/naming.ts
 var SEGMENT_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+function pathToCssVar(path) {
+  const segments = path.split("/");
+  if (segments.some((s) => s.length === 0)) return null;
+  if (!segments.every((s) => SEGMENT_RE.test(s))) return null;
+  if (segments.slice(0, -1).some((s) => s.includes("-"))) return null;
+  if (segments.length === 1 && segments[0].includes("-")) return null;
+  const last = segments[segments.length - 1];
+  const head = segments.slice(0, -1);
+  const joiner = last.includes("-") ? "--" : "-";
+  if (head.length === 0) return "--" + last;
+  return "--" + head.join("-") + joiner + last;
+}
 function cssVarToPath(cssVar) {
   if (!cssVar.startsWith("--")) return null;
   const rest2 = cssVar.slice(2);
@@ -9801,7 +9803,8 @@ function parseCssSnapshot(css) {
         t.unsyncable = `unparseable color value: ${value}`;
       }
     } else {
-      t.values[mode] = value;
+      const hex2 = normalizeColor(value);
+      t.values[mode] = hex2 ?? value;
     }
     tokens.set(key2, t);
   };
@@ -9957,19 +9960,35 @@ function stringifyValue(raw, path) {
 function buildPrimitiveToken(v, col, ids) {
   const path = v.name;
   const domain = domainOf(path);
+  const reasons = [];
+  if (pathToCssVar(path) === null) {
+    reasons.push(`Figma variable name '${path}' is outside the token naming grammar`);
+  }
+  const extraModes = col.modes.slice(1).map((m) => m.name);
+  if (extraModes.length > 0) {
+    reasons.push(
+      `Primitives collection has additional mode(s) '${extraModes.join(", ")}' that the primitives model (single mode) can't represent`
+    );
+  }
+  const withReasons = (token) => {
+    if (reasons.length > 0) {
+      token.unsyncable = token.unsyncable ? [token.unsyncable, ...reasons].join("; ") : reasons.join("; ");
+    }
+    return token;
+  };
   const modeId = col.modes[0]?.modeId;
   const raw = modeId !== void 0 ? v.valuesByMode[modeId] : void 0;
   if (raw === void 0) {
-    return { path, collection: "primitives", domain, values: {}, unsyncable: "no value for the collection's mode" };
+    return withReasons({ path, collection: "primitives", domain, values: {}, unsyncable: "no value for the collection's mode" });
   }
   if (isAlias(raw)) {
     const target = ids.get(raw.id);
-    if (!target) return { path, collection: "primitives", domain, values: {}, unsyncable: "alias target not found" };
-    return { path, collection: "primitives", domain, values: {}, aliasOf: { default: target.name } };
+    if (!target) return withReasons({ path, collection: "primitives", domain, values: {}, unsyncable: "alias target not found" });
+    return withReasons({ path, collection: "primitives", domain, values: {}, aliasOf: { default: target.name } });
   }
   const { value, unsyncable } = stringifyValue(raw, path);
-  if (unsyncable) return { path, collection: "primitives", domain, values: {}, unsyncable };
-  return { path, collection: "primitives", domain, values: { default: value } };
+  if (unsyncable) return withReasons({ path, collection: "primitives", domain, values: {}, unsyncable });
+  return withReasons({ path, collection: "primitives", domain, values: { default: value } });
 }
 function buildSemanticToken(v, col, ids) {
   const path = v.name;
@@ -9977,6 +9996,9 @@ function buildSemanticToken(v, col, ids) {
   const values = {};
   const aliasOf = {};
   const reasons = [];
+  if (pathToCssVar(path) === null) {
+    reasons.push(`Figma variable name '${path}' is outside the token naming grammar`);
+  }
   for (const m of col.modes) {
     const lname = m.name.trim().toLowerCase();
     const mode = lname === "light" ? "light" : lname === "dark" ? "dark" : null;
@@ -10008,7 +10030,17 @@ function buildSemanticToken(v, col, ids) {
   return token;
 }
 function resolveBoundPrimitives(s, ids) {
-  return (s.boundPrimitiveIds ?? []).map((id) => ids.get(id)?.name).filter((n) => n !== void 0);
+  const names = [];
+  const missingReasons = [];
+  for (const id of s.boundPrimitiveIds ?? []) {
+    const target = ids.get(id);
+    if (target) {
+      names.push(target.name);
+    } else {
+      missingReasons.push(`bound primitive id ${id} not found in extracted variables`);
+    }
+  }
+  return { names, unsyncable: missingReasons.length > 0 ? missingReasons.join("; ") : void 0 };
 }
 function figmaPayloadToSnapshot(p4) {
   const idIndex = buildIdIndex(p4);
@@ -10033,9 +10065,17 @@ function figmaPayloadToSnapshot(p4) {
       }
     }
   }
+  const toStyleShell = (s, kind) => {
+    const { names, unsyncable } = resolveBoundPrimitives(s, idIndex);
+    const shell = { kind, name: s.name, boundPrimitives: names };
+    if (unsyncable) {
+      shell.unsyncable = shell.unsyncable ? `${shell.unsyncable}; ${unsyncable}` : unsyncable;
+    }
+    return shell;
+  };
   const styles = [
-    ...p4.textStyles.map((s) => ({ kind: "text", name: s.name, boundPrimitives: resolveBoundPrimitives(s, idIndex) })),
-    ...p4.effectStyles.map((s) => ({ kind: "effect", name: s.name, boundPrimitives: resolveBoundPrimitives(s, idIndex) }))
+    ...p4.textStyles.map((s) => toStyleShell(s, "text")),
+    ...p4.effectStyles.map((s) => toStyleShell(s, "effect"))
   ];
   return { snapshot: { side: "figma", tokens, styles }, ids };
 }
@@ -10345,6 +10385,7 @@ function valuesEqual(domain, a, b) {
   if (a === b) return true;
   if (domain === "color") return colorsEqual(a, b);
   if (domain === "spacing" || domain === "radius") return dimensionsEqual(a, b);
+  if (parseColor(a) && parseColor(b)) return colorsEqual(a, b);
   return false;
 }
 function tokensLookEqual(domain, a, b) {
@@ -10815,10 +10856,14 @@ commands.lint = async (args) => {
     result = await runLint({ dir, chunksDir, offline, scopeUrl: scope });
   } catch (e4) {
     if (e4 instanceof AdhdError) failOp(e4.message, e4.fixup);
-    throw e4;
+    failOp(String(e4?.message ?? e4));
   }
   const report = formatReport(result);
-  (0, import_node_fs4.writeFileSync)(out, report, "utf-8");
+  try {
+    (0, import_node_fs4.writeFileSync)(out, report, "utf-8");
+  } catch (e4) {
+    failOp(`lint: could not write report to ${out}: ${e4?.message ?? e4}`, `check that the parent directory of ${out} exists and is writable`);
+  }
   const resultLine = report.split("\n").find((l) => l.startsWith("**Result:**"));
   console.log(resultLine ? resultLine.replace(/^\*\*Result:\*\*\s*/, "") : `${errorCount(result)} errors`);
   if (check && errorCount(result) > 0) process.exit(1);
@@ -10829,7 +10874,3 @@ async function main() {
   await handler(rest);
 }
 main();
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  fail
-});

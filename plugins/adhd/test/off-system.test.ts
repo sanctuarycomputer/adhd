@@ -14,7 +14,7 @@ test("flags arbitrary classes and maps to the exact token", () => {
 });
 
 test("skips lines marked adhd:off-system", () => {
-  const f = scanOffSystem([{ path: "a.tsx", content: `x // adhd:off-system — legacy\nconst c = "bg-[#123456]";` }], code);
+  const f = scanOffSystem([{ path: "a.tsx", content: `const a = "bg-[#27272a]"; // adhd:off-system\nconst c = "bg-[#27272a]";` }], code);
   expect(f.map((x) => x.line)).toEqual([2]);
 });
 

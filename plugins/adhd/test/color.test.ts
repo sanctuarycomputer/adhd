@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseColor, rgbaToHex, normalizeColor, colorsEqual } from "../src/core/color";
+import { parseColor, normalizeColor, colorsEqual } from "../src/core/color";
 
 test("parses hex, rgb(), oklch(), named", () => {
   expect(parseColor("#27272a")).toEqual({ r: 0x27 / 255, g: 0x27 / 255, b: 0x2a / 255, a: 1 });

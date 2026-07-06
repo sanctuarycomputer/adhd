@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { domainOf } from "../src/core/tokens";
-import { canonicalize, contentHash } from "../src/core/snapshot";
+import { contentHash } from "../src/core/snapshot";
 import type { Snapshot } from "../src/core/tokens";
 
 const snap = (tokens: any[]): Snapshot => ({ side: "code", tokens, styles: [] });

@@ -98,7 +98,12 @@ export function parseCssSnapshot(css: string): Snapshot {
         t.unsyncable = `unparseable color value: ${value}`;
       }
     } else {
-      t.values[mode] = value;
+      // Domain classification is path-based (domainOf), so bare semantic
+      // names like --background/--foreground land in "other" even though
+      // their values are colors. Normalize them too when they resolve, so
+      // the code-side snapshot is canonical regardless of domain.
+      const hex = normalizeColor(value);
+      t.values[mode] = hex ?? value;
     }
     tokens.set(key, t);
   };

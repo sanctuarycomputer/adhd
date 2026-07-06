@@ -117,3 +117,19 @@ test(".dark-mode selector contributes no tokens", () => {
   const result = parseCssSnapshot(css);
   expect(result.tokens).toHaveLength(0);
 });
+
+test("bare semantic color token (domain 'other' via domainOf) is normalized to hex, not left raw", () => {
+  // --background has no "/" in its path, so domainOf("background") classifies
+  // it as "other", not "color" — but its value is still a color and must be
+  // normalized the same way @theme color-domain values are, or the code-side
+  // snapshot ends up with a non-canonical string (e.g. "oklch(1 0 0)") that
+  // spuriously diffs against Figma's "#ffffff".
+  const css = `:root { --background: oklch(1 0 0); }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(1);
+  const t = result.tokens[0]!;
+  expect(t.path).toBe("background");
+  expect(t.domain).toBe("other");
+  expect(t.values.light).toBe("#ffffff");
+  expect(t.unsyncable).toBeUndefined();
+});

@@ -7,7 +7,7 @@ import { formatReport, errorCount } from "./pipelines/report";
 
 const [, , command, ...rest] = process.argv;
 
-export function fail(message: string, fixup?: string): never {
+function fail(message: string, fixup?: string): never {
   console.error(`✗ ${message}`);
   if (fixup) console.error(`  → ${fixup}`);
   process.exit(1);
@@ -107,13 +107,17 @@ commands.lint = async (args) => {
   let result;
   try {
     result = await runLint({ dir, chunksDir, offline, scopeUrl: scope });
-  } catch (e) {
+  } catch (e: any) {
     if (e instanceof AdhdError) failOp(e.message, e.fixup);
-    throw e;
+    failOp(String(e?.message ?? e));
   }
 
   const report = formatReport(result);
-  writeFileSync(out, report, "utf-8");
+  try {
+    writeFileSync(out, report, "utf-8");
+  } catch (e: any) {
+    failOp(`lint: could not write report to ${out}: ${e?.message ?? e}`, `check that the parent directory of ${out} exists and is writable`);
+  }
 
   // Reuse formatReport's own "**Result:** N errors, M warnings" line for
   // stdout rather than recomputing warning counts here — keeps the printed

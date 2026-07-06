@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { runExtract } from "../src/figma/extract";
 import { assembleChunks, figmaPayloadToSnapshot } from "../src/figma/payload";
+import { rgbaToHex } from "../src/core/color";
 import { fakeFigma } from "./fake-figma";
 
 const doc = JSON.parse(readFileSync(new URL("./recordings/tokens-doc.json", import.meta.url), "utf8"));
@@ -149,6 +150,100 @@ test("buildSemanticToken: unknown mode name -> unsyncable \"unknown mode 'Hover'
   const { snapshot } = figmaPayloadToSnapshot(payload);
   const bg = snapshot.tokens.find((t) => t.path === "background");
   expect(bg?.unsyncable).toMatch(/unknown mode 'Hover'/);
+});
+
+test("buildPrimitiveToken: off-grammar Figma name -> unsyncable naming-grammar reason, not clean", async () => {
+  const doc = minimalDoc({
+    collections: [
+      {
+        id: "C-p",
+        name: "Primitives",
+        modes: [{ modeId: "m1", name: "Default" }],
+        variables: [
+          {
+            id: "V-1",
+            name: "Color/Zinc/800",
+            resolvedType: "COLOR",
+            valuesByMode: { m1: { r: 0.2, g: 0.2, b: 0.2, a: 1 } },
+          },
+        ],
+      },
+    ],
+  });
+  const chunks = await extractAllFrom(doc);
+  const payload = assembleChunks(chunks);
+  const { snapshot } = figmaPayloadToSnapshot(payload);
+  const tok = snapshot.tokens.find((t) => t.path === "Color/Zinc/800");
+  expect(tok).toBeDefined();
+  expect(tok?.unsyncable).toMatch(/naming grammar/);
+  // Not a clean syncable token: it must be flagged, not pass through silently.
+  expect(tok?.unsyncable).toBeTruthy();
+});
+
+test("buildPrimitiveToken: extra mode on a Primitives collection -> unsyncable mentions the extra mode", async () => {
+  const doc = minimalDoc({
+    collections: [
+      {
+        id: "C-p",
+        name: "Primitives",
+        modes: [
+          { modeId: "m1", name: "Default" },
+          { modeId: "m2", name: "Compact" },
+        ],
+        variables: [
+          {
+            id: "V-1",
+            name: "color/zinc/800",
+            resolvedType: "COLOR",
+            valuesByMode: {
+              m1: { r: 0.2, g: 0.2, b: 0.2, a: 1 },
+              m2: { r: 0.3, g: 0.3, b: 0.3, a: 1 },
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const chunks = await extractAllFrom(doc);
+  const payload = assembleChunks(chunks);
+  const { snapshot } = figmaPayloadToSnapshot(payload);
+  const tok = snapshot.tokens.find((t) => t.path === "color/zinc/800");
+  expect(tok?.unsyncable).toMatch(/Compact/);
+  // The default mode's value is still emitted, not dropped.
+  expect(tok?.values.default).toBe(rgbaToHex({ r: 0.2, g: 0.2, b: 0.2, a: 1 }));
+});
+
+test("resolveBoundPrimitives: unresolved bound-primitive id -> StyleShell.unsyncable mentions the id", async () => {
+  const doc = minimalDoc({
+    collections: [
+      {
+        id: "C-p",
+        name: "Primitives",
+        modes: [{ modeId: "m1", name: "Default" }],
+        variables: [
+          {
+            id: "V-1",
+            name: "color/zinc/800",
+            resolvedType: "COLOR",
+            valuesByMode: { m1: { r: 0.2, g: 0.2, b: 0.2, a: 1 } },
+          },
+        ],
+      },
+    ],
+    textStyles: [
+      {
+        id: "S-1",
+        name: "body",
+        boundPrimitiveIds: ["V-1", "VariableID:missing:123"],
+      },
+    ],
+  });
+  const chunks = await extractAllFrom(doc);
+  const payload = assembleChunks(chunks);
+  const { snapshot } = figmaPayloadToSnapshot(payload);
+  const style = snapshot.styles.find((s) => s.name === "body");
+  expect(style?.boundPrimitives).toEqual(["color/zinc/800"]);
+  expect(style?.unsyncable).toMatch(/VariableID:missing:123/);
 });
 
 test("collection/mode name matching is case-insensitive", async () => {

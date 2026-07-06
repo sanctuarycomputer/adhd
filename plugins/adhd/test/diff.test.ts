@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { diffSnapshots } from "../src/pipelines/diff";
-import type { Snapshot } from "../src/core/tokens";
+import { domainOf, type Snapshot } from "../src/core/tokens";
 
 const tok = (path: string, values: any, extra: any = {}) =>
   ({ path, collection: "primitives", domain: "color", values, ...extra });
@@ -139,4 +139,30 @@ test("mode wholly missing on one side routes to valueDrift, not alias-vs-literal
   expect(d.structural.filter((s) => s.mode === "dark")).toEqual([]);
   expect(d.valueDrift).toHaveLength(1);
   expect(d.valueDrift[0]).toMatchObject({ path: "background", mode: "dark", figma: "(missing)" });
+});
+
+test("bare semantic color token (real domainOf, not hardcoded 'color') compares tolerantly — v2 regression", () => {
+  // domainOf("background") classifies as "other" (no "/" in the path), unlike
+  // the `tok` helper above which hardcodes domain: "color" by default. Build
+  // this token honestly via the real domainOf so the test actually exercises
+  // valuesEqual's domain === "other" fallback path.
+  const domain = domainOf("background");
+  expect(domain).toBe("other");
+  const d = diffSnapshots(
+    snap("code", [{ path: "background", collection: "semantic", domain, values: { default: "oklch(1 0 0)" } }]),
+    snap("figma", [{ path: "background", collection: "semantic", domain, values: { default: "#ffffff" } }]),
+    noLock,
+  );
+  expect(d.valueDrift).toEqual([]);
+});
+
+test("bare semantic color token with a genuinely different value still reports valueDrift", () => {
+  const domain = domainOf("background");
+  const d = diffSnapshots(
+    snap("code", [{ path: "background", collection: "semantic", domain, values: { default: "#ffffff" } }]),
+    snap("figma", [{ path: "background", collection: "semantic", domain, values: { default: "#000000" } }]),
+    noLock,
+  );
+  expect(d.valueDrift).toHaveLength(1);
+  expect(d.valueDrift[0]).toMatchObject({ path: "background", mode: "default", code: "#ffffff", figma: "#000000" });
 });

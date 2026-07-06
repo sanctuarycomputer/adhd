@@ -1,6 +1,7 @@
 import { AdhdError } from "../core/config";
 import { fnv1a64, stableStringify } from "../core/hash";
 import { rgbaToHex, type Rgba } from "../core/color";
+import { pathToCssVar } from "../core/naming";
 import { domainOf, type Mode, type Snapshot, type StyleShell, type Token } from "../core/tokens";
 import {
   decodeCursor,
@@ -136,20 +137,52 @@ function stringifyValue(raw: unknown, path: string): { value?: string; unsyncabl
 function buildPrimitiveToken(v: SerializedVariable, col: SerializedCollection, ids: IdIndex): Token {
   const path = v.name;
   const domain = domainOf(path);
+  // Structural problems with this variable that don't prevent us from also
+  // resolving a value below — collected up front and merged into whatever
+  // `unsyncable` reason the value-resolution path below produces, so neither
+  // silently overwrites the other.
+  const reasons: string[] = [];
+
+  if (pathToCssVar(path) === null) {
+    // Off-grammar Figma names (e.g. "Color/Zinc/800", TitleCase) would
+    // otherwise sail through as a syncable path that the grammar-validated
+    // CSS side (core/css.ts) can never match, producing a false
+    // existence-drift error under --check. Flag it the same way css.ts flags
+    // an off-grammar CSS var name, so it routes to cannotSync instead.
+    reasons.push(`Figma variable name '${path}' is outside the token naming grammar`);
+  }
+
+  const extraModes = col.modes.slice(1).map((m) => m.name);
+  if (extraModes.length > 0) {
+    // The primitives model has a single mode ("default"); only modes[0] is
+    // ever read below. A second (or later) mode's values would otherwise be
+    // silently dropped — flag it instead of losing them quietly.
+    reasons.push(
+      `Primitives collection has additional mode(s) '${extraModes.join(", ")}' that the primitives model (single mode) can't represent`
+    );
+  }
+
+  const withReasons = (token: Token): Token => {
+    if (reasons.length > 0) {
+      token.unsyncable = token.unsyncable ? [token.unsyncable, ...reasons].join("; ") : reasons.join("; ");
+    }
+    return token;
+  };
+
   const modeId = col.modes[0]?.modeId;
   const raw = modeId !== undefined ? v.valuesByMode[modeId] : undefined;
 
   if (raw === undefined) {
-    return { path, collection: "primitives", domain, values: {}, unsyncable: "no value for the collection's mode" };
+    return withReasons({ path, collection: "primitives", domain, values: {}, unsyncable: "no value for the collection's mode" });
   }
   if (isAlias(raw)) {
     const target = ids.get(raw.id);
-    if (!target) return { path, collection: "primitives", domain, values: {}, unsyncable: "alias target not found" };
-    return { path, collection: "primitives", domain, values: {}, aliasOf: { default: target.name } };
+    if (!target) return withReasons({ path, collection: "primitives", domain, values: {}, unsyncable: "alias target not found" });
+    return withReasons({ path, collection: "primitives", domain, values: {}, aliasOf: { default: target.name } });
   }
   const { value, unsyncable } = stringifyValue(raw, path);
-  if (unsyncable) return { path, collection: "primitives", domain, values: {}, unsyncable };
-  return { path, collection: "primitives", domain, values: { default: value! } };
+  if (unsyncable) return withReasons({ path, collection: "primitives", domain, values: {}, unsyncable });
+  return withReasons({ path, collection: "primitives", domain, values: { default: value! } });
 }
 
 // Semantic mode names are matched case-insensitively against "light"/"dark". Any other
@@ -164,6 +197,13 @@ function buildSemanticToken(v: SerializedVariable, col: SerializedCollection, id
   const values: Partial<Record<Mode, string>> = {};
   const aliasOf: Partial<Record<Mode, string>> = {};
   const reasons: string[] = [];
+
+  if (pathToCssVar(path) === null) {
+    // Same off-grammar-name concern as buildPrimitiveToken: an unvalidated
+    // Figma name here would produce a syncable path the CSS side can never
+    // match, masquerading as existence drift instead of a naming problem.
+    reasons.push(`Figma variable name '${path}' is outside the token naming grammar`);
+  }
 
   for (const m of col.modes) {
     const lname = m.name.trim().toLowerCase();
@@ -197,8 +237,21 @@ function buildSemanticToken(v: SerializedVariable, col: SerializedCollection, id
   return token;
 }
 
-function resolveBoundPrimitives(s: SerializedStyle, ids: IdIndex): string[] {
-  return (s.boundPrimitiveIds ?? []).map((id) => ids.get(id)?.name).filter((n): n is string => n !== undefined);
+function resolveBoundPrimitives(s: SerializedStyle, ids: IdIndex): { names: string[]; unsyncable?: string } {
+  const names: string[] = [];
+  const missingReasons: string[] = [];
+  for (const id of s.boundPrimitiveIds ?? []) {
+    const target = ids.get(id);
+    if (target) {
+      names.push(target.name);
+    } else {
+      // Never silently filter out an id that doesn't resolve — flag the
+      // style so the drop is visible instead of the style just appearing to
+      // have fewer bound primitives than it actually declares.
+      missingReasons.push(`bound primitive id ${id} not found in extracted variables`);
+    }
+  }
+  return { names, unsyncable: missingReasons.length > 0 ? missingReasons.join("; ") : undefined };
 }
 
 /**
@@ -247,9 +300,18 @@ export function figmaPayloadToSnapshot(p: FigmaPayload): { snapshot: Snapshot; i
     }
   }
 
+  const toStyleShell = (s: SerializedStyle, kind: StyleShell["kind"]): StyleShell => {
+    const { names, unsyncable } = resolveBoundPrimitives(s, idIndex);
+    const shell: StyleShell = { kind, name: s.name, boundPrimitives: names };
+    if (unsyncable) {
+      shell.unsyncable = shell.unsyncable ? `${shell.unsyncable}; ${unsyncable}` : unsyncable;
+    }
+    return shell;
+  };
+
   const styles: StyleShell[] = [
-    ...p.textStyles.map((s) => ({ kind: "text" as const, name: s.name, boundPrimitives: resolveBoundPrimitives(s, idIndex) })),
-    ...p.effectStyles.map((s) => ({ kind: "effect" as const, name: s.name, boundPrimitives: resolveBoundPrimitives(s, idIndex) })),
+    ...p.textStyles.map((s) => toStyleShell(s, "text")),
+    ...p.effectStyles.map((s) => toStyleShell(s, "effect")),
   ];
 
   return { snapshot: { side: "figma", tokens, styles }, ids };

@@ -1,5 +1,5 @@
 import type { AdhdLock } from "../core/config";
-import { colorsEqual } from "../core/color";
+import { colorsEqual, parseColor } from "../core/color";
 import type { Domain, Snapshot, Token } from "../core/tokens";
 
 export interface Drift {
@@ -42,6 +42,12 @@ function valuesEqual(domain: Domain, a: string, b: string): boolean {
   if (a === b) return true;
   if (domain === "color") return colorsEqual(a, b);
   if (domain === "spacing" || domain === "radius") return dimensionsEqual(a, b);
+  // Domain classification is path-based (domainOf), so bare semantic names
+  // like "background"/"foreground" land in "other" even though their values
+  // are colors (e.g. code oklch(1 0 0) vs figma #ffffff). Fall back to a
+  // tolerant color comparison whenever both sides actually parse as colors,
+  // regardless of what domain the path was classified into.
+  if (parseColor(a) && parseColor(b)) return colorsEqual(a, b);
   return false;
 }
 

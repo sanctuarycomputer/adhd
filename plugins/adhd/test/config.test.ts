@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { loadConfig, fileKeyFromUrl, loadLock, AdhdError, resolveCssEntry } from "../src/core/config";
+import { loadConfig, loadLock, AdhdError, resolveCssEntry } from "../src/core/config";
 
 const dir = () => mkdtempSync(join(tmpdir(), "adhd-"));
 
