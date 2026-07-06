@@ -1,0 +1,661 @@
+{
+  "collections": [
+    {
+      "id": "C-primitives",
+      "name": "Primitives",
+      "modes": [
+        {
+          "modeId": "m1",
+          "name": "Default"
+        }
+      ],
+      "variables": [
+        {
+          "id": "V-color_zinc_50",
+          "name": "color/zinc/50",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.98,
+              "g": 0.98,
+              "b": 0.984,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_100",
+          "name": "color/zinc/100",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.953,
+              "g": 0.953,
+              "b": 0.961,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_200",
+          "name": "color/zinc/200",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.894,
+              "g": 0.894,
+              "b": 0.906,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_300",
+          "name": "color/zinc/300",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.831,
+              "g": 0.831,
+              "b": 0.847,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_400",
+          "name": "color/zinc/400",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.631,
+              "g": 0.631,
+              "b": 0.667,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_500",
+          "name": "color/zinc/500",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.445,
+              "g": 0.445,
+              "b": 0.482,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_600",
+          "name": "color/zinc/600",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.322,
+              "g": 0.322,
+              "b": 0.353,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_700",
+          "name": "color/zinc/700",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.243,
+              "g": 0.243,
+              "b": 0.271,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_800",
+          "name": "color/zinc/800",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.153,
+              "g": 0.153,
+              "b": 0.165,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_900",
+          "name": "color/zinc/900",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.106,
+              "g": 0.106,
+              "b": 0.114,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-color_zinc_950",
+          "name": "color/zinc/950",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "m1": {
+              "r": 0.055,
+              "g": 0.055,
+              "b": 0.063,
+              "a": 1
+            }
+          }
+        },
+        {
+          "id": "V-spacing_0",
+          "name": "spacing/0",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 0
+          }
+        },
+        {
+          "id": "V-spacing_1",
+          "name": "spacing/1",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 4
+          }
+        },
+        {
+          "id": "V-spacing_2",
+          "name": "spacing/2",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 8
+          }
+        },
+        {
+          "id": "V-spacing_3",
+          "name": "spacing/3",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 12
+          }
+        },
+        {
+          "id": "V-spacing_4",
+          "name": "spacing/4",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 16
+          }
+        },
+        {
+          "id": "V-spacing_5",
+          "name": "spacing/5",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 20
+          }
+        },
+        {
+          "id": "V-spacing_6",
+          "name": "spacing/6",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 24
+          }
+        },
+        {
+          "id": "V-spacing_7",
+          "name": "spacing/7",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 28
+          }
+        },
+        {
+          "id": "V-spacing_8",
+          "name": "spacing/8",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 32
+          }
+        },
+        {
+          "id": "V-spacing_9",
+          "name": "spacing/9",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 36
+          }
+        },
+        {
+          "id": "V-spacing_10",
+          "name": "spacing/10",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 40
+          }
+        },
+        {
+          "id": "V-spacing_11",
+          "name": "spacing/11",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 44
+          }
+        },
+        {
+          "id": "V-spacing_12",
+          "name": "spacing/12",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 48
+          }
+        },
+        {
+          "id": "V-spacing_13",
+          "name": "spacing/13",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 52
+          }
+        },
+        {
+          "id": "V-spacing_14",
+          "name": "spacing/14",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 56
+          }
+        },
+        {
+          "id": "V-spacing_15",
+          "name": "spacing/15",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 60
+          }
+        },
+        {
+          "id": "V-spacing_16",
+          "name": "spacing/16",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 64
+          }
+        },
+        {
+          "id": "V-spacing_17",
+          "name": "spacing/17",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 68
+          }
+        },
+        {
+          "id": "V-spacing_18",
+          "name": "spacing/18",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 72
+          }
+        },
+        {
+          "id": "V-spacing_19",
+          "name": "spacing/19",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 76
+          }
+        },
+        {
+          "id": "V-spacing_20",
+          "name": "spacing/20",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 80
+          }
+        },
+        {
+          "id": "V-spacing_21",
+          "name": "spacing/21",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 84
+          }
+        },
+        {
+          "id": "V-spacing_22",
+          "name": "spacing/22",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 88
+          }
+        },
+        {
+          "id": "V-spacing_23",
+          "name": "spacing/23",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 92
+          }
+        },
+        {
+          "id": "V-spacing_24",
+          "name": "spacing/24",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 96
+          }
+        },
+        {
+          "id": "V-spacing_25",
+          "name": "spacing/25",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 100
+          }
+        },
+        {
+          "id": "V-spacing_26",
+          "name": "spacing/26",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 104
+          }
+        },
+        {
+          "id": "V-spacing_27",
+          "name": "spacing/27",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 108
+          }
+        },
+        {
+          "id": "V-spacing_28",
+          "name": "spacing/28",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 112
+          }
+        },
+        {
+          "id": "V-spacing_29",
+          "name": "spacing/29",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 116
+          }
+        },
+        {
+          "id": "V-spacing_30",
+          "name": "spacing/30",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 120
+          }
+        },
+        {
+          "id": "V-spacing_31",
+          "name": "spacing/31",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 124
+          }
+        },
+        {
+          "id": "V-spacing_32",
+          "name": "spacing/32",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 128
+          }
+        },
+        {
+          "id": "V-spacing_33",
+          "name": "spacing/33",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 132
+          }
+        },
+        {
+          "id": "V-spacing_34",
+          "name": "spacing/34",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 136
+          }
+        },
+        {
+          "id": "V-spacing_35",
+          "name": "spacing/35",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 140
+          }
+        },
+        {
+          "id": "V-spacing_36",
+          "name": "spacing/36",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 144
+          }
+        },
+        {
+          "id": "V-spacing_37",
+          "name": "spacing/37",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 148
+          }
+        },
+        {
+          "id": "V-spacing_38",
+          "name": "spacing/38",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 152
+          }
+        },
+        {
+          "id": "V-spacing_39",
+          "name": "spacing/39",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 156
+          }
+        },
+        {
+          "id": "V-spacing_40",
+          "name": "spacing/40",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 160
+          }
+        },
+        {
+          "id": "V-spacing_41",
+          "name": "spacing/41",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 164
+          }
+        },
+        {
+          "id": "V-spacing_42",
+          "name": "spacing/42",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 168
+          }
+        },
+        {
+          "id": "V-spacing_43",
+          "name": "spacing/43",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 172
+          }
+        },
+        {
+          "id": "V-spacing_44",
+          "name": "spacing/44",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 176
+          }
+        },
+        {
+          "id": "V-spacing_45",
+          "name": "spacing/45",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 180
+          }
+        },
+        {
+          "id": "V-spacing_46",
+          "name": "spacing/46",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 184
+          }
+        },
+        {
+          "id": "V-spacing_47",
+          "name": "spacing/47",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 188
+          }
+        },
+        {
+          "id": "V-spacing_48",
+          "name": "spacing/48",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 192
+          }
+        },
+        {
+          "id": "V-spacing_49",
+          "name": "spacing/49",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 196
+          }
+        },
+        {
+          "id": "V-spacing_50",
+          "name": "spacing/50",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 200
+          }
+        },
+        {
+          "id": "V-spacing_51",
+          "name": "spacing/51",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 204
+          }
+        },
+        {
+          "id": "V-spacing_52",
+          "name": "spacing/52",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 208
+          }
+        },
+        {
+          "id": "V-spacing_53",
+          "name": "spacing/53",
+          "resolvedType": "FLOAT",
+          "valuesByMode": {
+            "m1": 212
+          }
+        }
+      ]
+    },
+    {
+      "id": "C-semantic",
+      "name": "Semantic",
+      "modes": [
+        {
+          "modeId": "lm",
+          "name": "Light"
+        },
+        {
+          "modeId": "dm",
+          "name": "Dark"
+        }
+      ],
+      "variables": [
+        {
+          "id": "V-semantic_background",
+          "name": "background",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "lm": {
+              "type": "VARIABLE_ALIAS",
+              "id": "V-color_zinc_50"
+            },
+            "dm": {
+              "type": "VARIABLE_ALIAS",
+              "id": "V-color_zinc_950"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "C-brand-extras",
+      "name": "Brand Extras",
+      "modes": [
+        {
+          "modeId": "bm",
+          "name": "Default"
+        }
+      ],
+      "variables": [
+        {
+          "id": "V-brand_accent",
+          "name": "brand/accent",
+          "resolvedType": "COLOR",
+          "valuesByMode": {
+            "bm": {
+              "r": 1,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "textStyles": [
+    {
+      "id": "TS-body",
+      "name": "Body/Regular",
+      "boundPrimitiveIds": []
+    }
+  ],
+  "effectStyles": [
+    {
+      "id": "ES-card-shadow",
+      "name": "Shadow/Card",
+      "boundPrimitiveIds": []
+    }
+  ]
+}
