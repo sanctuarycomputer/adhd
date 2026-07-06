@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { NamingConvention } from "./naming";
 import type { Snapshot } from "./tokens";
@@ -85,7 +85,7 @@ export function loadConfig(dir: string): AdhdConfig {
   const fileKey = fileKeyFromUrl(cfg.figma.url);
   if (!fileKey) {
     throw new AdhdError(
-      `adhd.config.json: figma.url must be a figma.com/design URL`,
+      `adhd.config.json: figma.url must contain /design/<key> or /file/<key>`,
       "/adhd:config to generate a template"
     );
   }
@@ -104,10 +104,10 @@ export function loadConfig(dir: string): AdhdConfig {
 
   // Default cssEntry to null
   let cssEntry: string | null = null;
-  if (cfg.cssEntry !== undefined) {
+  if (cfg.cssEntry !== undefined && cfg.cssEntry !== null) {
     if (typeof cfg.cssEntry !== "string") {
       throw new AdhdError(
-        `adhd.config.json: cssEntry must be a string`,
+        `adhd.config.json: cssEntry must be a string or null`,
         "/adhd:config to generate a template"
       );
     }
@@ -129,25 +129,26 @@ export function loadConfig(dir: string): AdhdConfig {
 export function resolveCssEntry(dir: string, cfg: AdhdConfig): string {
   // Try cfg.cssEntry first
   if (cfg.cssEntry) {
-    return cfg.cssEntry;
+    const resolvedPath = join(dir, cfg.cssEntry);
+    if (!existsSync(resolvedPath)) {
+      throw new AdhdError(
+        `cssEntry '${cfg.cssEntry}' not found`,
+        `File does not exist at: ${resolvedPath}`
+      );
+    }
+    return resolvedPath;
   }
 
   // Try app/globals.css
   const appPath = join(dir, "app", "globals.css");
-  try {
-    readFileSync(appPath, "utf-8");
+  if (existsSync(appPath)) {
     return appPath;
-  } catch {
-    // not found, try next
   }
 
   // Try src/app/globals.css
   const srcAppPath = join(dir, "src", "app", "globals.css");
-  try {
-    readFileSync(srcAppPath, "utf-8");
+  if (existsSync(srcAppPath)) {
     return srcAppPath;
-  } catch {
-    // not found, throw error
   }
 
   throw new AdhdError(
