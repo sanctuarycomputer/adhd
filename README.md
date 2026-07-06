@@ -29,7 +29,7 @@ After install, six slash commands are available:
 | Command | Args | Direction | What it does |
 |---|---|---|---|
 | `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
-| `/adhd:lint` | `[<figma-url>] [--check]` | read-only | Reports Figma structure violations, code↔Figma drift (value/existence/structural), likely renames, off-system values in code, and un-syncable entries; `--check` exits non-zero when errors are found, for CI |
+| `/adhd:lint` | `[<figma-url>] [--check]` | read-only | Reports code↔Figma drift (value/existence/structural), likely renames, off-system values in code, and un-syncable entries; `--check` exits non-zero when errors are found, for CI. Structure-rule checks (STRUCT001–010) land with M2's node-tree extraction |
 | `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
@@ -64,8 +64,9 @@ export default config;
 Then:
 
 ```
-/adhd:lint                                       # validate the whole Figma file
-/adhd:lint https://figma.com/design/<KEY>?node-id=12-2   # validate a single page/frame/component
+/adhd:lint                                       # drift report for the whole Figma file
+/adhd:lint https://figma.com/design/<KEY>?node-id=12-2   # validate the URL + label the report target
+/adhd:lint --check                               # CI gate: exit non-zero on any error
 /adhd:push-design-system                         # apply (code → Figma; will prompt before writing)
 /adhd:pull-design-system                         # apply (Figma → code; will prompt before writing)
 /adhd:push-component app/components/avatar/index.tsx     # push a React component to Figma
@@ -73,7 +74,7 @@ Then:
 
 ### Scoped lint
 
-Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` will validate just that subtree (a single Component Set, page, frame, or component) instead of the whole file. Copy the URL straight from Figma's "Copy link to selection" right-click menu.
+Pass any Figma URL that includes a `node-id` query parameter. Copy the URL straight from Figma's "Copy link to selection" right-click menu. Today the URL is validated against the configured file and labels the report's target; true subtree narrowing (and the structure-rule checks that come with it) land with M2's node-tree extraction.
 
 ```
 # Whole file
@@ -83,7 +84,7 @@ Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` wi
 /adhd:lint https://www.figma.com/design/PBCAkpPnvGXWrz6H7qfH3V/ADHD-Reference?node-id=91-18
 ```
 
-The scoped report covers the same checks (structure + drift + renames + off-system + cannot-sync), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
+The report covers drift + renames + off-system + cannot-sync. The URL must point at the file configured in `adhd.config.json`; mismatched file keys abort with a fix-up message.
 
 Add `--check` to make `/adhd:lint` exit non-zero whenever errors are found — useful for wiring into a pre-commit hook or a CI step. Once a lock file lands with the M2 sync work, `--offline` will let CI lint code↔Figma drift entirely from `adhd.lock.json`'s stored `baseSnapshot`, without a live Figma connection.
 
