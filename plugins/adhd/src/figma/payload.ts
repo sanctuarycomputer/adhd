@@ -230,8 +230,14 @@ export function figmaPayloadToSnapshot(p: FigmaPayload): { snapshot: Snapshot; i
       for (const v of col.variables) tokens.push(buildSemanticToken(v, col, idIndex));
     } else {
       for (const v of col.variables) {
+        // Collision-proofing: a rogue collection's variable could share a name with a
+        // real primitives token (e.g. "color/zinc/50"), and downstream matching keys
+        // tokens by `${collection}/${path}` (snapshot.ts, css.ts) — colliding with
+        // `collection: "primitives"` would silently merge unrelated data. Prefixing the
+        // path with "rogue:<collection name>/" makes collision impossible, since real
+        // token paths are lowercase alnum/hyphen/slash only and can never contain ":".
         tokens.push({
-          path: v.name,
+          path: `rogue:${col.name}/${v.name}`,
           collection: "primitives",
           domain: domainOf(v.name),
           values: {},
