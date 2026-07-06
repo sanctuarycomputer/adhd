@@ -38,6 +38,12 @@ export function assembleChunks(chunks: ExtractChunk[]): FigmaPayload {
     const chunk = chunks[i]!;
     const isLast = i === chunks.length - 1;
 
+    // Defensive guard for direct callers: a null/non-object element would
+    // otherwise throw a raw TypeError with no fix-up guidance.
+    if (chunk === null || typeof chunk !== "object") {
+      throw new AdhdError(`assembleChunks: chunk ${i} is not a chunk object`);
+    }
+
     if (chunk.done !== isLast) {
       throw new AdhdError(
         `assembleChunks: chunk ${i} has done=${chunk.done}, but done must be true on the last chunk only`

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { runExtract } from "../src/figma/extract";
 import { assembleChunks, figmaPayloadToSnapshot } from "../src/figma/payload";
+import { AdhdError } from "../src/core/config";
 import { rgbaToHex } from "../src/core/color";
 import { fakeFigma } from "./fake-figma";
 
@@ -38,6 +39,13 @@ test("assemble + toSnapshot: aliases preserved, rogue collection unsyncable, ids
 test("assembleChunks throws on a missing chunk", async () => {
   const chunks = await extractAll();
   expect(() => assembleChunks(chunks.slice(1))).toThrow(/chunk/i);
+});
+
+test("assembleChunks throws a clean AdhdError on a null chunk (not a raw TypeError)", () => {
+  // A chunk file containing bare `null` is valid JSON but not a chunk; it must
+  // surface as an AdhdError, never a raw "Cannot read properties of null" crash.
+  expect(() => assembleChunks([null as any])).toThrow(AdhdError);
+  expect(() => assembleChunks([null as any])).toThrow(/not a chunk object/i);
 });
 
 // --- negative-path tests via minimal inline docs -----------------------------

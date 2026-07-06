@@ -9955,6 +9955,9 @@ function assembleChunks(chunks) {
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     const isLast = i === chunks.length - 1;
+    if (chunk === null || typeof chunk !== "object") {
+      throw new AdhdError(`assembleChunks: chunk ${i} is not a chunk object`);
+    }
     if (chunk.done !== isLast) {
       throw new AdhdError(
         `assembleChunks: chunk ${i} has done=${chunk.done}, but done must be true on the last chunk only`
@@ -10659,11 +10662,16 @@ function readChunks(chunksDir) {
     } catch (e4) {
       throw new AdhdError(`--figma-chunks: could not read ${filePath} (${e4.code ?? e4.message})`, CHUNKS_DIR_FIXUP);
     }
+    let parsed;
     try {
-      return JSON.parse(raw);
+      parsed = JSON.parse(raw);
     } catch (e4) {
       throw new AdhdError(`--figma-chunks: ${filePath} is not valid JSON (${e4.message})`, CHUNKS_DIR_FIXUP);
     }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new AdhdError(`--figma-chunks: ${filePath} is not a chunk object`, CHUNKS_DIR_FIXUP);
+    }
+    return parsed;
   });
 }
 function listTsxJsxFiles(dir) {

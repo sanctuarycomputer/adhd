@@ -55,11 +55,18 @@ function readChunks(chunksDir: string): any[] {
     } catch (e: any) {
       throw new AdhdError(`--figma-chunks: could not read ${filePath} (${e.code ?? e.message})`, CHUNKS_DIR_FIXUP);
     }
+    let parsed: unknown;
     try {
-      return JSON.parse(raw);
+      parsed = JSON.parse(raw);
     } catch (e: any) {
       throw new AdhdError(`--figma-chunks: ${filePath} is not valid JSON (${e.message})`, CHUNKS_DIR_FIXUP);
     }
+    // A file containing bare `null` (or any non-object) is valid JSON but not a
+    // chunk; reject it here so it never reaches assembleChunks as a null element.
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new AdhdError(`--figma-chunks: ${filePath} is not a chunk object`, CHUNKS_DIR_FIXUP);
+    }
+    return parsed;
   });
 }
 

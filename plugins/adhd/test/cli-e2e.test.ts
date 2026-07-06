@@ -298,6 +298,18 @@ test("runLint: an empty --figma-chunks dir (zero .json files) throws AdhdError, 
   });
 });
 
+test("runLint: a chunk file containing bare `null` throws AdhdError with the chunk-dir fixup, not a raw TypeError", async () => {
+  const dir = makeConsumerDir();
+  const chunksDir = join(dir, "chunks");
+  mkdirSync(chunksDir, { recursive: true });
+  writeFileSync(join(chunksDir, "00.json"), "null"); // valid JSON, but not a chunk
+  await expect(runLint({ dir, chunksDir, offline: false })).rejects.toMatchObject({
+    name: "AdhdError",
+    message: expect.stringContaining("not a chunk object"),
+    fixup: expect.stringContaining("valid chunk JSON files"),
+  });
+});
+
 test("runLint: unpadded chunk filenames (0,1,10,11,2,…) scramble read order and throw AdhdError with the zero-padding fixup", async () => {
   const dir = makeConsumerDir();
   const chunks = await extractAllChunks(6); // chunkSize:6 over 67 vars -> 12 chunks (0..11)
