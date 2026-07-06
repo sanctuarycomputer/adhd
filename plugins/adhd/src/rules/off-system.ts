@@ -1,4 +1,4 @@
-import { colorsEqual, parseColor } from "../core/color";
+import { parseColor, type Rgba } from "../core/color";
 import type { Snapshot, Token } from "../core/tokens";
 
 export interface OffSystemFinding {
@@ -9,33 +9,37 @@ export interface OffSystemFinding {
   nearestToken?: { path: string; exact: boolean };
 }
 
+interface ColorTokenEntry {
+  path: string;
+  rgba: Rgba;
+}
+
+interface DimensionTokenEntry {
+  path: string;
+  px: number;
+}
+
 export function scanOffSystem(
   files: Array<{ path: string; content: string }>,
   code: Snapshot
 ): OffSystemFinding[] {
   const findings: OffSystemFinding[] = [];
 
-  // Build token lookup once from snapshot
-  const tokensByColor = new Map<string, { path: string; exact: boolean }>();
-  const tokensByDimension = new Map<string, { path: string; exact: boolean }>();
+  // Precompute parsed token forms ONCE — colors parsed to Rgba, dimensions
+  // parsed to a px number — so per-match lookups never re-parse token values.
+  const colorTokens: ColorTokenEntry[] = [];
+  const dimensionTokens: DimensionTokenEntry[] = [];
 
   for (const token of code.tokens) {
     const value = token.values.default;
     if (!value) continue;
 
     if (token.domain === "color") {
-      // Exact match for colors using colorsEqual
-      // Also add the normalized form for direct comparison
-      tokensByColor.set(value.toLowerCase(), { path: token.path, exact: true });
-
-      // Also check near matches using colorsEqual within epsilon 0.02
-      // We'll do near matching during the finding generation
+      const rgba = parseColor(value);
+      if (rgba) colorTokens.push({ path: token.path, rgba });
     } else if (token.domain === "spacing" || token.domain === "radius") {
-      // For dimensions, normalize to px
-      const normalized = normalizeDimension(value);
-      if (normalized) {
-        tokensByDimension.set(normalized, { path: token.path, exact: true });
-      }
+      const px = normalizeDimension(value);
+      if (px !== null) dimensionTokens.push({ path: token.path, px });
     }
   }
 
@@ -74,12 +78,7 @@ export function scanOffSystem(
 
       // Create findings for arbitrary classes
       for (const arbMatch of arbitraryMatches) {
-        const nearestToken = findNearestToken(
-          arbMatch.value,
-          tokensByColor,
-          tokensByDimension,
-          code.tokens
-        );
+        const nearestToken = findNearestToken(arbMatch.value, colorTokens, dimensionTokens);
 
         findings.push({
           file: file.path,
@@ -90,23 +89,27 @@ export function scanOffSystem(
         });
       }
 
-      // Find hex matches that are NOT inside arbitrary classes
+      // Standalone hex is scanned ONLY inside string-literal spans on the
+      // line (spec §6: matching hex anywhere — comments, JSX braces, URLs —
+      // is a false-positive swamp). This is a line-local heuristic: it does
+      // not track multi-line template literals, which are out of scope.
+      const stringSpans = computeStringSpans(line);
       const coveredRanges = arbitraryMatches.map((m) => ({ start: m.start, end: m.end }));
 
       while ((m = hexRegex.exec(line)) !== null) {
         const hexStart = m.index;
         const hexEnd = m.index + m[0]!.length;
 
-        // Check if this hex is inside any arbitrary class
-        const isInside = coveredRanges.some((range) => hexStart >= range.start && hexEnd <= range.end);
+        const isInsideArbitraryClass = coveredRanges.some(
+          (range) => hexStart >= range.start && hexEnd <= range.end
+        );
+        const isInsideString = stringSpans.some(
+          (span) => hexStart >= span.start && hexEnd <= span.end
+        );
 
-        if (!isInside) {
+        if (!isInsideArbitraryClass && isInsideString) {
           const hexValue = m[0]!;
-          const nearestToken = findNearestTokenByColor(
-            hexValue,
-            tokensByColor,
-            code.tokens
-          );
+          const nearestToken = findNearestToken(hexValue, colorTokens, dimensionTokens);
 
           findings.push({
             file: file.path,
@@ -124,49 +127,77 @@ export function scanOffSystem(
 }
 
 /**
- * Parse a dimension value and return normalized px value (as number or string for comparison)
+ * Compute the [start, end) spans of string literals on a single line, for
+ * `'...'`, `"..."`, and `` `...` `` spans. This is a line-local heuristic:
+ * it skips `\"` / `\'` escapes but does not otherwise validate escaping, and
+ * it does not attempt to track template literals that span multiple lines
+ * (an unterminated span at end-of-line is simply dropped).
  */
-function normalizeDimension(value: string): string | null {
-  // Remove 'px' suffix if present
+function computeStringSpans(line: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let quoteChar: string | null = null;
+  let spanStart = -1;
+  let i = 0;
+
+  while (i < line.length) {
+    const ch = line[i];
+
+    if (quoteChar) {
+      if (ch === "\\") {
+        i += 2;
+        continue;
+      }
+      if (ch === quoteChar) {
+        spans.push({ start: spanStart, end: i + 1 });
+        quoteChar = null;
+      }
+      i++;
+    } else {
+      if (ch === '"' || ch === "'" || ch === "`") {
+        quoteChar = ch;
+        spanStart = i;
+      }
+      i++;
+    }
+  }
+
+  return spans;
+}
+
+/**
+ * Parse a dimension value and return its normalized px number, or null if it
+ * isn't a plain (unit-less or px) number.
+ */
+function normalizeDimension(value: string): number | null {
   const trimmed = value.trim();
   const pxMatch = trimmed.match(/^(\d+(?:\.\d+)?)(?:px)?$/);
   if (pxMatch) {
-    return pxMatch[1]!; // Return just the number part for comparison
+    return Number(pxMatch[1]);
   }
   return null;
 }
 
 /**
- * Find the nearest token for a value extracted from an arbitrary class
+ * Find the nearest precomputed token for a raw value (from an arbitrary
+ * class or a standalone hex match). Colors and dimensions are mutually
+ * exclusive kinds of value, so a successful color parse returns immediately
+ * — there is no fallthrough from color into dimension matching.
  */
 function findNearestToken(
   value: string,
-  tokensByColor: Map<string, { path: string; exact: boolean }>,
-  tokensByDimension: Map<string, { path: string; exact: boolean }>,
-  tokens: Token[]
+  colorTokens: ColorTokenEntry[],
+  dimensionTokens: DimensionTokenEntry[]
 ): { path: string; exact: boolean } | undefined {
-  // Try to parse as color
-  const color = parseColor(value);
-  if (color) {
-    // Check exact matches first
-    const exact = findExactColorToken(value, tokens);
-    if (exact) {
-      return { path: exact, exact: true };
-    }
-
-    // Check near matches (within epsilon 0.02)
-    const near = findNearColorToken(value, tokens);
-    if (near) {
-      return { path: near, exact: false };
-    }
+  const rgba = parseColor(value);
+  if (rgba) {
+    return matchColorToken(rgba, colorTokens);
   }
 
-  // Try to parse as dimension
-  const normalized = normalizeDimension(value);
-  if (normalized) {
-    const token = tokensByDimension.get(normalized);
-    if (token) {
-      return token;
+  const px = normalizeDimension(value);
+  if (px !== null) {
+    const dimensionToken = dimensionTokens.find((t) => t.px === px);
+    if (dimensionToken) {
+      return { path: dimensionToken.path, exact: true };
     }
   }
 
@@ -174,54 +205,33 @@ function findNearestToken(
 }
 
 /**
- * Find the nearest token for a hex color value
+ * Match a parsed color against precomputed color tokens: exact first
+ * (epsilon 0.004), then near (epsilon 0.02). Never re-parses token values —
+ * both sides of the comparison are already-parsed Rgba.
  */
-function findNearestTokenByColor(
-  hexValue: string,
-  tokensByColor: Map<string, { path: string; exact: boolean }>,
-  tokens: Token[]
+function matchColorToken(
+  rgba: Rgba,
+  colorTokens: ColorTokenEntry[]
 ): { path: string; exact: boolean } | undefined {
-  // Check exact matches first
-  const exact = findExactColorToken(hexValue, tokens);
+  const exact = colorTokens.find((t) => rgbaClose(rgba, t.rgba, 0.004));
   if (exact) {
-    return { path: exact, exact: true };
+    return { path: exact.path, exact: true };
   }
 
-  // Check near matches (within epsilon 0.02)
-  const near = findNearColorToken(hexValue, tokens);
+  const near = colorTokens.find((t) => rgbaClose(rgba, t.rgba, 0.02));
   if (near) {
-    return { path: near, exact: false };
+    return { path: near.path, exact: false };
   }
 
   return undefined;
 }
 
-/**
- * Find exact color token match using colorsEqual with default epsilon
- */
-function findExactColorToken(color: string, tokens: Token[]): string | undefined {
-  for (const token of tokens) {
-    if (token.domain === "color") {
-      const tokenValue = token.values.default;
-      if (tokenValue && colorsEqual(color, tokenValue)) {
-        return token.path;
-      }
-    }
-  }
-  return undefined;
-}
-
-/**
- * Find near color token match using colorsEqual with epsilon 0.02
- */
-function findNearColorToken(color: string, tokens: Token[]): string | undefined {
-  for (const token of tokens) {
-    if (token.domain === "color") {
-      const tokenValue = token.values.default;
-      if (tokenValue && colorsEqual(color, tokenValue, 0.02)) {
-        return token.path;
-      }
-    }
-  }
-  return undefined;
+/** Component-wise closeness check between two already-parsed colors. */
+function rgbaClose(a: Rgba, b: Rgba, eps: number): boolean {
+  return (
+    Math.abs(a.r - b.r) <= eps &&
+    Math.abs(a.g - b.g) <= eps &&
+    Math.abs(a.b - b.b) <= eps &&
+    Math.abs(a.a - b.a) <= eps
+  );
 }
