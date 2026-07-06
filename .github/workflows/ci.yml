@@ -24,6 +24,21 @@ jobs:
       - name: Run pull-component tests
         run: node --test plugins/adhd/lib/pull-component/__tests__/
 
+  v2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: plugins/adhd/package-lock.json }
+      - run: npm ci
+        working-directory: plugins/adhd
+      - run: node build.mjs --check
+        working-directory: plugins/adhd
+      - run: npm run typecheck
+        working-directory: plugins/adhd
+      - run: npm test
+        working-directory: plugins/adhd
+
   hygiene:
     name: project hygiene
     runs-on: ubuntu-latest
