@@ -53,7 +53,8 @@ export function loadConfig(dir: string): AdhdConfig {
     }
     throw new AdhdError(
       `adhd.config.json: file not found`,
-      "/adhd:config to generate a template"
+      "Create adhd.config.json in this directory — see the transitional note in README.md. " +
+        "(The /adhd:config wizard still writes the older adhd.config.ts; M1 lint reads JSON.)"
     );
   }
 

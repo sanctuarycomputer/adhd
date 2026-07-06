@@ -14,9 +14,9 @@ test("loads and validates a good config, derives fileKey, defaults naming", () =
   expect(cfg.naming).toBe("kebab-case");
 });
 
-test("missing config throws AdhdError with the /adhd:config fixup", () => {
+test("missing config throws AdhdError with the adhd.config.json fixup", () => {
   expect(() => loadConfig(dir())).toThrowError(AdhdError);
-  try { loadConfig(dir()); } catch (e: any) { expect(e.fixup).toContain("/adhd:config"); }
+  try { loadConfig(dir()); } catch (e: any) { expect(e.fixup).toContain("adhd.config.json"); }
 });
 
 test("bad figma url is a field-level error", () => {

@@ -1,5 +1,5 @@
 import { parseColor, type Rgba } from "../core/color";
-import type { Snapshot, Token } from "../core/tokens";
+import type { Snapshot } from "../core/tokens";
 
 export interface OffSystemFinding {
   file: string;
