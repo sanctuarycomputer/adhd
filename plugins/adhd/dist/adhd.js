@@ -10490,9 +10490,35 @@ function diffMatchedPair(code, figma, valueDrift, structural) {
 }
 
 // src/pipelines/lint.ts
+var CHUNKS_DIR_FIXUP = "check that --figma-chunks points at a directory of valid chunk JSON files saved from use_figma responses";
 function readChunks(chunksDir) {
-  const files = (0, import_node_fs3.readdirSync)(chunksDir).filter((f3) => f3.endsWith(".json")).sort();
-  return files.map((f3) => JSON.parse((0, import_node_fs3.readFileSync)((0, import_node_path3.join)(chunksDir, f3), "utf-8")));
+  let entries;
+  try {
+    entries = (0, import_node_fs3.readdirSync)(chunksDir);
+  } catch (e4) {
+    throw new AdhdError(
+      `--figma-chunks: could not read directory ${chunksDir} (${e4.code ?? e4.message})`,
+      CHUNKS_DIR_FIXUP
+    );
+  }
+  const files = entries.filter((f3) => f3.endsWith(".json")).sort();
+  if (files.length === 0) {
+    throw new AdhdError(`--figma-chunks: no chunk files found in ${chunksDir}`, CHUNKS_DIR_FIXUP);
+  }
+  return files.map((f3) => {
+    const filePath = (0, import_node_path3.join)(chunksDir, f3);
+    let raw;
+    try {
+      raw = (0, import_node_fs3.readFileSync)(filePath, "utf-8");
+    } catch (e4) {
+      throw new AdhdError(`--figma-chunks: could not read ${filePath} (${e4.code ?? e4.message})`, CHUNKS_DIR_FIXUP);
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (e4) {
+      throw new AdhdError(`--figma-chunks: ${filePath} is not valid JSON (${e4.message})`, CHUNKS_DIR_FIXUP);
+    }
+  });
 }
 function listTsxJsxFiles(dir) {
   const result = (0, import_node_child_process.spawnSync)("git", ["ls-files", "--", "*.tsx", "*.jsx"], {
@@ -10557,7 +10583,15 @@ async function runLint(opts) {
     mode = "live";
     const rawChunks = readChunks(opts.chunksDir);
     const nodeTreeChunk = rawChunks.find((c2) => c2 && c2.nodeTree);
-    const payload = assembleChunks(rawChunks);
+    let payload;
+    try {
+      payload = assembleChunks(rawChunks);
+    } catch (e4) {
+      if (e4 instanceof AdhdError && !e4.fixup) {
+        e4.fixup = "chunks are read in filename order \u2014 name them zero-padded (chunk-00.json, chunk-01.json, ...) in the order use_figma returned them";
+      }
+      throw e4;
+    }
     const built = figmaPayloadToSnapshot(payload);
     figmaSnapshot = built.snapshot;
     figmaIds = built.ids;
@@ -10569,10 +10603,14 @@ async function runLint(opts) {
     }
   }
   const drift = diffSnapshots(codeSnapshot, figmaSnapshot, { lock, figmaIds });
-  const offSystemFiles = listTsxJsxFiles(opts.dir).map((p4) => ({
-    path: p4,
-    content: (0, import_node_fs3.readFileSync)((0, import_node_path3.join)(opts.dir, p4), "utf-8")
-  }));
+  const offSystemFiles = [];
+  for (const p4 of listTsxJsxFiles(opts.dir)) {
+    try {
+      offSystemFiles.push({ path: p4, content: (0, import_node_fs3.readFileSync)((0, import_node_path3.join)(opts.dir, p4), "utf-8") });
+    } catch (e4) {
+      console.error(`\u2717 could not read ${p4} (${e4.code ?? e4.message}); skipping from off-system scan`);
+    }
+  }
   const offSystem = scanOffSystem(offSystemFiles, codeSnapshot);
   return {
     violations,
