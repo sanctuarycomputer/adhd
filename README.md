@@ -29,7 +29,7 @@ After install, six slash commands are available:
 | Command | Args | Direction | What it does |
 |---|---|---|---|
 | `/adhd:config` | — | — | Interactive wizard that produces `adhd.config.ts`. Verifies the official Figma plugin is installed + authenticated before anything else. |
-| `/adhd:lint` | `[<figma-url>]` | read-only | Validates the Figma file (whole file or scoped) against the local design system + structure best-practices |
+| `/adhd:lint` | `[<figma-url>] [--check]` | read-only | Reports Figma structure violations, code↔Figma drift (value/existence/structural), likely renames, off-system values in code, and un-syncable entries; `--check` exits non-zero when errors are found, for CI |
 | `/adhd:push-design-system` | — | code → Figma | Pushes globals.css variables + named styles into Figma directly via the remote MCP |
 | `/adhd:pull-design-system` | — | Figma → code | Pulls Figma variables + named styles into globals.css |
 | `/adhd:push-component` | `<path> [--max-variants <n>]` | code → Figma | Pushes a React component to Figma as a structured Component Set with variant properties + variable bindings, plus a preflight lint check |
@@ -83,7 +83,9 @@ Pass any Figma URL that includes a `node-id` query parameter — `/adhd:lint` wi
 /adhd:lint https://www.figma.com/design/PBCAkpPnvGXWrz6H7qfH3V/ADHD-Reference?node-id=91-18
 ```
 
-The scoped report covers the same rules (STRUCT001–010 + variable mismatches), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
+The scoped report covers the same checks (structure + drift + renames + off-system + cannot-sync), just narrowed to the selected subtree. The URL must point at the file configured in `adhd.config.ts`; mismatched file keys abort with a fix-up message.
+
+Add `--check` to make `/adhd:lint` exit non-zero whenever errors are found — useful for wiring into a pre-commit hook or a CI step. Once a lock file lands with the M2 sync work, `--offline` will let CI lint code↔Figma drift entirely from `adhd.lock.json`'s stored `baseSnapshot`, without a live Figma connection.
 
 ### Push a component
 
