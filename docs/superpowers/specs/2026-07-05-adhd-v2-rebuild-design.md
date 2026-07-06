@@ -93,14 +93,13 @@ Conversation in the config wizard; relaying CLI-emitted scripts to MCP tools and
 
 ```json
 {
-  "$schema": "<resolved by the wizard to the installed plugin's adhd.schema.json>",
   "figma": { "url": "https://www.figma.com/design/<KEY>/<NAME>" },
   "naming": "kebab-case",
   "cssEntry": "app/globals.css"
 }
 ```
 
-Small, hand-editable, machine-writable with `JSON.parse`/`stringify`. Component mappings do NOT live here (they are sync state, not user intent) — they live in the lock.
+Small, hand-editable, machine-writable with `JSON.parse`/`stringify`. The CLI validates it against a bundled JSON schema and prints field-level errors; a `$schema` key is optional (no machine-specific paths are ever written into the config). Component mappings do NOT live here (they are sync state, not user intent) — they live in the lock.
 
 **`adhd.lock.json`** (committed, machine-owned):
 
@@ -124,7 +123,7 @@ Read-only. One extract (or none with `--offline`), one report:
 - **Rename detection, two confidence levels**: *definite* (lock ID persists under a new name) and *probable* (no lock: same value + similar name) — reported as renames, not delete+add pairs.
 - **Off-system value detection in code**: Tailwind arbitrary values (`bg-[#8b5cf6]`, `text-[13px]`) and inline-style hex literals, cross-referenced against exact or near-matching tokens. Scoped to these greppable patterns to avoid false-positive noise.
 - **"Cannot sync" section**: everything unsyncable (composite style shells pending §6-sync support, %-line-heights, gradients) listed with the reason. Nothing is ever silently skipped — this is a hard product rule.
-- `--check`: nonzero exit for CI. `--offline`: diff code against the committed DTCG mirror instead of live Figma (CI-friendly; no MCP auth needed). Report format doubles as a PR body.
+- `--check`: nonzero exit for CI. `--offline`: diff code against `adhd.lock.json`'s committed `baseSnapshot` instead of live Figma (CI-friendly; no MCP auth needed) — catches hand-edited tokens that bypassed sync. Report format doubles as a PR body.
 
 ### `/adhd:sync [scope] [--push | --pull] [--pr] [--allow-unbound]`
 
@@ -144,7 +143,7 @@ Same snapshot machinery, then:
 
 Wizard: verifies the official Figma plugin is installed + authenticated; captures the Figma URL and tests reachability; auto-detects `cssEntry`; writes `adhd.config.json`. Offers to scaffold the mandated `Primitives`/`Semantic` collection structure into an empty Figma file (v1's wizard never validated structure — a top audit finding). The structure convention is fixed, not configurable — a deliberate rejection of per-collection mapping config, which is how v1 grew two incompatible models.
 
-**`adhd export --dtcg`** (CLI subcommand, no skill): writes a DTCG-format `tokens/` mirror for interop with style-dictionary/Terrazzo pipelines and for `lint --offline`. Cheap because it is a pure function over the snapshot.
+**`adhd export --dtcg`** (CLI subcommand, no skill): writes a DTCG-format `tokens/` mirror for interop with style-dictionary/Terrazzo pipelines. Pure function over the snapshot; carries no load-bearing role inside adhd itself.
 
 ## 7. Component pipeline
 
@@ -186,7 +185,7 @@ Work on a v2 branch; v1 stays intact on main until parity. Milestones, each veri
 2. **Token sync + lock**: three-way diff, plan/apply, write script, `adhd.lock.json`, `--pr`.
 3. **Component reconcile**: TS-API component parsing/writing, mapped-component sync, scaffold.
 4. **Capture**: preview generation, `adhd dev`, consolidation + contract tests, first-push flow.
-5. **Config wizard + cleanup**: wizard, structure scaffolding, `export --dtcg`, README rewrite (AGENTS.md rule: README must track commands in the same PR), delete v1 code.
+5. **Config wizard + cleanup**: wizard, structure scaffolding, `export --dtcg`, README rewrite + plugin manifest/marketplace metadata updated to the three-command surface (AGENTS.md rule: README must track commands in the same PR), delete v1 code.
 
 ## 12. Out of scope for v2.0
 
