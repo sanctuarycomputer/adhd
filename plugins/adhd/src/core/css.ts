@@ -34,7 +34,7 @@ function classify(decl: Declaration): Section {
     } else if (node.type === "rule") {
       const rule = node as Rule;
       if (/:root\b/.test(rule.selector)) inRootScope = true;
-      if (/\.dark\b/.test(rule.selector) || /\[data-theme=["']?dark["']?\]/.test(rule.selector)) {
+      if (/\.dark(?![\w-])/.test(rule.selector) || /\[data-theme=["']?dark["']?\]/.test(rule.selector)) {
         inRootScope = true;
         dark = true;
       }
@@ -83,6 +83,8 @@ export function parseCssSnapshot(css: string): Snapshot {
       const target = cssVarToPath(aliasMatch[1]!);
       if (target) {
         t.aliasOf = { ...t.aliasOf, [mode]: target };
+      } else {
+        t.unsyncable = "alias target '" + aliasMatch[1] + "' is outside the token naming grammar";
       }
       t.values[mode] = value;
     } else if (t.domain === "color") {

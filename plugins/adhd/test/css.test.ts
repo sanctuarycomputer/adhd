@@ -81,3 +81,39 @@ test("parses the example app's real globals.css without unsyncable surprises", (
   const unsyncableReasons = real.tokens.filter((t) => t.unsyncable).map((t) => t.unsyncable);
   expect(unsyncableReasons).toEqual([]);
 });
+
+test("unresolvable alias targets are marked unsyncable", () => {
+  const css = `@theme { --color-x: var(--Bad--x); }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(1);
+  const t = result.tokens[0]!;
+  expect(t.path).toBe("color/x");
+  expect(t.unsyncable).toContain("alias target");
+  expect(t.aliasOf).toBeUndefined();
+});
+
+test(".dark selector (bare) lands as semantic/dark", () => {
+  const css = `.dark { --background: #000; }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(1);
+  const t = result.tokens[0]!;
+  expect(t.collection).toBe("semantic");
+  expect(t.path).toBe("background");
+  expect(t.values.dark).toMatch(/^#[0-9a-f]+$/);
+});
+
+test("[data-theme=\"dark\"] selector lands as semantic/dark", () => {
+  const css = `[data-theme="dark"] { --background: #000; }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(1);
+  const t = result.tokens[0]!;
+  expect(t.collection).toBe("semantic");
+  expect(t.path).toBe("background");
+  expect(t.values.dark).toMatch(/^#[0-9a-f]+$/);
+});
+
+test(".dark-mode selector contributes no tokens", () => {
+  const css = `.dark-mode { --background: #000; }`;
+  const result = parseCssSnapshot(css);
+  expect(result.tokens).toHaveLength(0);
+});
